@@ -1,22 +1,26 @@
-"""Asatro web app — placeholder skeleton.
+"""Asatro web app.
 
-A runnable FastAPI shell so the project serves and deploys from day one. The
-fragment-growing engine (handle detection, accessibility pruning, Thompson-Sampled
-growth) is not implemented yet — see DESIGN.md.
+FastAPI surface for fragment growing: handle analysis (``/analyze``), the
+accessibility pre-pass (``/prune``), and accessibility-gated growth runs as
+background jobs (``/grow`` + ``/jobs`` + log streaming).
 """
 from __future__ import annotations
 
+import json
 import os
+import time
 from pathlib import Path
+from typing import List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from rdkit import Chem
 
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
 from asatro.chemistry.stub_growth import assess_with_stubs
+from asatro.jobs import JOBS, list_jobs, start_growth_job
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -66,6 +70,103 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
     if refine:
         return assess_with_stubs(mol, receptor_atoms)
     return assess_fragment(mol, receptor_atoms)
+
+
+# ---------------------------------------------------------------------------
+# Growth jobs
+# ---------------------------------------------------------------------------
+@app.post("/grow")
+async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
+               reactants: List[UploadFile] = File(default=[]),
+               config: str = Form("{}"), session_name: str = Form("")) -> dict:
+    """Start an accessibility-gated growth run as a background job.
+
+    Uploads: the bound fragment (SDF, in pose), the receptor (PDB), and one or
+    more reactant libraries (.smi) for the non-fragment slots — each file's name
+    stem is taken as its functional-group class (e.g. ``boronic.smi`` → the
+    ``boronic`` slot). ``config`` is JSON (refine, num_warmup, num_cycles,
+    num_to_select, seed, score_field, cnn_scoring). Returns the job id."""
+    try:
+        cfg = json.loads(config or "{}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"bad config JSON: {e}")
+
+    work = Path(os.environ.get("ASATRO_JOBS_DIR", str(Path(__file__).resolve().parent.parent / "jobs")))
+    stage = work / "_uploads" / f"{int(time.time()*1000)}"
+    stage.mkdir(parents=True, exist_ok=True)
+    frag_path = stage / "fragment.sdf"
+    rec_path = stage / "receptor.pdb"
+    frag_path.write_bytes(await fragment.read())
+    rec_path.write_bytes(await receptor.read())
+
+    reactant_by_class = {}
+    for rf in reactants:
+        cls = Path(rf.filename or "").stem
+        if not cls:
+            continue
+        p = stage / f"reactant_{cls}.smi"
+        p.write_bytes(await rf.read())
+        reactant_by_class[cls] = str(p)
+    if not reactant_by_class:
+        raise HTTPException(400, "no reactant libraries uploaded (need .smi files named by FG class)")
+
+    job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
+                           reactant_by_class=reactant_by_class, cfg=cfg,
+                           session_name=session_name)
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.get("/jobs")
+async def jobs() -> dict:
+    return {"jobs": list_jobs()}
+
+
+@app.get("/jobs/{job_id}")
+async def job_detail(job_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is not None:
+        return {**job.meta(), "result": job.result, "n_log": len(job.lines)}
+    # Past run: read persisted metadata/results from disk.
+    base = Path(os.environ.get("ASATRO_JOBS_DIR", str(Path(__file__).resolve().parent.parent / "jobs")))
+    d = base / job_id
+    if d.is_dir() and (d / "job.json").is_file():
+        meta = json.loads((d / "job.json").read_text())
+        res = json.loads((d / "results.json").read_text()) if (d / "results.json").is_file() else None
+        return {**meta, "result": res}
+    raise HTTPException(404, "unknown job")
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> dict:
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    job.cancel_event.set()
+    job.log("Cancellation requested")
+    return {"status": "cancelling"}
+
+
+@app.get("/jobs/{job_id}/stream")
+async def stream(job_id: str) -> StreamingResponse:
+    """Server-sent events: live console lines, then an ``end`` event with the
+    final status."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+
+    async def gen():
+        import asyncio
+        sent = 0
+        while True:
+            while sent < len(job.lines):
+                yield f"data: {job.lines[sent]}\n\n"
+                sent += 1
+            if job.status in ("done", "error", "cancelled"):
+                yield f"event: end\ndata: {job.status}\n\n"
+                return
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

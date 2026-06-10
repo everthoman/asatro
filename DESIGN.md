@@ -80,8 +80,15 @@ Net effect: the main search only ever explores growable directions.
   growth targets, each carrying its auto-derived conserved core; non-fragment
   components are resolved to reactant files via an injectable resolver. So pruned
   vectors never cost a docking call.
-- TODO: a job/endpoint layer (async runs, results, history) like the TS app, and
-  real reactant libraries for the non-fragment slots.
+- **Job/endpoint layer** (`jobs.py`, `app.py`): a growth run is a background thread
+  (`start_growth_job`) that runs the pre-pass then grows the survivors, streaming
+  console lines and persisting a per-target results summary + metadata under the
+  job dir. Endpoints: `POST /grow` (fragment SDF + receptor PDB + reactant .smi
+  files named by FG class + JSON config), `GET /jobs`, `GET /jobs/{id}`,
+  `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream` (SSE). The docking runner is
+  injectable, so the whole flow is tested without gnina.
+- TODO: curated reactant libraries for the non-fragment slots, and a real gnina
+  dock run (binary + GPU) to validate scoring; a browser UI on top of the routes.
 
 ## Differentiation summary (vs Syndirella)
 

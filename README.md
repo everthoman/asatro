@@ -59,12 +59,25 @@ The **TS growth engine** is lifted in too. `asatro/engine/` holds standalone
 copies of the Thompson-Sampling + GNINA stack (`AnchoredFragmentEvaluator`,
 `RouteSampler`, …); `asatro/growth.py` wires them up: the bound fragment is fixed
 in one start-reaction slot, the reactant library is sampled in the other(s), and
-each product is constrained-placed onto the bound pose and scored by GNINA.
-`growth.run_growth(...)` runs warm-up + search. (The dock needs the `gnina`
-binary at `/opt/gnina/gnina.1.3.2` + a GPU; the rest runs anywhere.)
+each product is constrained-placed onto the bound pose and scored by GNINA. The
+accessibility pre-pass gates it — only surviving reaction/slots are searched.
 
-Still to build: a job/endpoint layer (async runs + results/history) and curated
-reactant libraries for the non-fragment slots. See [DESIGN.md](DESIGN.md).
+Growth runs as a **background job**:
+
+```bash
+curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
+     -F reactants=@boronic.smi \              # one .smi per FG-class slot
+     -F 'config={"num_cycles":50,"refine":true}' \
+     http://localhost:5023/grow               # -> {"job_id": ...}
+curl http://localhost:5023/jobs/<id>          # status + per-target top hits
+curl http://localhost:5023/jobs/<id>/stream   # live console (SSE)
+```
+
+(The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
+else runs anywhere.)
+
+Still to build: curated reactant libraries for the non-fragment slots, a real
+gnina dock run to validate scoring, and a browser UI. See [DESIGN.md](DESIGN.md).
 
 ## Setup
 

@@ -154,7 +154,9 @@ def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
                     reactant_resolver: ReactantResolver, work_dir: str,
                     refine: bool = False, probe_params: Optional[ProbeParams] = None,
                     stub_params: Optional[StubParams] = None,
-                    runner: Callable = run_growth, **growth_opts) -> dict:
+                    runner: Callable = run_growth,
+                    log: Optional[Callable[[str], None]] = None,
+                    **growth_opts) -> dict:
     """Run the accessibility pre-pass, then grow only the surviving reaction/slots.
 
     For each accessible target, the non-fragment components are resolved to
@@ -164,12 +166,15 @@ def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
 
     Returns ``{assessment, targets, runs}`` — ``runs`` carries each target's
     resolved reactant files and the runner's result (or a skip reason)."""
+    _log = log or (lambda _m: None)
     mol = Chem.MolFromMolFile(fragment_sdf, removeHs=True)
     if mol is None:
         raise ValueError(f"could not read fragment SDF: {fragment_sdf}")
     if mol.GetNumConformers() == 0:
         raise ValueError("fragment SDF has no 3D conformer (need the bound pose)")
     receptor = load_receptor_atoms(receptor_pdb)
+    _log(f"Accessibility pre-pass ({'geometric+stub' if refine else 'geometric'}) "
+         f"on {receptor.shape[0]} receptor atoms…")
 
     if refine:
         assessment = assess_with_stubs(mol, receptor, probe_params or ProbeParams(),
@@ -178,6 +183,8 @@ def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
         assessment = assess_fragment(mol, receptor, probe_params or ProbeParams())
 
     targets = plan_targets(assessment)
+    _log(f"Handles {assessment['fg_classes']}; accessible reactions "
+         f"{assessment['accessible_reactions']} → {len(targets)} growth target(s)")
     runs: List[dict] = []
     for t in targets:
         rxn = REACTION_BY_ID[t.reaction_id]
@@ -194,8 +201,10 @@ def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
         entry = {"target": t.__dict__, "reactant_files": reactant_files}
         if missing is not None:
             entry["skipped"] = f"no reactant library for component {missing}"
+            _log(f"Skip {t.reaction_id} slot {t.fragment_slot}: {entry['skipped']}")
             runs.append(entry)
             continue
+        _log(f"Growing {t.reaction_id} (slot {t.fragment_slot}, core {t.core_smarts})…")
         target_dir = Path(work_dir) / f"{t.reaction_id}_slot{t.fragment_slot}"
         entry["result"] = runner(
             fragment_sdf=fragment_sdf, receptor_path=receptor_pdb,
