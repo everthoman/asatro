@@ -31,11 +31,21 @@ See [DESIGN.md](DESIGN.md) for the full pipeline and open decisions.
 
 ## Status
 
-Early scaffold. This repo currently contains the project skeleton, the design
-doc, and a runnable (placeholder) FastAPI app. The chemistry/sampling engine is
-not yet built — reusable pieces live in the TS repo
-(`anchored_fragment_evaluator.py`, the TS sampler stack, the FG vocabulary) and
-will be lifted in deliberately.
+Early, but the first engine slice is in: **Tier-1 handle detection + auto-core
+derivation** (`asatro/chemistry/`). Given a fragment it reports the functional-group
+handles it bears, the compatible start reactions (and which slot the fragment
+fills), and the conserved core auto-derived for each handle.
+
+```bash
+python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
+curl 'http://localhost:5023/analyze?smiles=OC(=O)c1ccncc1'
+python -m pytest tests/                                # 7 passing
+```
+
+Still to build: accessibility pruning of growth vectors, and the Thompson-Sampled
+growth + constrained placement + GNINA scoring. Those will reuse pieces from the
+TS repo (`anchored_fragment_evaluator.py`, the TS sampler stack), lifted in
+deliberately. See [DESIGN.md](DESIGN.md).
 
 ## Setup
 
