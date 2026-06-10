@@ -39,23 +39,26 @@ fills), and the conserved core auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5023/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 7 passing
+python -m pytest tests/                                # 17 passing
 ```
 
-The **accessibility pre-pass** is in too (`asatro/chemistry/accessibility.py`):
-from the bound pose each handle defines a growth vector, and a cone probe measures
-how far it reaches before hitting receptor atoms — vectors that can't clear room
-are pruned before any docking.
+The **accessibility pre-pass** is in too. A fast geometric cone probe
+(`accessibility.py`) measures how far each growth vector reaches before hitting
+receptor atoms; an optional **stub-growth refinement** (`stub_growth.py`) then
+grows real –Me/–Ph/morpholine substituents onto the survivors, constrained to the
+bound pose, and keeps only vectors where a substituent physically fits.
 
 ```bash
 # fragment SDF (in its bound pose) + receptor PDB -> analysis + accessible reactions
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb http://localhost:5023/prune
+curl -F fragment=@hit.sdf -F receptor=@receptor.pdb -F refine=true \
+     http://localhost:5023/prune          # + stub-growth refinement
 ```
 
-Still to build: the stub-growth refinement of survivors, and the Thompson-Sampled
-growth + constrained placement + GNINA scoring. Those will reuse pieces from the
-TS repo (`anchored_fragment_evaluator.py`, the TS sampler stack), lifted in
-deliberately. See [DESIGN.md](DESIGN.md).
+Still to build: the Thompson-Sampled growth + constrained placement + GNINA
+scoring. That will reuse pieces from the TS repo
+(`anchored_fragment_evaluator.py`, the TS sampler stack), lifted in deliberately.
+See [DESIGN.md](DESIGN.md).
 
 ## Setup
 
@@ -68,3 +71,4 @@ conda activate asatro
 The `asatro` conda env already exists on this host (python 3.11, rdkit, fastapi,
 uvicorn, openbabel). Docking will additionally need the `gnina` binary
 (see `/opt/webapps/gnina`).
+# asatro

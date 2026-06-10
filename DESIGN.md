@@ -49,10 +49,14 @@ conserved core. Before spending search budget, screen vectors for pocket room:
   vector is accessible if its best direction clears `min_free`; survivors carry
   `free_central / mean_free / max_free / open_fraction` for ranking. Tunable via
   `ProbeParams`. Exposed as `POST /prune` (fragment SDF + receptor PDB).
-- **Stub-growth sampling (slower, reliable) — TODO:** for each surviving vector grow a few
-  minimal stubs (–Me, –Ph, –morpholine), constrained-place them, and keep only
-  vectors where *some* stub places without clashing. A vector where even a methyl
-  clashes is inaccessible → prune that reaction/slot from the main run.
+- **Stub-growth sampling (slower, reliable) — IMPLEMENTED** (`stub_growth.py`): for
+  each surviving vector, build core + stub (–Me/–Ph/morpholine), constrained-embed
+  with the core pinned to the bound pose (coordMap + Kabsch realign), and keep only
+  vectors where *some* stub places without clashing the receptor. Reports which
+  stubs fit (and the largest) as a richness cue. Runs only on geometric survivors
+  (`assess_with_stubs`); exposed as `POST /prune` with `refine=true`. Note: the
+  geometric clash check is already strict on-axis, so the stub pass mainly adds
+  fidelity for bulky/planar groups and multi-atom reach.
 
 Net effect: the main search only ever explores growable directions.
 

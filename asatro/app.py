@@ -9,13 +9,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from rdkit import Chem
 
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
+from asatro.chemistry.stub_growth import assess_with_stubs
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -46,17 +47,24 @@ async def analyze(smiles: str) -> dict:
 
 
 @app.post("/prune")
-async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(...)) -> dict:
+async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
+                refine: bool = Form(False)) -> dict:
     """Accessibility pre-pass: given the bound fragment (SDF, in its pose) and the
     receptor (PDB), return the Tier-1 analysis augmented with per-vector probe
     results and an ``accessible`` flag, plus the list of reactions that survive
-    pruning (their growth vectors have room in the pocket)."""
+    pruning (their growth vectors have room in the pocket).
+
+    ``refine=true`` runs the slower stub-growth refinement on the geometric
+    survivors — actually growing –Me/–Ph/morpholine onto each vector and keeping
+    only those where a real substituent fits."""
     mol = Chem.MolFromMolBlock((await fragment.read()).decode("utf-8", "replace"), removeHs=True)
     if mol is None:
         raise HTTPException(400, "could not read fragment SDF")
     if mol.GetNumConformers() == 0:
         raise HTTPException(400, "fragment SDF has no 3D conformer (need the bound pose)")
     receptor_atoms = load_receptor_atoms((await receptor.read()).decode("utf-8", "replace"))
+    if refine:
+        return assess_with_stubs(mol, receptor_atoms)
     return assess_fragment(mol, receptor_atoms)
 
 

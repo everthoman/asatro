@@ -43,6 +43,7 @@ class ExitVector:
     attach_idx: int
     attach_pos: np.ndarray       # (3,)
     direction: np.ndarray        # (3,) unit vector
+    leaving: tuple = ()          # fragment atom indices that leave (empty for amines)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +105,8 @@ def growth_vectors(mol: Chem.Mol, fg_class: str) -> List[ExitVector]:
             direction = _unit(-np.sum(nbr_dirs, axis=0))
             if direction is None:
                 continue
+            vectors.append(ExitVector(fg_class, attach, pos(attach), direction, ()))
+            continue
         else:
             drop = set()
             for m in mol.GetSubstructMatches(lq):
@@ -122,7 +125,8 @@ def growth_vectors(mol: Chem.Mol, fg_class: str) -> List[ExitVector]:
             direction = _unit(pos(lead) - pos(attach))
             if direction is None:
                 continue
-        vectors.append(ExitVector(fg_class, attach, pos(attach), direction))
+            vectors.append(ExitVector(fg_class, attach, pos(attach), direction,
+                                      tuple(sorted(drop))))
     return vectors
 
 
