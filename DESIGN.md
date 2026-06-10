@@ -43,10 +43,13 @@ ranked elaborations
 Each candidate reaction implies a **growth vector** — the bond that extends from the
 conserved core. Before spending search budget, screen vectors for pocket room:
 
-- **Geometric probe (fast, approximate):** from the bound pose, cast a cone along
-  each exit vector and measure free distance to the nearest receptor atoms. Vectors
-  blocked within ~2–3 Å are dead; survivors are ranked by open volume.
-- **Stub-growth sampling (slower, reliable):** for each surviving vector grow a few
+- **Geometric probe (fast, approximate) — IMPLEMENTED** (`accessibility.py`): from
+  the bound pose, cast a cone of directions along each exit vector and march each
+  out until it hits a receptor atom (`free` distance, capped at `max_reach`). A
+  vector is accessible if its best direction clears `min_free`; survivors carry
+  `free_central / mean_free / max_free / open_fraction` for ranking. Tunable via
+  `ProbeParams`. Exposed as `POST /prune` (fragment SDF + receptor PDB).
+- **Stub-growth sampling (slower, reliable) — TODO:** for each surviving vector grow a few
   minimal stubs (–Me, –Ph, –morpholine), constrained-place them, and keep only
   vectors where *some* stub places without clashing. A vector where even a methyl
   clashes is inaccessible → prune that reaction/slot from the main run.

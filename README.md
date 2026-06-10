@@ -42,7 +42,17 @@ curl 'http://localhost:5023/analyze?smiles=OC(=O)c1ccncc1'
 python -m pytest tests/                                # 7 passing
 ```
 
-Still to build: accessibility pruning of growth vectors, and the Thompson-Sampled
+The **accessibility pre-pass** is in too (`asatro/chemistry/accessibility.py`):
+from the bound pose each handle defines a growth vector, and a cone probe measures
+how far it reaches before hitting receptor atoms — vectors that can't clear room
+are pruned before any docking.
+
+```bash
+# fragment SDF (in its bound pose) + receptor PDB -> analysis + accessible reactions
+curl -F fragment=@hit.sdf -F receptor=@receptor.pdb http://localhost:5023/prune
+```
+
+Still to build: the stub-growth refinement of survivors, and the Thompson-Sampled
 growth + constrained placement + GNINA scoring. Those will reuse pieces from the
 TS repo (`anchored_fragment_evaluator.py`, the TS sampler stack), lifted in
 deliberately. See [DESIGN.md](DESIGN.md).
