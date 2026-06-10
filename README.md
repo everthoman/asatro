@@ -1,0 +1,50 @@
+# Asatro
+
+**A** **S**ophisticated (or **S**imple) **A**pproach **T**o f**R**agment gr**O**wing.
+
+Asatro grows elaborations from a **bound fragment** in its crystallographic pose,
+choosing what to make and where with **Thompson Sampling** over reaction × reactant
+space, and placing each candidate by constrained docking onto the original pose.
+
+It is a sibling of — but deliberately distinct from — the TS+GNINA combinatorial
+web app (`/opt/webapps/TS`), which Asatro's fragment functionality was split out of.
+
+## Why it's different from Syndirella
+
+Syndirella elaborates a base compound **retrosynthetically and exhaustively**:
+decompose a known analogue, pull purchasable reactant analogues, enumerate the
+whole elaboration library, place every member (Fragmenstein), score. Cost scales
+with the enumerated library.
+
+Asatro instead is:
+
+1. **Forward & handle-driven** — it reads the reactive handles *on the bound
+   fragment itself* and proposes the reactions those handles enable; no
+   pre-existing analogue to retrosynthesize.
+2. **Thompson-Sampled, not enumerate-and-place** — each reactant slot is a bandit;
+   only a small, adaptively chosen subset is ever docked, so REAL-scale reactant
+   sets are tractable.
+3. **Pocket-aware** — a cheap accessibility pre-pass prunes growth vectors that can
+   only grow into protein walls *before* the search spends its docking budget.
+
+See [DESIGN.md](DESIGN.md) for the full pipeline and open decisions.
+
+## Status
+
+Early scaffold. This repo currently contains the project skeleton, the design
+doc, and a runnable (placeholder) FastAPI app. The chemistry/sampling engine is
+not yet built — reusable pieces live in the TS repo
+(`anchored_fragment_evaluator.py`, the TS sampler stack, the FG vocabulary) and
+will be lifted in deliberately.
+
+## Setup
+
+```bash
+conda env create -f environment.yml   # creates the `asatro` env
+conda activate asatro
+./run.sh                              # serves on http://0.0.0.0:${ASATRO_PORT:-5023}
+```
+
+The `asatro` conda env already exists on this host (python 3.11, rdkit, fastapi,
+uvicorn, openbabel). Docking will additionally need the `gnina` binary
+(see `/opt/webapps/gnina`).

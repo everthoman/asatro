@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.venv/
+venv/
+
+# Runtime artifacts
+jobs/
+*.log
+
+# OS / editor
+.DS_Store
+*.swp

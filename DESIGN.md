@@ -1,0 +1,90 @@
+# Asatro — design
+
+## Goal
+
+Given a **bound fragment** (a hit in its crystallographic pose) and its receptor,
+propose and rank synthetically reasonable **elaborations that grow the fragment
+into open pocket space**, while keeping the known binding mode fixed.
+
+## Pipeline
+
+```
+bound fragment (SDF, in pose) + receptor
+        │
+        ▼
+1. Handle / vector detection   ── what can chemistry do to this scaffold?
+        │
+        ▼
+2. Accessibility pruning       ── which growth directions have room in the pocket?
+        │
+        ▼
+3. Thompson-Sampled growth     ── search reaction × reactant library, constrained-
+   + constrained placement        place onto the bound pose, score by GNINA
+        │
+        ▼
+ranked elaborations
+```
+
+### 1. Handle / vector detection
+
+- **Tier 1 — existing handles (have a prototype):** tag the fragment against a
+  functional-group SMARTS vocabulary; a start reaction is *compatible* when one of
+  its components accepts a class the fragment bears. The reacting handle defines a
+  conserved core (fragment minus the leaving atoms), auto-derived per FG class via
+  a `leaving_smarts` rule. Prototyped in the TS repo against the same vocabulary.
+- **Tier 2 — installable handles (ambitious):** positions with no handle but an
+  obvious **growth vector** (an aromatic C–H to halogenate/borylate, a derivatizable
+  position). "Proposable reactions" = existing handles ∪ installable vectors. This
+  is what makes Asatro feel like it reasons about the scaffold rather than reading
+  off a functional group.
+
+### 2. Accessibility pruning ("prune samples to find inaccessible areas")
+
+Each candidate reaction implies a **growth vector** — the bond that extends from the
+conserved core. Before spending search budget, screen vectors for pocket room:
+
+- **Geometric probe (fast, approximate):** from the bound pose, cast a cone along
+  each exit vector and measure free distance to the nearest receptor atoms. Vectors
+  blocked within ~2–3 Å are dead; survivors are ranked by open volume.
+- **Stub-growth sampling (slower, reliable):** for each surviving vector grow a few
+  minimal stubs (–Me, –Ph, –morpholine), constrained-place them, and keep only
+  vectors where *some* stub places without clashing. A vector where even a methyl
+  clashes is inaccessible → prune that reaction/slot from the main run.
+
+Net effect: the main search only ever explores growable directions.
+
+### 3. Thompson-Sampled growth + constrained placement
+
+- Each reactant slot is a bandit arm; Thompson Sampling docks only an adaptively
+  chosen subset of products, converging on good regions of a (potentially
+  REAL-scale) reactant library — the key edge over enumerate-and-place.
+- Placement = constrained embed onto the fragment's bound coordinates +
+  local-only docking + a core-drift guard (the `AnchoredFragmentEvaluator`
+  approach already built in the TS repo).
+- Scoring = GNINA (CNN optional); the conserved core is pinned so the score
+  reflects how well the *elaboration* extends the known mode, not a free re-dock.
+
+## Differentiation summary (vs Syndirella)
+
+| | Syndirella | Asatro |
+|---|---|---|
+| Direction | retrosynthetic (decompose an analogue) | forward (handles on the bound hit) |
+| Library coverage | enumerate then place | Thompson-Sampled subset |
+| Pocket awareness | scoring-time | explicit pre-pass pruning of dead vectors |
+| Placement | Fragmenstein | constrained embed + local docking + drift guard |
+
+## Open decisions (resolve when building)
+
+- **Tier-2 installable handles** in v1, or Tier-1 only first?
+- **Accessibility pruning**: geometric-only (fast) vs include stub-growth (reliable)?
+  Lean: Tier-1 + stub-growth first — already beats the retro/enumerate paradigm.
+- **Synthesizability**: rely on curated reactant sets, or add a retro-feasibility
+  filter on products? (TS edge is sampling; retro could be a post-filter.)
+
+## Reuse (lift later, deliberately — not copied yet)
+
+From `/opt/webapps/TS`: `anchored_fragment_evaluator.py` (constrained placement +
+drift guard, already pocket-anchored), `gnina_evaluator.py`/`evaluators.py`
+(docking + overridable `_prepare_pose`/`_extra_flags` hooks), the TS sampler stack
+(`thompson_sampling.py`, `route_sampler.py`, `reagent.py`, `ts_utils.py`,
+`disallow_tracker.py`), and the FG vocabulary + `reactions.json`.
