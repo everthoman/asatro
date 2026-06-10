@@ -87,8 +87,17 @@ Net effect: the main search only ever explores growable directions.
   files named by FG class + JSON config), `GET /jobs`, `GET /jobs/{id}`,
   `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream` (SSE). The docking runner is
   injectable, so the whole flow is tested without gnina.
-- TODO: curated reactant libraries for the non-fragment slots, and a real gnina
-  dock run (binary + GPU) to validate scoring; a browser UI on top of the routes.
+- **Master reagent pool** (`pool.py`): instead of a curated library per slot, one
+  tagged `.smi` pool — each block desalted + neutralized and tagged with every
+  vocabulary class it bears; a reaction component is served the union of blocks
+  matching the classes it accepts (so choosing a reaction *is* the pruning).
+  `Pool.counts()` is the annotated view; `pool_resolver` writes the pruned
+  per-component `.smi`. `/pool-preview` annotates a pool; `/grow` takes either a
+  `pool` or per-class `reactants`; the UI offers both with a live annotate preview.
+  (Simplification: difunctional blocks land in every matching class — no conflict
+  exclusion yet.)
+- TODO: a real gnina dock run (binary + GPU) to validate scoring; conflict-aware
+  pool tagging; persisted/curated pools.
 
 ## Differentiation summary (vs Syndirella)
 

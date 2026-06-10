@@ -125,3 +125,39 @@ def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
         assert d["status"] == "done", d
         assert d["result"]["accessible_reactions"] == ["suzuki"]
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
+
+
+def test_growth_job_with_master_pool(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)                     # bromobenzene -> suzuki (boronic)
+    pool = tmp_path / "pool.smi"
+    pool.write_text("OB(O)c1ccccc1 phB\nOB(O)c1ccc(C)cc1 tolB\nCCC(=O)O acid\n")
+
+    calls = []
+    def runner(**k):
+        calls.append(k)
+        return ([[-7.0, "X", "x"]], None)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="", pool_path=str(pool),
+        cfg={"num_cycles": 1}, runner=runner)
+    _await(job)
+    assert job.status == "done"
+    assert len(calls) == 1
+    # the pool was pruned to the boronic component (2 boronics, not the acid)
+    boronic_smi = calls[0]["reactant_files"][1]
+    names = [l.split()[1] for l in open(boronic_smi).read().splitlines() if l.strip()]
+    assert sorted(names) == ["phB", "tolB"]
+
+
+def test_pool_preview_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        r = client.post("/pool-preview", files={
+            "pool": ("pool.smi", b"NCc1ccccc1 a\nOB(O)c1ccccc1 b\nc1ccccc1 none\n", "text/plain")})
+        assert r.status_code == 200
+        j = r.json()
+        assert j["n_total"] == 3 and j["n_untagged"] == 1
+        assert j["counts"].get("primary_amine") == 1 and j["counts"].get("boronic") == 1

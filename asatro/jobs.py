@@ -107,7 +107,8 @@ def _summarize(out: dict, higher_is_better: Optional[bool]) -> dict:
 
 
 def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
-         reactant_by_class: Dict[str, str], cfg: dict, runner: Callable) -> None:
+         reactant_by_class: Dict[str, str], pool_path: Optional[str],
+         cfg: dict, runner: Callable) -> None:
     job.status = "running"
     _persist_meta(job)
     job.log(f"Growth job {job.id} started")
@@ -115,9 +116,18 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         def _runner(**kw):
             return runner(progress_callback=job.log, cancel_event=job.cancel_event, **kw)
 
+        if pool_path:
+            from asatro.pool import Pool, pool_resolver
+            pool = Pool.from_file(pool_path)
+            job.log(f"Master pool: {pool.n_tagged}/{pool.n_total} blocks tagged "
+                    f"— {pool.counts()}")
+            resolver = pool_resolver(pool, str(job.dir / "pool"))
+        else:
+            resolver = make_class_resolver(reactant_by_class)
+
         out = grow_accessible(
             fragment_sdf=fragment_path, receptor_pdb=receptor_path,
-            reactant_resolver=make_class_resolver(reactant_by_class),
+            reactant_resolver=resolver,
             work_dir=str(job.dir / "runs"), runner=_runner, log=job.log,
             refine=bool(cfg.get("refine", False)),
             num_warmup=int(cfg.get("num_warmup", 3)),
@@ -148,13 +158,15 @@ def _persist_meta(job: GrowthJob) -> None:
 
 
 def start_growth_job(*, fragment_path: str, receptor_path: str,
-                     reactant_by_class: Dict[str, str], cfg: Optional[dict] = None,
+                     reactant_by_class: Optional[Dict[str, str]] = None,
+                     pool_path: Optional[str] = None, cfg: Optional[dict] = None,
                      session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
     """Create a job dir, register the job, and run it in a background thread.
 
-    ``runner`` defaults to :func:`asatro.growth.run_growth` (resolved at call time
-    so it stays patchable) and is injectable so the job layer can be driven
-    without docking."""
+    Reactants come from either per-class files (``reactant_by_class``) or a single
+    tagged master pool (``pool_path``), pruned per reaction component. ``runner``
+    defaults to :func:`asatro.growth.run_growth` (resolved at call time so it stays
+    patchable) and is injectable so the job layer can be driven without docking."""
     runner = runner or run_growth
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
     job_dir = JOBS_DIR / job_id
@@ -163,7 +175,8 @@ def start_growth_job(*, fragment_path: str, receptor_path: str,
     JOBS[job_id] = job
     job.thread = threading.Thread(
         target=_run,
-        args=(job, fragment_path, receptor_path, reactant_by_class, cfg or {}, runner),
+        args=(job, fragment_path, receptor_path, reactant_by_class or {}, pool_path,
+              cfg or {}, runner),
         daemon=True,
     )
     job.thread.start()

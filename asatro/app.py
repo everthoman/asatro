@@ -90,17 +90,30 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
 # ---------------------------------------------------------------------------
 # Growth jobs
 # ---------------------------------------------------------------------------
+@app.post("/pool-preview")
+async def pool_preview(pool: UploadFile = File(...)) -> dict:
+    """Annotate a master reagent pool: how many building blocks fall in each
+    functional-group class (and how many carry no handle). This is the pruning a
+    reaction's slots would draw on."""
+    from asatro.pool import Pool
+    p = Pool.from_file((await pool.read()).decode("utf-8", "replace"))
+    return {"n_total": p.n_total, "n_tagged": p.n_tagged,
+            "n_untagged": p.n_total - p.n_tagged, "counts": p.counts()}
+
+
 @app.post("/grow")
 async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
                reactants: List[UploadFile] = File(default=[]),
+               pool: UploadFile = File(default=None),
                config: str = Form("{}"), session_name: str = Form("")) -> dict:
     """Start an accessibility-gated growth run as a background job.
 
-    Uploads: the bound fragment (SDF, in pose), the receptor (PDB), and one or
-    more reactant libraries (.smi) for the non-fragment slots — each file's name
-    stem is taken as its functional-group class (e.g. ``boronic.smi`` → the
-    ``boronic`` slot). ``config`` is JSON (refine, num_warmup, num_cycles,
-    num_to_select, seed, score_field, cnn_scoring). Returns the job id."""
+    Uploads: the bound fragment (SDF, in pose), the receptor (PDB), and the
+    building blocks for the non-fragment slots — EITHER a single tagged master
+    ``pool`` (.smi, pruned per reaction component by FG class) OR one ``reactants``
+    library per slot (each file's name stem = its FG class, e.g. ``boronic.smi``).
+    ``config`` is JSON (refine, num_warmup, num_cycles, num_to_select, seed,
+    score_field, cnn_scoring). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:
@@ -114,6 +127,11 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     frag_path.write_bytes(await fragment.read())
     rec_path.write_bytes(await receptor.read())
 
+    pool_path = None
+    if pool is not None and pool.filename:
+        pool_path = str(stage / "pool.smi")
+        Path(pool_path).write_bytes(await pool.read())
+
     reactant_by_class = {}
     for rf in reactants:
         cls = Path(rf.filename or "").stem
@@ -122,12 +140,13 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
         p = stage / f"reactant_{cls}.smi"
         p.write_bytes(await rf.read())
         reactant_by_class[cls] = str(p)
-    if not reactant_by_class:
-        raise HTTPException(400, "no reactant libraries uploaded (need .smi files named by FG class)")
+
+    if not pool_path and not reactant_by_class:
+        raise HTTPException(400, "provide a master pool (.smi) or per-class reactant libraries")
 
     job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
-                           reactant_by_class=reactant_by_class, cfg=cfg,
-                           session_name=session_name)
+                           reactant_by_class=reactant_by_class, pool_path=pool_path,
+                           cfg=cfg, session_name=session_name)
     return {"job_id": job.id, "status": job.status}
 
 

@@ -104,9 +104,27 @@
 
     <div class="panel" id="reactantPanel" style="display:none">
       <h2>3 &middot; Reactant libraries</h2>
-      <div class="muted">One <code>.smi</code> library per building-block slot the accessible
-        reactions need (SMILES&nbsp;name per line).</div>
-      <div id="reactantSlots"></div>
+      <div class="checkline">
+        <label style="margin:0">Source</label>
+        <select id="reagentSource" style="width:auto">
+          <option value="pool">Master pool (auto-prune)</option>
+          <option value="perclass">Per-class files</option>
+        </select>
+      </div>
+      <div id="poolBox">
+        <div class="muted">One tagged <code>.smi</code> pool; Asatro prunes it to each
+          slot by functional-group class. <code>SMILES name</code> per line.</div>
+        <input type="file" id="poolFile" accept=".smi">
+        <div class="row" style="margin-top:8px">
+          <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
+        </div>
+        <div id="poolPreview" class="muted" style="margin-top:8px"></div>
+      </div>
+      <div id="perClassBox" style="display:none">
+        <div class="muted">One <code>.smi</code> library per building-block slot the
+          accessible reactions need.</div>
+        <div id="reactantSlots"></div>
+      </div>
     </div>
 
     <div class="panel" id="growPanel" style="display:none">
@@ -254,16 +272,51 @@ function renderReactantSlots(){
   host.innerHTML = keys.map(cls =>
     `<label>${need[cls].label} <span class="chip">${need[cls].accepts.map(groupLabel).join(' / ')}</span></label>
      <input type="file" class="reactantFile" data-class="${cls}" accept=".smi">`).join('');
+  // The pool box lists which classes the chosen reactions will draw from.
+  el('poolBox').dataset.need = JSON.stringify(keys);
   el('growPanel').style.display = '';
+  togglePoolMode();
 }
+
+function poolMode(){ return el('reagentSource').value === 'pool'; }
+function togglePoolMode(){
+  const pm = poolMode();
+  el('poolBox').style.display = pm ? '' : 'none';
+  el('perClassBox').style.display = pm ? 'none' : '';
+}
+el('reagentSource').addEventListener('change', togglePoolMode);
+
+el('poolPreviewBtn').addEventListener('click', async ()=>{
+  const f = el('poolFile').files[0];
+  const out = el('poolPreview');
+  if (!f){ out.textContent = 'Choose a pool .smi first.'; return; }
+  out.textContent = 'Annotating…';
+  const fd = new FormData(); fd.append('pool', f);
+  try {
+    const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
+    const need = JSON.parse(el('poolBox').dataset.need || '[]');
+    const rows = Object.entries(d.counts).map(([c,n])=>{
+      const star = need.includes(c) ? ' ◀ needed' : '';
+      return `<div class="${need.includes(c)?'ok':''}">${groupLabel(c)}: ${n}${star}</div>`;
+    }).join('');
+    out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged (${d.n_untagged} no handle)</div>${rows}` +
+      (need.some(c=>!(c in d.counts)) ? `<div class="bad">⚠ pool has nothing for: ${need.filter(c=>!(c in d.counts)).map(groupLabel).join(', ')}</div>` : '');
+  } catch(e){ out.textContent = 'Preview failed: ' + e.message; }
+});
 
 // ---- launch growth (/grow) ----
 el('growBtn').addEventListener('click', async ()=>{
   if (!analysis){ return; }
-  const reactantInputs = [...document.querySelectorAll('.reactantFile')];
-  const missing = reactantInputs.filter(i => !i.files.length);
-  if (!reactantInputs.length){ alert('No accessible reactions to grow.'); return; }
-  if (missing.length){ alert('Upload a .smi library for every reactant slot.'); return; }
+  const fd = new FormData();
+  if (poolMode()){
+    if (!el('poolFile').files.length){ alert('Choose a master pool .smi (or switch to per-class files).'); return; }
+    fd.append('pool', el('poolFile').files[0], 'pool.smi');
+  } else {
+    const reactantInputs = [...document.querySelectorAll('.reactantFile')];
+    if (!reactantInputs.length){ alert('No accessible reactions to grow.'); return; }
+    if (reactantInputs.some(i => !i.files.length)){ alert('Upload a .smi library for every reactant slot.'); return; }
+    reactantInputs.forEach(i => fd.append('reactants', i.files[0], i.dataset.class + '.smi'));
+  }
 
   const cfg = {
     refine: el('refine').checked,
@@ -274,10 +327,8 @@ el('growBtn').addEventListener('click', async ()=>{
     cnn_scoring: el('cnnScoring').value,
     seed: el('seed').value ? parseInt(el('seed').value) : null,
   };
-  const fd = new FormData();
   fd.append('fragment', el('fragment').files[0]);
   fd.append('receptor', el('receptor').files[0]);
-  reactantInputs.forEach(i => fd.append('reactants', i.files[0], i.dataset.class + '.smi'));
   fd.append('config', JSON.stringify(cfg));
   fd.append('session_name', el('sessionName').value.trim());
 
