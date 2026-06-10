@@ -55,10 +55,16 @@ curl -F fragment=@hit.sdf -F receptor=@receptor.pdb -F refine=true \
      http://localhost:5023/prune          # + stub-growth refinement
 ```
 
-Still to build: the Thompson-Sampled growth + constrained placement + GNINA
-scoring. That will reuse pieces from the TS repo
-(`anchored_fragment_evaluator.py`, the TS sampler stack), lifted in deliberately.
-See [DESIGN.md](DESIGN.md).
+The **TS growth engine** is lifted in too. `asatro/engine/` holds standalone
+copies of the Thompson-Sampling + GNINA stack (`AnchoredFragmentEvaluator`,
+`RouteSampler`, …); `asatro/growth.py` wires them up: the bound fragment is fixed
+in one start-reaction slot, the reactant library is sampled in the other(s), and
+each product is constrained-placed onto the bound pose and scored by GNINA.
+`growth.run_growth(...)` runs warm-up + search. (The dock needs the `gnina`
+binary at `/opt/gnina/gnina.1.3.2` + a GPU; the rest runs anywhere.)
+
+Still to build: a job/endpoint layer (async runs + results/history) and curated
+reactant libraries for the non-fragment slots. See [DESIGN.md](DESIGN.md).
 
 ## Setup
 

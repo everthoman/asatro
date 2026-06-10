@@ -60,16 +60,23 @@ conserved core. Before spending search budget, screen vectors for pocket room:
 
 Net effect: the main search only ever explores growable directions.
 
-### 3. Thompson-Sampled growth + constrained placement
+### 3. Thompson-Sampled growth + constrained placement — ENGINE LIFTED (`growth.py`, `engine/`)
 
 - Each reactant slot is a bandit arm; Thompson Sampling docks only an adaptively
   chosen subset of products, converging on good regions of a (potentially
   REAL-scale) reactant library — the key edge over enumerate-and-place.
 - Placement = constrained embed onto the fragment's bound coordinates +
-  local-only docking + a core-drift guard (the `AnchoredFragmentEvaluator`
-  approach already built in the TS repo).
+  local-only docking + a core-drift guard (`AnchoredFragmentEvaluator`, lifted
+  into `asatro/engine/`).
 - Scoring = GNINA (CNN optional); the conserved core is pinned so the score
   reflects how well the *elaboration* extends the known mode, not a free re-dock.
+- Wiring: the bound fragment is fixed in one start-reaction slot (a one-entry
+  reagent file); `RouteSampler` samples the other slot(s). `growth.run_growth()`
+  builds the route, the anchored evaluator, and runs warm-up + search. Verified up
+  to constrained placement (a biphenyl grown onto a bound benzene); the dock
+  itself needs the gnina binary (`/opt/gnina/gnina.1.3.2`) + a GPU.
+- TODO: a job/endpoint layer (async runs, results, history) like the TS app, and
+  real reactant libraries for the non-fragment slots.
 
 ## Differentiation summary (vs Syndirella)
 

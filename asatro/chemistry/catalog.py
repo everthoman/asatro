@@ -62,3 +62,4 @@ def _load_reactions(path: Path) -> List[dict]:
 VOCAB = Vocab(DATA_DIR / "functional_groups.json")
 REACTIONS: List[dict] = _load_reactions(DATA_DIR / "reactions.json")
 START_REACTIONS: List[dict] = [r for r in REACTIONS if r.get("role") == "start"]
+REACTION_BY_ID: Dict[str, dict] = {r["id"]: r for r in REACTIONS}
