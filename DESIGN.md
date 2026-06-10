@@ -75,6 +75,11 @@ Net effect: the main search only ever explores growable directions.
   builds the route, the anchored evaluator, and runs warm-up + search. Verified up
   to constrained placement (a biphenyl grown onto a bound benzene); the dock
   itself needs the gnina binary (`/opt/gnina/gnina.1.3.2`) + a GPU.
+- **Pre-pass → growth connection** (`grow_accessible` / `plan_targets`): the
+  accessibility assessment gates the search — only accessible reaction/slots become
+  growth targets, each carrying its auto-derived conserved core; non-fragment
+  components are resolved to reactant files via an injectable resolver. So pruned
+  vectors never cost a docking call.
 - TODO: a job/endpoint layer (async runs, results, history) like the TS app, and
   real reactant libraries for the non-fragment slots.
 

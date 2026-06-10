@@ -13,15 +13,22 @@ handle is excluded.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from rdkit import Chem
 
+from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
 from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
+
+# A reactant resolver maps (reaction_id, component_index, accepts_classes) to a
+# .smi path for that non-fragment component, or None if it can't supply one.
+ReactantResolver = Callable[[str, int, List[str]], Optional[str]]
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -112,3 +119,88 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
     sampler.warm_up(num_warmup_trials=num_warmup)
     results = sampler.search(num_cycles=num_cycles)
     return results, evaluator
+
+
+# ---------------------------------------------------------------------------
+# Accessibility-gated growth: only grow vectors that survived the pre-pass.
+# ---------------------------------------------------------------------------
+@dataclass
+class GrowthTarget:
+    reaction_id: str
+    fragment_slot: int
+    fg_class: str
+    core_smarts: str
+
+
+def plan_targets(assessment: dict) -> List[GrowthTarget]:
+    """Turn an accessibility assessment into the list of growth targets to run:
+    one per accessible slot of each accessible reaction (a reaction with two
+    accessible slots — e.g. an amino-acid fragment in amide coupling — yields two
+    targets, the fragment growing as either partner). The auto-derived conserved
+    core is carried through as the placement anchor."""
+    targets: List[GrowthTarget] = []
+    for rid, info in assessment["reactions"].items():
+        if not info.get("accessible"):
+            continue
+        for slot in info["slots"]:
+            if not slot.get("accessible", True):
+                continue
+            targets.append(GrowthTarget(rid, slot["index"], slot["fg_class"],
+                                        slot["core_smarts"]))
+    return targets
+
+
+def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
+                    reactant_resolver: ReactantResolver, work_dir: str,
+                    refine: bool = False, probe_params: Optional[ProbeParams] = None,
+                    stub_params: Optional[StubParams] = None,
+                    runner: Callable = run_growth, **growth_opts) -> dict:
+    """Run the accessibility pre-pass, then grow only the surviving reaction/slots.
+
+    For each accessible target, the non-fragment components are resolved to
+    reactant files via ``reactant_resolver``; targets missing a reactant are
+    recorded as skipped (not grown). ``runner`` defaults to :func:`run_growth`
+    and is injectable so the pipeline can be exercised without docking.
+
+    Returns ``{assessment, targets, runs}`` — ``runs`` carries each target's
+    resolved reactant files and the runner's result (or a skip reason)."""
+    mol = Chem.MolFromMolFile(fragment_sdf, removeHs=True)
+    if mol is None:
+        raise ValueError(f"could not read fragment SDF: {fragment_sdf}")
+    if mol.GetNumConformers() == 0:
+        raise ValueError("fragment SDF has no 3D conformer (need the bound pose)")
+    receptor = load_receptor_atoms(receptor_pdb)
+
+    if refine:
+        assessment = assess_with_stubs(mol, receptor, probe_params or ProbeParams(),
+                                       stub_params or StubParams())
+    else:
+        assessment = assess_fragment(mol, receptor, probe_params or ProbeParams())
+
+    targets = plan_targets(assessment)
+    runs: List[dict] = []
+    for t in targets:
+        rxn = REACTION_BY_ID[t.reaction_id]
+        reactant_files: Dict[int, str] = {}
+        missing = None
+        for ci, comp in enumerate(rxn["components"]):
+            if ci == t.fragment_slot:
+                continue
+            path = reactant_resolver(t.reaction_id, ci, comp.get("accepts", []))
+            if not path:
+                missing = ci
+                break
+            reactant_files[ci] = path
+        entry = {"target": t.__dict__, "reactant_files": reactant_files}
+        if missing is not None:
+            entry["skipped"] = f"no reactant library for component {missing}"
+            runs.append(entry)
+            continue
+        target_dir = Path(work_dir) / f"{t.reaction_id}_slot{t.fragment_slot}"
+        entry["result"] = runner(
+            fragment_sdf=fragment_sdf, receptor_path=receptor_pdb,
+            reaction_id=t.reaction_id, fragment_slot=t.fragment_slot,
+            core_smarts=t.core_smarts, reactant_files=reactant_files,
+            work_dir=str(target_dir), **growth_opts)
+        runs.append(entry)
+    return {"assessment": assessment, "targets": [t.__dict__ for t in targets], "runs": runs}
