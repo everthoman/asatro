@@ -25,7 +25,7 @@ from asatro.jobs import JOBS, list_jobs, start_growth_job
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
-PORT = int(os.environ.get("ASATRO_PORT", "5023"))
+PORT = int(os.environ.get("ASATRO_PORT", "5015"))
 
 # Static catalog the UI needs to render reaction names + slot labels.
 CATALOG = {

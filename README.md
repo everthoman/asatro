@@ -38,7 +38,7 @@ fills), and the conserved core auto-derived for each handle.
 
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
-curl 'http://localhost:5023/analyze?smiles=OC(=O)c1ccncc1'
+curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
 python -m pytest tests/                                # 17 passing
 ```
 
@@ -50,9 +50,9 @@ bound pose, and keeps only vectors where a substituent physically fits.
 
 ```bash
 # fragment SDF (in its bound pose) + receptor PDB -> analysis + accessible reactions
-curl -F fragment=@hit.sdf -F receptor=@receptor.pdb http://localhost:5023/prune
+curl -F fragment=@hit.sdf -F receptor=@receptor.pdb http://localhost:5015/prune
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb -F refine=true \
-     http://localhost:5023/prune          # + stub-growth refinement
+     http://localhost:5015/prune          # + stub-growth refinement
 ```
 
 The **TS growth engine** is lifted in too. `asatro/engine/` holds standalone
@@ -68,9 +68,9 @@ Growth runs as a **background job**:
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
      -F reactants=@boronic.smi \              # one .smi per FG-class slot
      -F 'config={"num_cycles":50,"refine":true}' \
-     http://localhost:5023/grow               # -> {"job_id": ...}
-curl http://localhost:5023/jobs/<id>          # status + per-target top hits
-curl http://localhost:5023/jobs/<id>/stream   # live console (SSE)
+     http://localhost:5015/grow               # -> {"job_id": ...}
+curl http://localhost:5015/jobs/<id>          # status + per-target top hits
+curl http://localhost:5015/jobs/<id>/stream   # live console (SSE)
 ```
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
@@ -90,10 +90,30 @@ gnina dock run to validate scoring. See [DESIGN.md](DESIGN.md).
 ```bash
 conda env create -f environment.yml   # creates the `asatro` env
 conda activate asatro
-./run.sh                              # serves on http://0.0.0.0:${ASATRO_PORT:-5023}
+./run.sh                              # serves on http://0.0.0.0:${ASATRO_PORT:-5015}
 ```
 
 The `asatro` conda env already exists on this host (python 3.11, rdkit, fastapi,
 uvicorn, openbabel). Docking will additionally need the `gnina` binary
 (see `/opt/webapps/gnina`).
+
+## Deployment (systemd + ufw)
+
+Runs as a systemd service on **port 5015**, reachable on the KTH network at
+`http://130.237.250.75:5015` (this host's IP; the app binds `0.0.0.0`). Mirrors the
+TS+GNINA app's setup. Requires `sudo`.
+
+```bash
+# Install + start the service (asatro-webapp.service is in this repo)
+sudo cp /opt/webapps/asatro/asatro-webapp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now asatro-webapp
+sudo systemctl status asatro-webapp        # check it came up
+```
+
+```bash
+# Firewall: allow the port from the KTH network only (same convention as ts-gnina)
+sudo ufw allow from 130.237.0.0/16 to any port 5015 proto tcp \
+     comment 'Asatro fragment-growing webapp (KTH only)'
+```
 # asatro

@@ -1,0 +1,16 @@
+[Unit]
+Description=Asatro — fragment-growing web app (Thompson Sampling + GNINA)
+After=network.target
+
+[Service]
+Type=simple
+User=evehom
+WorkingDirectory=/opt/webapps/asatro
+ExecStart=/home/evehom/Programs/miniconda3/envs/asatro/bin/uvicorn asatro.app:app --host 0.0.0.0 --port 5015
+Environment="GNINA_PATH=/opt/gnina/gnina.1.3.2"
+Environment="TS_DOCK_GPU=0"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
