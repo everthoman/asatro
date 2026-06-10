@@ -23,7 +23,7 @@ import numpy as np
 from rdkit import Chem
 
 from asatro.chemistry.catalog import VOCAB
-from asatro.chemistry.handles import analyze_fragment, to_mol
+from asatro.chemistry.handles import analyze_fragment, neutralize, to_mol
 
 
 @dataclass
@@ -198,6 +198,10 @@ def assess_fragment(mol: Chem.Mol, receptor: np.ndarray,
     slot/reaction. A slot is accessible if any of its growth vectors is; a slot
     whose geometry can't be resolved is left accessible (we only prune when we're
     confident a direction is blocked)."""
+    # Neutralize once (protonated amine / carboxylate -> neutral) and use this
+    # single mol for both the analysis and the geometry probe, so atom indices
+    # stay consistent. Hydrogens are implicit, so coordinates are preserved.
+    mol = neutralize(mol)
     analysis = analyze_fragment(mol)
     for rid, info in analysis["reactions"].items():
         if not info["compatible"]:

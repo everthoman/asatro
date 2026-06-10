@@ -21,6 +21,7 @@ from rdkit import Chem
 
 from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
 from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.handles import neutralize
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
@@ -32,10 +33,10 @@ ReactantResolver = Callable[[str, int, List[str]], Optional[str]]
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
-    mol = Chem.MolFromMolFile(fragment_sdf)
+    mol = Chem.MolFromMolFile(fragment_sdf, removeHs=True)
     if mol is None:
         raise ValueError(f"could not read fragment SDF: {fragment_sdf}")
-    return Chem.MolToSmiles(mol)
+    return Chem.MolToSmiles(neutralize(mol))  # neutral so reaction templates match
 
 
 def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:

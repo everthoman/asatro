@@ -1,4 +1,6 @@
 """Tier-1 handle detection + auto-core derivation."""
+from rdkit import Chem
+
 from asatro.chemistry.handles import analyze_fragment, derive_core, detect_fg_classes
 
 
@@ -48,3 +50,15 @@ def test_ketone_reductive_amination():
 
 def test_no_handle_no_reactions():
     assert _compat("c1ccccc1") == {}
+
+
+def test_protonated_and_charged_handles_detected():
+    # Bound poses from prep are charged at physiological pH; detection must
+    # neutralize first (protonated amine NH3+, deprotonated acid COO-).
+    assert detect_fg_classes("[NH3+]CCc1ccccc1") == ["primary_amine"]
+    assert detect_fg_classes("[O-]C(=O)c1ccncc1") == ["carboxylic_acid"]
+    a = analyze_fragment("[NH3+]CCc1ccccc1")
+    assert a["fragment_smiles"] == Chem.CanonSmiles("NCCc1ccccc1")   # neutral
+    assert a["reactions"]["amide"]["compatible"]
+    # acid carboxylate still derives the carbonyl-kept core
+    assert derive_core("[O-]C(=O)c1ccncc1", "carboxylic_acid") == "O=Cc1ccncc1"

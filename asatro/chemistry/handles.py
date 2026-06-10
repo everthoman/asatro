@@ -14,9 +14,13 @@ from typing import Dict, List, Optional, Union
 
 from rdkit import Chem
 
+from rdkit.Chem.MolStandardize import rdMolStandardize
+
 from asatro.chemistry.catalog import START_REACTIONS, VOCAB
 
 MolOrSmiles = Union[Chem.Mol, str]
+
+_UNCHARGER = rdMolStandardize.Uncharger()
 
 
 def to_mol(frag: MolOrSmiles) -> Chem.Mol:
@@ -29,9 +33,24 @@ def to_mol(frag: MolOrSmiles) -> Chem.Mol:
     return mol
 
 
+def neutralize(mol: Chem.Mol) -> Chem.Mol:
+    """Neutralize a fragment's charged groups before handle detection.
+
+    Bound poses from ligand prep are protonated at physiological pH — a primary
+    amine is ``[NH3+]`` (an NX4), a carboxylic acid is the carboxylate ``COO-`` —
+    neither of which matches the neutral vocabulary SMARTS (nor the reaction
+    templates). Uncharger restores the neutral forms. It only adjusts formal
+    charges and hydrogen counts, so 3D conformers and heavy-atom indices are
+    preserved (provided hydrogens are implicit, i.e. read with ``removeHs=True``)."""
+    try:
+        return _UNCHARGER.uncharge(mol)
+    except Exception:
+        return mol
+
+
 def detect_fg_classes(frag: MolOrSmiles) -> List[str]:
     """The functional-group classes the fragment bears (by vocabulary match)."""
-    mol = to_mol(frag)
+    mol = neutralize(to_mol(frag))
     return [name for name, q in VOCAB.query.items() if mol.HasSubstructMatch(q)]
 
 
@@ -45,7 +64,7 @@ def derive_core(frag: MolOrSmiles, fg_class: str) -> str:
     fragment's actual occurrence of the class, so an unrelated group elsewhere on
     the scaffold is left intact.
     """
-    mol = to_mol(frag)
+    mol = neutralize(to_mol(frag))
     lq = VOCAB.leaving.get(fg_class)
     if lq is None:
         return Chem.MolToSmiles(mol)
@@ -85,7 +104,7 @@ def analyze_fragment(frag: MolOrSmiles) -> dict:
     core it conserves there). Extend reactions are out of scope here — the
     fragment only seeds the first step.
     """
-    mol = to_mol(frag)
+    mol = neutralize(to_mol(frag))
     classes = set(detect_fg_classes(mol))
     reactions: Dict[str, dict] = {}
     for r in START_REACTIONS:

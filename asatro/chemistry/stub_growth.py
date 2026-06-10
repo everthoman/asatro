@@ -184,5 +184,7 @@ def assess_with_stubs(mol: Chem.Mol, receptor: np.ndarray,
                       gp=None, sp: StubParams = StubParams()) -> dict:
     """Geometric pre-pass followed by stub-growth refinement of the survivors."""
     from asatro.chemistry.accessibility import ProbeParams, assess_fragment
+    from asatro.chemistry.handles import neutralize
+    mol = neutralize(mol)   # match assess_fragment so stub indices line up
     analysis = assess_fragment(mol, receptor, gp or ProbeParams())
     return refine_assessment(mol, receptor, analysis, sp)
