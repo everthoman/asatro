@@ -76,8 +76,14 @@ curl http://localhost:5023/jobs/<id>/stream   # live console (SSE)
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
 
-Still to build: curated reactant libraries for the non-fragment slots, a real
-gnina dock run to validate scoring, and a browser UI. See [DESIGN.md](DESIGN.md).
+A **browser UI** (`templates/index.html`, served at `/`) drives the whole flow:
+upload the bound fragment + receptor → *Analyze accessibility* (shows detected
+handles, per-reaction accessible/pruned status, and each auto-core) → upload a
+`.smi` library per surviving building-block slot → *Launch growth*, with a live
+SSE console, per-target results tables, and a job-history picker. Dark/light theme.
+
+Still to build: curated reactant libraries for the non-fragment slots, and a real
+gnina dock run to validate scoring. See [DESIGN.md](DESIGN.md).
 
 ## Setup
 

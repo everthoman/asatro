@@ -1,32 +1,365 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Asatro</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 8vh auto;
-           padding: 0 20px; color: #1a1a1a; line-height: 1.55; }
-    h1 { margin-bottom: 4px; }
-    .sub { color: #666; margin-top: 0; }
-    code { background: #f2f2f2; padding: 1px 5px; border-radius: 4px; }
-    .tag { display:inline-block; background:#eef; color:#334; border-radius:6px;
-           padding:2px 8px; font-size:12px; margin-right:6px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asatro</title>
+<script>
+  // Apply saved theme before paint to avoid a flash.
+  try { document.documentElement.setAttribute('data-theme', localStorage.getItem('asatro_theme') || 'dark'); } catch(e){}
+</script>
+<style>
+  :root {
+    --bg:#0f1420; --panel:#1a2132; --accent:#4f9cff; --ok:#39c46e; --warn:#ffb347; --err:#ff5d5d;
+    --text:#e6ecf5; --muted:#8b97ad; --border:#2a3550; --border2:#2f3a57; --field-bg:#0d121d;
+    --inset-bg:#070a11; --step-bg:#131a29; --ghost-bg:#28324c; --del-bg:#3a2330; --bar-from:#234a7a;
+    --header-grad:linear-gradient(90deg,#162038,#0f1420);
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f7; --panel:#ffffff; --accent:#1f6fd0; --ok:#1f9d57; --warn:#b9740f; --err:#d83b3b;
+    --text:#1b2230; --muted:#586577; --border:#d6dce8; --border2:#c6cee0; --field-bg:#f6f8fc;
+    --inset-bg:#eef1f7; --step-bg:#f7f9fc; --ghost-bg:#e4eaf5; --del-bg:#f6e0e6; --bar-from:#7fb0ee;
+    --header-grad:linear-gradient(90deg,#e8eef9,#f4f6fb);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 26px; border-bottom:1px solid var(--border); background:var(--header-grad); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  #themeToggle { flex:0 0 auto; align-self:center; white-space:nowrap; }
+  .wrap { display:grid; grid-template-columns:1.05fr 1fr; gap:18px; padding:18px 26px; }
+  @media (max-width:1000px){ .wrap{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 12px; font-size:15px; color:var(--accent); letter-spacing:.3px; }
+  label { display:block; font-size:13px; margin:10px 0 4px; color:var(--muted); }
+  input[type=text], input[type=number], select { width:100%; padding:8px 10px; background:var(--field-bg); border:1px solid var(--border2); border-radius:7px; color:var(--text); font-size:13px; }
+  input[type=file]{ width:100%; font-size:12px; color:var(--muted); }
+  code { background:var(--field-bg); padding:1px 5px; border-radius:4px; font-size:11px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; }
+  .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  button { cursor:pointer; border:none; border-radius:7px; padding:9px 14px; font-size:13px; font-weight:600; }
+  .btn { background:var(--accent); color:#fff; } .btn:hover{ filter:brightness(1.1); }
+  .btn.ghost { background:var(--ghost-bg); color:var(--text); }
+  .btn.danger { background:var(--err); color:#fff; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .step { border:1px solid var(--border2); border-radius:8px; padding:10px 12px; margin-bottom:9px; background:var(--step-bg); }
+  .step .head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .step .head b { color:var(--accent); font-size:13px; }
+  .step.pruned { opacity:.5; }
+  .chip { display:inline-block; font-size:11px; color:var(--text); background:var(--ghost-bg); border-radius:999px; padding:2px 9px; margin:2px 4px 2px 0; }
+  .checkline { display:flex; align-items:center; gap:8px; margin:10px 0 2px; }
+  .checkline input { width:auto; }
+  #log { background:var(--inset-bg); border:1px solid var(--border); border-radius:8px; padding:12px; height:360px; overflow:auto; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; }
+  .muted { color:var(--muted); font-size:12px; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; color:#fff; }
+  .status-queued{ background:#2a3550; } .status-running{ background:#234a7a; } .status-done{ background:#1d5e38; } .status-error{ background:#5e1d1d; } .status-cancelled{ background:#5e4a1d; }
+  .ok { color:var(--ok); } .bad { color:var(--err); } .warn { color:var(--warn); }
+  .note { font-size:12px; color:var(--warn); margin-top:8px; }
+  table.hits { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
+  table.hits th, table.hits td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border2); }
+  table.hits td.smi { font-family:ui-monospace,Menlo,monospace; color:var(--muted); word-break:break-all; }
+  table.hits td.score { font-weight:700; }
+  .jobbar { display:flex; gap:8px; align-items:center; }
+  .jobbar select { flex:1; min-width:0; }
+  .target-block { margin-top:12px; }
+  .target-block h3 { font-size:13px; margin:0 0 2px; }
+  .sub { font-size:11.5px; color:var(--muted); }
+</style>
 </head>
 <body>
-  <h1>Asatro</h1>
-  <p class="sub">A Sophisticated (or Simple) Approach To fRagment grOwing
-    &middot; v__VERSION__</p>
-  <p>
-    <span class="tag">forward, handle-driven</span>
-    <span class="tag">Thompson-Sampled</span>
-    <span class="tag">pocket-aware</span>
-  </p>
-  <p>Grow elaborations from a <b>bound fragment</b> in its pose — proposing the
-     reactions its handles enable, pruning growth vectors that hit pocket walls,
-     and searching reaction&nbsp;&times;&nbsp;reactant space with Thompson Sampling.</p>
-  <p>This is an early scaffold. See <code>DESIGN.md</code> for the plan.
-     Health check: <code>/health</code>.</p>
+<header>
+  <div>
+    <h1>Asatro</h1>
+    <p>A Sophisticated (or Simple) Approach To fRagment grOwing &middot; v__VERSION__ &mdash;
+       forward, Thompson-Sampled, pocket-aware fragment growing</p>
+  </div>
+  <button id="themeToggle" class="btn ghost">☀ Light</button>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: configuration -->
+  <div>
+    <div class="panel">
+      <h2>1 &middot; Bound fragment &amp; receptor</h2>
+      <div class="muted">Upload the fragment hit in its <b>bound pose</b> (SDF, 3D) and the prepared
+        receptor (PDB). Asatro reads the fragment's reactive handles, derives a conserved core for
+        each, and probes the pocket for room to grow.</div>
+      <label>Bound fragment (SDF, in pose)</label>
+      <input type="file" id="fragment" accept=".sdf,.mol">
+      <label>Receptor (PDB)</label>
+      <input type="file" id="receptor" accept=".pdb">
+      <div class="checkline"><input type="checkbox" id="refine">
+        <label style="margin:0">Stub-growth refinement (slower, more reliable)</label></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="analyzeBtn" type="button">Analyze accessibility</button>
+      </div>
+      <div id="analyzeNote" class="note" style="display:none"></div>
+    </div>
+
+    <div class="panel" id="resultsPanel" style="display:none">
+      <h2>2 &middot; Handles &amp; accessible reactions</h2>
+      <div id="fgClasses" style="margin-bottom:8px"></div>
+      <div id="reactionList"></div>
+    </div>
+
+    <div class="panel" id="reactantPanel" style="display:none">
+      <h2>3 &middot; Reactant libraries</h2>
+      <div class="muted">One <code>.smi</code> library per building-block slot the accessible
+        reactions need (SMILES&nbsp;name per line).</div>
+      <div id="reactantSlots"></div>
+    </div>
+
+    <div class="panel" id="growPanel" style="display:none">
+      <h2>4 &middot; Growth run</h2>
+      <div class="grid3">
+        <div><label>Search cycles</label><input type="number" id="numCycles" value="50" min="1"></div>
+        <div><label>Warm-up / arm</label><input type="number" id="numWarmup" value="3" min="1"></div>
+        <div><label>Reagents cap</label><input type="number" id="numToSelect" placeholder="all"></div>
+      </div>
+      <div class="grid3">
+        <div><label>Score field</label>
+          <select id="scoreField">
+            <option value="minimizedAffinity">minimizedAffinity</option>
+            <option value="CNNaffinity">CNNaffinity</option>
+            <option value="CNNscore">CNNscore</option>
+          </select></div>
+        <div><label>CNN scoring</label>
+          <select id="cnnScoring">
+            <option value="none">none (fast)</option>
+            <option value="rescore">rescore</option>
+          </select></div>
+        <div><label>Seed</label><input type="number" id="seed" placeholder="random"></div>
+      </div>
+      <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
+      <input type="text" id="sessionName" placeholder="e.g. NUDT15_frag1">
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="growBtn" type="button">Launch growth</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: run -->
+  <div>
+    <div class="panel">
+      <h2>Run <span id="statusPill" class="pill status-queued" style="display:none">queued</span></h2>
+      <div class="jobbar" style="margin-bottom:10px">
+        <select id="history"><option value="">— job history —</option></select>
+        <button class="btn ghost" id="refreshJobs" type="button">↻</button>
+        <button class="btn danger" id="cancelBtn" type="button" style="display:none">Cancel</button>
+      </div>
+      <div id="log" class="muted">No run yet. Upload a fragment + receptor and analyze.</div>
+    </div>
+
+    <div class="panel" id="hitsPanel" style="display:none">
+      <h2>Results</h2>
+      <div id="hits"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CATALOG = __CATALOG_JSON__;
+const RXN = Object.fromEntries(CATALOG.reactions.map(r => [r.id, r]));
+const groupLabel = c => CATALOG.groups[c] || c;
+let analysis = null;       // last /prune response
+let currentJob = null;
+let evtSource = null;
+
+// ---- theme ----
+const themeToggle = document.getElementById('themeToggle');
+function applyTheme(t){ document.documentElement.setAttribute('data-theme', t);
+  themeToggle.textContent = t === 'light' ? '🌙 Dark' : '☀ Light'; }
+applyTheme(localStorage.getItem('asatro_theme') || 'dark');
+themeToggle.addEventListener('click', ()=>{
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem('asatro_theme', next); } catch(e){}
+  applyTheme(next);
+});
+
+function el(id){ return document.getElementById(id); }
+function logLine(s){ const L = el('log'); L.classList.remove('muted');
+  L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
+function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
+
+// ---- analyze (/prune) ----
+el('analyzeBtn').addEventListener('click', async ()=>{
+  const f = el('fragment').files[0], r = el('receptor').files[0];
+  const note = el('analyzeNote');
+  if (!f || !r){ note.style.display=''; note.textContent='Upload both a fragment SDF and a receptor PDB.'; return; }
+  note.style.display='none';
+  el('analyzeBtn').disabled = true; el('analyzeBtn').textContent = 'Analyzing…';
+  const fd = new FormData();
+  fd.append('fragment', f); fd.append('receptor', r);
+  fd.append('refine', el('refine').checked ? 'true' : 'false');
+  try {
+    const res = await fetch('/prune', { method:'POST', body:fd });
+    if (!res.ok){ throw new Error(await res.text()); }
+    analysis = await res.json();
+    renderAnalysis();
+  } catch(e){ note.style.display=''; note.textContent = 'Analyze failed: ' + e.message; }
+  el('analyzeBtn').disabled = false; el('analyzeBtn').textContent = 'Analyze accessibility';
+});
+
+function renderAnalysis(){
+  el('resultsPanel').style.display = '';
+  el('fgClasses').innerHTML = '<span class="muted">Handles:</span> ' +
+    (analysis.fg_classes.length ? analysis.fg_classes.map(c=>`<span class="chip">${groupLabel(c)}</span>`).join('')
+      : '<span class="bad">none detected — this scaffold has no reactive handle</span>');
+
+  const list = el('reactionList'); list.innerHTML = '';
+  for (const [rid, info] of Object.entries(analysis.reactions)){
+    if (!info.compatible) continue;
+    const rx = RXN[rid] || {name: rid, components: []};
+    const acc = info.accessible;
+    const div = document.createElement('div');
+    div.className = 'step' + (acc ? '' : ' pruned');
+    const slots = (info.slots||[]).map(s=>{
+      const v = (s.vectors||[])[0];
+      const reach = v ? ` · reach ${('max_free' in v)? v.max_free+'Å':''}${v.fits?(' · fits '+v.fits.join('/')):''}` : '';
+      const ok = s.accessible !== false;
+      return `<div class="sub">slot ${s.index} = ${groupLabel(s.fg_class)} ·
+        core <code>${s.core_smarts}</code> <span class="${ok?'ok':'bad'}">${ok?'accessible':'blocked'}</span>${reach}</div>`;
+    }).join('');
+    div.innerHTML = `<div class="head"><b>${rx.name}</b>
+      <span class="${acc?'ok':'bad'}">${acc?'✓ accessible':'✗ pruned'}</span></div>${slots}`;
+    list.appendChild(div);
+  }
+  renderReactantSlots();
+}
+
+// Which building-block libraries the accessible reactions need (non-fragment slots).
+function neededClasses(){
+  const need = {};   // representative class -> {label, accepts}
+  for (const [rid, info] of Object.entries(analysis.reactions)){
+    if (!info.accessible) continue;
+    const rx = RXN[rid]; if (!rx) continue;
+    for (const slot of info.slots){
+      if (slot.accessible === false) continue;
+      rx.components.forEach((c, ci)=>{
+        if (ci === slot.index) return;            // the fragment's slot
+        const cls = (c.accepts||[])[0]; if (!cls) return;
+        need[cls] = { label: c.label, accepts: c.accepts };
+      });
+    }
+  }
+  return need;
+}
+
+function renderReactantSlots(){
+  const need = neededClasses();
+  const keys = Object.keys(need);
+  const panel = el('reactantPanel'), host = el('reactantSlots');
+  if (!keys.length){ panel.style.display='none'; el('growPanel').style.display = analysis ? '' : 'none'; return; }
+  panel.style.display = '';
+  host.innerHTML = keys.map(cls =>
+    `<label>${need[cls].label} <span class="chip">${need[cls].accepts.map(groupLabel).join(' / ')}</span></label>
+     <input type="file" class="reactantFile" data-class="${cls}" accept=".smi">`).join('');
+  el('growPanel').style.display = '';
+}
+
+// ---- launch growth (/grow) ----
+el('growBtn').addEventListener('click', async ()=>{
+  if (!analysis){ return; }
+  const reactantInputs = [...document.querySelectorAll('.reactantFile')];
+  const missing = reactantInputs.filter(i => !i.files.length);
+  if (!reactantInputs.length){ alert('No accessible reactions to grow.'); return; }
+  if (missing.length){ alert('Upload a .smi library for every reactant slot.'); return; }
+
+  const cfg = {
+    refine: el('refine').checked,
+    num_cycles: parseInt(el('numCycles').value)||50,
+    num_warmup: parseInt(el('numWarmup').value)||3,
+    num_to_select: el('numToSelect').value ? parseInt(el('numToSelect').value) : null,
+    score_field: el('scoreField').value,
+    cnn_scoring: el('cnnScoring').value,
+    seed: el('seed').value ? parseInt(el('seed').value) : null,
+  };
+  const fd = new FormData();
+  fd.append('fragment', el('fragment').files[0]);
+  fd.append('receptor', el('receptor').files[0]);
+  reactantInputs.forEach(i => fd.append('reactants', i.files[0], i.dataset.class + '.smi'));
+  fd.append('config', JSON.stringify(cfg));
+  fd.append('session_name', el('sessionName').value.trim());
+
+  el('growBtn').disabled = true;
+  el('log').classList.remove('muted'); el('log').textContent = '';
+  el('hitsPanel').style.display = 'none';
+  setStatus('queued');
+  try {
+    const res = await fetch('/grow', { method:'POST', body:fd });
+    if (!res.ok){ throw new Error(await res.text()); }
+    const { job_id } = await res.json();
+    attachStream(job_id);
+    loadHistory();
+  } catch(e){ logLine('Error: ' + e.message); setStatus('error'); }
+  el('growBtn').disabled = false;
+});
+
+function attachStream(jobId){
+  currentJob = jobId;
+  el('cancelBtn').style.display = '';
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource(`/jobs/${jobId}/stream`);
+  evtSource.onmessage = ev => { setStatus('running'); logLine(ev.data); };
+  evtSource.addEventListener('end', async ev => {
+    evtSource.close(); el('cancelBtn').style.display = 'none';
+    setStatus(ev.data);
+    const d = await (await fetch(`/jobs/${jobId}`)).json();
+    renderHits(d.result);
+    loadHistory();
+  });
+  evtSource.onerror = ()=>{ /* stream closed; status came via the end event */ };
+}
+
+el('cancelBtn').addEventListener('click', async ()=>{
+  if (!currentJob) return;
+  await fetch(`/jobs/${currentJob}/cancel`, { method:'POST' });
+  logLine('Cancellation requested…');
+});
+
+function renderHits(result){
+  const panel = el('hitsPanel'), host = el('hits');
+  if (!result || !result.runs){ panel.style.display='none'; return; }
+  panel.style.display = '';
+  let html = `<div class="muted">Handles ${ (result.fg_classes||[]).map(groupLabel).join(', ') || '—'} ·
+    accessible reactions ${ (result.accessible_reactions||[]).join(', ') || '—'}</div>`;
+  for (const run of result.runs){
+    const t = run.target;
+    const rx = RXN[t.reaction_id] || {name:t.reaction_id};
+    html += `<div class="target-block"><h3>${rx.name}
+      <span class="sub">slot ${t.fragment_slot} · core <code>${t.core_smarts}</code></span></h3>`;
+    if (run.skipped){ html += `<div class="warn">skipped — ${run.skipped}</div></div>`; continue; }
+    html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }</div>`;
+    html += `<table class="hits"><thead><tr><th>#</th><th>score</th><th>name</th><th>SMILES</th></tr></thead><tbody>`;
+    (run.top||[]).forEach((h,i)=>{ html += `<tr><td>${i+1}</td><td class="score">${(+h.score).toFixed(2)}</td>
+      <td>${h.name}</td><td class="smi">${h.smiles}</td></tr>`; });
+    html += `</tbody></table></div>`;
+  }
+  host.innerHTML = html;
+}
+
+// ---- history ----
+async function loadHistory(){
+  try {
+    const d = await (await fetch('/jobs')).json();
+    const sel = el('history'); const cur = sel.value;
+    sel.innerHTML = '<option value="">— job history —</option>' +
+      d.jobs.map(j => `<option value="${j.id}">${j.id} · ${j.status} · ${j.n_targets||0} target(s)</option>`).join('');
+    sel.value = cur;
+  } catch(e){}
+}
+el('refreshJobs').addEventListener('click', loadHistory);
+el('history').addEventListener('change', async e=>{
+  const id = e.target.value; if (!id) return;
+  const d = await (await fetch(`/jobs/${id}`)).json();
+  setStatus(d.status);
+  el('log').classList.remove('muted');
+  el('log').textContent = `Loaded job ${id} (${d.status}).`;
+  if (d.status === 'running' || d.status === 'queued') attachStream(id);
+  renderHits(d.result);
+});
+
+loadHistory();
+</script>
 </body>
 </html>

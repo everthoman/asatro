@@ -19,6 +19,7 @@ from rdkit import Chem
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
+from asatro.chemistry.catalog import REACTIONS, VOCAB
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, list_jobs, start_growth_job
 
@@ -26,12 +27,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
 PORT = int(os.environ.get("ASATRO_PORT", "5023"))
 
+# Static catalog the UI needs to render reaction names + slot labels.
+CATALOG = {
+    "reactions": [
+        {"id": r["id"], "name": r["name"], "role": r.get("role"),
+         "components": [{"label": c["label"], "accepts": c.get("accepts", [])}
+                        for c in r["components"]]}
+        for r in REACTIONS
+    ],
+    "groups": {k: g.get("label", k) for k, g in VOCAB.groups.items()},
+}
+
 app = FastAPI(title="Asatro", version=__version__)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
-    return HTMLResponse(INDEX_HTML.replace("__VERSION__", __version__))
+    html = (INDEX_HTML
+            .replace("__VERSION__", __version__)
+            .replace("__CATALOG_JSON__", json.dumps(CATALOG)))
+    return HTMLResponse(html)
 
 
 @app.get("/health")
