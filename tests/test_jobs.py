@@ -30,6 +30,34 @@ def _fake_runner(**kwargs):
     return ([[-7.5, "GROWN_SMILES", "frag_phB"], [-6.1, "OTHER", "frag_x"]], None)
 
 
+class _FakeEvaluator:
+    """Minimal stand-in for a real GninaEvaluator: tracks every dock (warm-up
+    included) in its own cache, independent of what ``search()`` returns."""
+    higher_is_better = False
+
+    def __init__(self, rows):
+        self._rows = rows  # [(score, smiles, name), ...]
+
+    def top_scored(self, n=12):
+        return sorted(self._rows, key=lambda r: r[0])[:n]
+
+    def stats(self):
+        return {"unique_scored": len(self._rows)}
+
+    def write_top_poses(self, path, n=100):
+        w = Chem.SDWriter(path)
+        written = 0
+        for score, smi, name in sorted(self._rows, key=lambda r: r[0])[:n]:
+            m = Chem.AddHs(Chem.MolFromSmiles(smi))
+            AllChem.EmbedMolecule(m, randomSeed=1)
+            m = Chem.RemoveHs(m)
+            m.SetProp("_Name", name)
+            w.write(m)
+            written += 1
+        w.close()
+        return written
+
+
 def _await(job, timeout=10):
     t0 = time.time()
     while job.status in ("queued", "running") and time.time() - t0 < timeout:
@@ -55,6 +83,33 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
     # persisted to disk
     assert (job.dir / "results.json").is_file()
     assert any("Growing suzuki" in ln for ln in job.lines)
+
+
+def test_growth_job_summarizes_from_evaluator_not_search_rows(tmp_path, monkeypatch):
+    """Regression: with a real evaluator, warm-up docks (one per reagent --
+    always real docking work) must survive into the summary even when
+    search() itself returns nothing new. This is the normal case whenever the
+    reagent library is small enough that warm-up alone exhausts it -- a real
+    ``run_growth`` call there returns ([], evaluator), and the old code that
+    only looked at the (empty) rows silently dropped every scored product."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    ev = _FakeEvaluator([(-9.5, "c1ccccc1", "a"), (-7.0, "CCO", "b")])
+
+    def runner(**k):
+        return ([], ev)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
+    _await(job)
+    assert job.status == "done"
+    run = job.result["runs"][0]
+    assert run["n_docked"] == 2
+    assert run["top"][0]["score"] == -9.5 and run["top"][0]["smiles"] == "c1ccccc1"
+    assert run["poses"] == "poses_0.sdf"
+    assert (job.dir / "poses_0.sdf").is_file()
 
 
 def test_growth_job_skips_when_pruned(tmp_path, monkeypatch):

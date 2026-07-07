@@ -72,9 +72,12 @@ Net effect: the main search only ever explores growable directions.
   reflects how well the *elaboration* extends the known mode, not a free re-dock.
 - Wiring: the bound fragment is fixed in one start-reaction slot (a one-entry
   reagent file); `RouteSampler` samples the other slot(s). `growth.run_growth()`
-  builds the route, the anchored evaluator, and runs warm-up + search. Verified up
-  to constrained placement (a biphenyl grown onto a bound benzene); the dock
-  itself needs the gnina binary (`/opt/gnina/gnina.1.3.2`) + a GPU.
+  builds the route, the anchored evaluator, and runs warm-up + search.
+  **Real-dock validated**: an amide-coupling fragment carved from a genuine docked
+  pose (`7Z5B`, `/opt/webapps/TS` job data) was grown against a small amine
+  library through the full `/grow` job path, hitting the actual `gnina.1.3.2`
+  binary (both plain Vina `cnn_scoring=none` and GPU CNN `rescore`) — sane
+  affinities, low core RMSD (constrained placement holding), real poses written.
 - **Pre-pass → growth connection** (`grow_accessible` / `plan_targets`): the
   accessibility assessment gates the search — only accessible reaction/slots become
   growth targets, each carrying its auto-derived conserved core; non-fragment
@@ -85,8 +88,17 @@ Net effect: the main search only ever explores growable directions.
   console lines and persisting a per-target results summary + metadata under the
   job dir. Endpoints: `POST /grow` (fragment SDF + receptor PDB + reactant .smi
   files named by FG class + JSON config), `GET /jobs`, `GET /jobs/{id}`,
-  `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream` (SSE). The docking runner is
-  injectable, so the whole flow is tested without gnina.
+  `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream` (SSE), `GET
+  /jobs/{id}/poses/{file}` (download the docked SDF for a target). The docking
+  runner is injectable, so the whole flow is tested without gnina.
+  Fixed while validating against real gnina: `_summarize` was ranking only
+  `sampler.search()`'s return value, but warm-up docks (one per reagent, always
+  real docking work) never reappear there — so any run small enough for
+  warm-up alone to cover the library (the common case) reported `n_docked: 0`
+  and an empty top list despite real, successful docking. Now sourced from the
+  evaluator's own score cache (`top_scored`/`stats`) when one is given, which
+  also lets it persist the actual top poses (`write_top_poses`) per target —
+  previously discarded the moment the per-dock work dir was cleaned up.
 - **Master reagent pool** (`pool.py`): instead of a curated library per slot, one
   tagged `.smi` pool — each block desalted + neutralized and tagged with every
   vocabulary class it bears; a reaction component is served the union of blocks
@@ -96,8 +108,7 @@ Net effect: the main search only ever explores growable directions.
   `pool` or per-class `reactants`; the UI offers both with a live annotate preview.
   (Simplification: difunctional blocks land in every matching class — no conflict
   exclusion yet.)
-- TODO: a real gnina dock run (binary + GPU) to validate scoring; conflict-aware
-  pool tagging; persisted/curated pools.
+- TODO: conflict-aware pool tagging; persisted/curated pools.
 
 ## Differentiation summary (vs Syndirella)
 

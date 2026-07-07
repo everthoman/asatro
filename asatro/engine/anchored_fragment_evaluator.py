@@ -1,5 +1,7 @@
 """
-Anchored fragment-growing evaluator (SKETCH / not yet wired into the web app).
+Anchored fragment-growing evaluator. Wired into the web app via
+``asatro.growth.make_evaluator`` / ``run_growth``; real-dock validated against
+`gnina.1.3.2` + GPU (see DESIGN.md).
 
 Use case
 --------

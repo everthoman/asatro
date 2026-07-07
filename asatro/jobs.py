@@ -21,10 +21,20 @@ from typing import Callable, Dict, List, Optional
 from asatro.growth import grow_accessible, run_growth
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-JOBS_DIR = Path(os.environ.get("ASATRO_JOBS_DIR", str(BASE_DIR / "jobs")))
-JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 TOP_N = 25  # hits kept per target in the persisted summary
+
+
+def jobs_dir() -> Path:
+    """Resolved fresh on every call (not cached at import time) so that setting
+    ``ASATRO_JOBS_DIR`` -- including via ``monkeypatch.setenv`` in tests --
+    actually takes effect. A module-level constant here previously froze the
+    path at import time, so every test that set the env var to an isolated
+    ``tmp_path`` silently kept writing into the real package ``jobs/``
+    directory instead."""
+    d = Path(os.environ.get("ASATRO_JOBS_DIR", str(BASE_DIR / "jobs")))
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 @dataclass
@@ -83,10 +93,18 @@ def make_class_resolver(reactant_by_class: Dict[str, str]):
     return resolve
 
 
-def _summarize(out: dict, higher_is_better: Optional[bool]) -> dict:
-    """JSON-safe summary of a grow_accessible result: per target, the top hits."""
+def _summarize(out: dict, higher_is_better: Optional[bool], job_dir: Optional[Path] = None) -> dict:
+    """JSON-safe summary of a grow_accessible result: per target, the top hits.
+
+    ``sampler.search()`` only returns products docked during the *search*
+    phase — warm-up docks (one per reagent, always real docking work) are
+    never re-visited by search and so never appear in its return value. The
+    evaluator's score cache (``top_scored`` / ``stats``) covers warm-up *and*
+    search, so it — not the raw search rows — is the source of truth whenever
+    a real evaluator is available. Without one (the fake runners used in
+    tests) we fall back to ranking the rows we were handed directly."""
     runs = []
-    for r in out["runs"]:
+    for i, r in enumerate(out["runs"]):
         entry = {"target": r["target"]}
         if "skipped" in r:
             entry["skipped"] = r["skipped"]
@@ -94,10 +112,19 @@ def _summarize(out: dict, higher_is_better: Optional[bool]) -> dict:
             continue
         res = r["result"]
         rows, ev = res if isinstance(res, tuple) else (res, None)
-        hib = ev.higher_is_better if ev is not None else bool(higher_is_better)
-        ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
-        entry["n_docked"] = len(rows)
+        if ev is not None:
+            ranked = ev.top_scored(TOP_N)
+            n_docked = ev.stats()["unique_scored"]
+        else:
+            hib = bool(higher_is_better)
+            ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
+            n_docked = len(rows)
+        entry["n_docked"] = n_docked
         entry["top"] = [{"score": s, "smiles": sm, "name": nm} for s, sm, nm in ranked]
+        if ev is not None and job_dir is not None:
+            fname = f"poses_{i}.sdf"
+            if ev.write_top_poses(str(job_dir / fname), n=TOP_N) > 0:
+                entry["poses"] = fname
         runs.append(entry)
     return {
         "fg_classes": out["assessment"]["fg_classes"],
@@ -137,7 +164,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             score_field=cfg.get("score_field", "minimizedAffinity"),
             cnn_scoring=cfg.get("cnn_scoring", "none"),
         )
-        job.result = _summarize(out, higher_is_better=False)
+        job.result = _summarize(out, higher_is_better=False, job_dir=job.dir)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
         job.log(f"Job {job.status} — {len(job.result['runs'])} target(s)")
@@ -169,7 +196,7 @@ def start_growth_job(*, fragment_path: str, receptor_path: str,
     patchable) and is injectable so the job layer can be driven without docking."""
     runner = runner or run_growth
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
-    job_dir = JOBS_DIR / job_id
+    job_dir = jobs_dir() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     job = GrowthJob(id=job_id, dir=job_dir)
     JOBS[job_id] = job
@@ -187,7 +214,7 @@ def list_jobs() -> List[dict]:
     """Live jobs first, then any persisted-only past runs on disk (newest first)."""
     items: List[dict] = []
     seen = set()
-    for d in sorted(JOBS_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    for d in sorted(jobs_dir().iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not d.is_dir():
             continue
         live = JOBS.get(d.name)

@@ -380,7 +380,9 @@ function renderHits(result){
     html += `<div class="target-block"><h3>${rx.name}
       <span class="sub">slot ${t.fragment_slot} · core <code>${t.core_smarts}</code></span></h3>`;
     if (run.skipped){ html += `<div class="warn">skipped — ${run.skipped}</div></div>`; continue; }
-    html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }</div>`;
+    html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
+    if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
+    html += `</div>`;
     html += `<table class="hits"><thead><tr><th>#</th><th>score</th><th>name</th><th>SMILES</th></tr></thead><tbody>`;
     (run.top||[]).forEach((h,i)=>{ html += `<tr><td>${i+1}</td><td class="score">${(+h.score).toFixed(2)}</td>
       <td>${h.name}</td><td class="smi">${h.smiles}</td></tr>`; });
@@ -402,6 +404,7 @@ async function loadHistory(){
 el('refreshJobs').addEventListener('click', loadHistory);
 el('history').addEventListener('change', async e=>{
   const id = e.target.value; if (!id) return;
+  currentJob = id;
   const d = await (await fetch(`/jobs/${id}`)).json();
   setStatus(d.status);
   el('log').classList.remove('muted');

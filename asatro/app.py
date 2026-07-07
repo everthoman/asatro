@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from rdkit import Chem
 
 from asatro import __version__
@@ -21,7 +22,7 @@ from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
 from asatro.chemistry.catalog import REACTIONS, VOCAB
 from asatro.chemistry.stub_growth import assess_with_stubs
-from asatro.jobs import JOBS, list_jobs, start_growth_job
+from asatro.jobs import JOBS, jobs_dir, list_jobs, start_growth_job
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -119,8 +120,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"bad config JSON: {e}")
 
-    work = Path(os.environ.get("ASATRO_JOBS_DIR", str(Path(__file__).resolve().parent.parent / "jobs")))
-    stage = work / "_uploads" / f"{int(time.time()*1000)}"
+    stage = jobs_dir() / "_uploads" / f"{int(time.time()*1000)}"
     stage.mkdir(parents=True, exist_ok=True)
     frag_path = stage / "fragment.sdf"
     rec_path = stage / "receptor.pdb"
@@ -161,13 +161,23 @@ async def job_detail(job_id: str) -> dict:
     if job is not None:
         return {**job.meta(), "result": job.result, "n_log": len(job.lines)}
     # Past run: read persisted metadata/results from disk.
-    base = Path(os.environ.get("ASATRO_JOBS_DIR", str(Path(__file__).resolve().parent.parent / "jobs")))
-    d = base / job_id
+    d = jobs_dir() / job_id
     if d.is_dir() and (d / "job.json").is_file():
         meta = json.loads((d / "job.json").read_text())
         res = json.loads((d / "results.json").read_text()) if (d / "results.json").is_file() else None
         return {**meta, "result": res}
     raise HTTPException(404, "unknown job")
+
+
+@app.get("/jobs/{job_id}/poses/{filename}")
+async def job_poses(job_id: str, filename: str) -> FileResponse:
+    """Download the docked poses (SDF) for one growth target of a job."""
+    if not re.fullmatch(r"poses_\d+\.sdf", filename):
+        raise HTTPException(400, "invalid filename")
+    p = jobs_dir() / job_id / filename
+    if not p.is_file():
+        raise HTTPException(404, "poses not found")
+    return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
 
 
 @app.post("/jobs/{job_id}/cancel")
