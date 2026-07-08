@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from asatro.growth import grow_accessible, run_growth
+from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -50,6 +51,11 @@ class GrowthJob:
     started: float = field(default_factory=time.time)
     finished: Optional[float] = None
     _log_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Set while a target is actively docking so the UI can poll live progress
+    # (structure gallery + convergence chart) before the job's final summary
+    # exists. Cleared once the job finishes.
+    evaluator: Optional[object] = None
+    current_target: Optional[str] = None
 
     @property
     def log_path(self) -> Path:
@@ -120,11 +126,20 @@ def _summarize(out: dict, higher_is_better: Optional[bool], job_dir: Optional[Pa
             ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
             n_docked = len(rows)
         entry["n_docked"] = n_docked
-        entry["top"] = [{"score": s, "smiles": sm, "name": nm} for s, sm, nm in ranked]
-        if ev is not None and job_dir is not None:
-            fname = f"poses_{i}.sdf"
-            if ev.write_top_poses(str(job_dir / fname), n=TOP_N) > 0:
-                entry["poses"] = fname
+        entry["top"] = [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm)}
+                        for s, sm, nm in ranked]
+        if ev is not None:
+            pts = ev.convergence()
+            st = ev.stats()
+            entry["convergence"] = {
+                "points": [{"dock": d, "best": b} for d, b in pts],
+                "score_field": ev.score_field, "higher_better": bool(ev.higher_is_better),
+                "docked": st["docked"], "best": st["best_score"],
+            }
+            if job_dir is not None:
+                fname = f"poses_{i}.sdf"
+                if ev.write_top_poses(str(job_dir / fname), n=TOP_N) > 0:
+                    entry["poses"] = fname
         runs.append(entry)
     return {
         "fg_classes": out["assessment"]["fg_classes"],
@@ -141,7 +156,11 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
     job.log(f"Growth job {job.id} started")
     try:
         def _runner(**kw):
-            return runner(progress_callback=job.log, cancel_event=job.cancel_event, **kw)
+            def _on_evaluator(ev):
+                job.evaluator = ev
+                job.current_target = f"{kw.get('reaction_id')} (slot {kw.get('fragment_slot')})"
+            return runner(progress_callback=job.log, cancel_event=job.cancel_event,
+                          on_evaluator=_on_evaluator, **kw)
 
         if pool_path:
             from asatro.pool import Pool, pool_resolver
@@ -173,6 +192,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         job.error = str(e)
         job.log(f"ERROR: {e}")
     finally:
+        job.evaluator = None
+        job.current_target = None
         job.finished = time.time()
         _persist_meta(job)
 

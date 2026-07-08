@@ -34,6 +34,7 @@ class _FakeEvaluator:
     """Minimal stand-in for a real GninaEvaluator: tracks every dock (warm-up
     included) in its own cache, independent of what ``search()`` returns."""
     higher_is_better = False
+    score_field = "minimizedAffinity"
 
     def __init__(self, rows):
         self._rows = rows  # [(score, smiles, name), ...]
@@ -42,7 +43,16 @@ class _FakeEvaluator:
         return sorted(self._rows, key=lambda r: r[0])[:n]
 
     def stats(self):
-        return {"unique_scored": len(self._rows)}
+        best = min((r[0] for r in self._rows), default=None)
+        return {"unique_scored": len(self._rows), "docked": len(self._rows), "best_score": best}
+
+    def convergence(self):
+        pts, best = [], None
+        for i, (score, _smi, _name) in enumerate(self._rows, start=1):
+            if best is None or score < best:
+                best = score
+                pts.append((i, best))
+        return pts
 
     def write_top_poses(self, path, n=100):
         w = Chem.SDWriter(path)

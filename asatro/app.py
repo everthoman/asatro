@@ -23,6 +23,7 @@ from asatro.chemistry.handles import analyze_fragment
 from asatro.chemistry.catalog import REACTIONS, VOCAB
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, jobs_dir, list_jobs, start_growth_job
+from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -158,6 +159,49 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
                            reactant_by_class=reactant_by_class, pool_path=pool_path,
                            cfg=cfg, session_name=session_name)
     return {"job_id": job.id, "status": job.status}
+
+
+def _top_items(rows) -> list:
+    """Render ``(score, smiles, name)`` rows (best-first) into gallery items."""
+    items = []
+    for rank, (score, smiles, name) in enumerate(rows, start=1):
+        items.append({"rank": rank, "score": round(float(score), 3),
+                      "smiles": str(smiles), "name": str(name),
+                      "svg": mol_svg(str(smiles))})
+    return items
+
+
+@app.get("/jobs/{job_id}/top")
+async def job_top(job_id: str, n: int = 12) -> dict:
+    """Live leaderboard (structure gallery) for the growth target currently
+    docking. Only meaningful while a job is running — its evaluator holds every
+    score gathered so far. Finished jobs carry their per-target results
+    (already with structure SVGs) in ``GET /jobs/{id}``."""
+    n = max(1, min(int(n), 60))
+    job = JOBS.get(job_id)
+    if job is not None and job.status == "running" and job.evaluator is not None:
+        rows = job.evaluator.top_scored(n)
+        total = job.evaluator.stats()["unique_scored"]
+        return {"ready": bool(rows), "live": True, "target": job.current_target,
+                "items": _top_items(rows), "total": total}
+    return {"ready": False, "live": False, "items": []}
+
+
+@app.get("/jobs/{job_id}/convergence")
+async def job_convergence(job_id: str) -> dict:
+    """Best-score-so-far vs docks for the growth target currently docking."""
+    job = JOBS.get(job_id)
+    if job is not None and job.status == "running" and job.evaluator is not None:
+        ev = job.evaluator
+        pts = ev.convergence()
+        st = ev.stats()
+        return {
+            "ready": bool(pts), "live": True, "target": job.current_target,
+            "score_field": ev.score_field, "higher_better": bool(ev.higher_is_better),
+            "docked": st["docked"], "best": st["best_score"],
+            "points": [{"dock": d, "best": b} for d, b in pts],
+        }
+    return {"ready": False, "live": False, "points": []}
 
 
 @app.get("/jobs")

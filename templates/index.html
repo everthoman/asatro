@@ -13,13 +13,13 @@
     --bg:#0f1420; --panel:#1a2132; --accent:#4f9cff; --ok:#39c46e; --warn:#ffb347; --err:#ff5d5d;
     --text:#e6ecf5; --muted:#8b97ad; --border:#2a3550; --border2:#2f3a57; --field-bg:#0d121d;
     --inset-bg:#070a11; --step-bg:#131a29; --ghost-bg:#28324c; --del-bg:#3a2330; --bar-from:#234a7a;
-    --header-grad:linear-gradient(90deg,#162038,#0f1420);
+    --header-grad:linear-gradient(90deg,#162038,#0f1420); --chart-grid:#1c2740;
   }
   :root[data-theme="light"] {
     --bg:#eef1f7; --panel:#ffffff; --accent:#1f6fd0; --ok:#1f9d57; --warn:#b9740f; --err:#d83b3b;
     --text:#1b2230; --muted:#586577; --border:#d6dce8; --border2:#c6cee0; --field-bg:#f6f8fc;
     --inset-bg:#eef1f7; --step-bg:#f7f9fc; --ghost-bg:#e4eaf5; --del-bg:#f6e0e6; --bar-from:#7fb0ee;
-    --header-grad:linear-gradient(90deg,#e8eef9,#f4f6fb);
+    --header-grad:linear-gradient(90deg,#e8eef9,#f4f6fb); --chart-grid:#e6ebf4;
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
@@ -55,15 +55,24 @@
   .status-queued{ background:#2a3550; } .status-running{ background:#234a7a; } .status-done{ background:#1d5e38; } .status-error{ background:#5e1d1d; } .status-cancelled{ background:#5e4a1d; }
   .ok { color:var(--ok); } .bad { color:var(--err); } .warn { color:var(--warn); }
   .note { font-size:12px; color:var(--warn); margin-top:8px; }
-  table.hits { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px; }
-  table.hits th, table.hits td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--border2); }
-  table.hits td.smi { font-family:ui-monospace,Menlo,monospace; color:var(--muted); word-break:break-all; }
-  table.hits td.score { font-weight:700; }
   .jobbar { display:flex; gap:8px; align-items:center; }
   .jobbar select { flex:1; min-width:0; }
   .target-block { margin-top:12px; }
   .target-block h3 { font-size:13px; margin:0 0 2px; }
   .sub { font-size:11.5px; color:var(--muted); }
+  .topgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:12px; margin-top:10px; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:8px; }
+  .card svg { width:100%; height:auto; display:block; }
+  .card .meta { margin-top:6px; font-size:11px; color:#222; line-height:1.45; }
+  .card .rank { font-weight:700; color:#234a7a; }
+  .card .score { font-weight:700; }
+  .card .name { color:#555; word-break:break-all; }
+  .card .smi { color:#999; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
+  .conv-chart svg { width:100%; height:auto; display:block; }
+  .conv-chart .axis { stroke:var(--border2); stroke-width:1; }
+  .conv-chart .grid { stroke:var(--chart-grid); stroke-width:1; }
+  .conv-chart .curve { fill:none; stroke:var(--accent); stroke-width:2; }
+  .conv-chart .lbl { fill:var(--muted); font-size:10px; font-family:ui-monospace,Menlo,monospace; }
 </style>
 </head>
 <body>
@@ -170,6 +179,12 @@
       <div id="log" class="muted">No run yet. Upload a fragment + receptor and analyze.</div>
     </div>
 
+    <div class="panel" id="livePanel" style="display:none">
+      <h2>Live progress <span class="muted" id="liveMeta" style="font-weight:400"></span></h2>
+      <div id="liveConv"></div>
+      <div id="liveGrid" class="topgrid"></div>
+    </div>
+
     <div class="panel" id="hitsPanel" style="display:none">
       <h2>Results</h2>
       <div id="hits"></div>
@@ -197,6 +212,7 @@ themeToggle.addEventListener('click', ()=>{
 });
 
 function el(id){ return document.getElementById(id); }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
@@ -350,11 +366,14 @@ el('growBtn').addEventListener('click', async ()=>{
 function attachStream(jobId){
   currentJob = jobId;
   el('cancelBtn').style.display = '';
+  el('hitsPanel').style.display = 'none';
+  startLivePanels();
   if (evtSource) evtSource.close();
   evtSource = new EventSource(`/jobs/${jobId}/stream`);
   evtSource.onmessage = ev => { setStatus('running'); logLine(ev.data); };
   evtSource.addEventListener('end', async ev => {
     evtSource.close(); el('cancelBtn').style.display = 'none';
+    stopLivePanels();
     setStatus(ev.data);
     const d = await (await fetch(`/jobs/${jobId}`)).json();
     renderHits(d.result);
@@ -368,6 +387,91 @@ el('cancelBtn').addEventListener('click', async ()=>{
   await fetch(`/jobs/${currentJob}/cancel`, { method:'POST' });
   logLine('Cancellation requested…');
 });
+
+// ---- convergence chart (best score so far vs docks) ----
+// A hand-rolled inline SVG line chart (no external chart library) — same
+// approach as the sibling ts-gnina app, reused per-target for finished runs
+// and once live for whichever target is currently docking.
+function convergenceSvg(data){
+  const pts = data.points;
+  if (!pts || !pts.length) return '';
+  const W=480, H=170, mL=50, mR=12, mT=10, mB=26;
+  const xMax = Math.max(data.docked||0, pts[pts.length-1].dock, 1);
+  const ys = pts.map(p=>p.best);
+  let yMin=Math.min(...ys), yMax=Math.max(...ys);
+  if (yMin===yMax){ yMin-=1; yMax+=1; }
+  const padY=(yMax-yMin)*0.08; yMin-=padY; yMax+=padY;
+  const sx = v => mL + (v/xMax)*(W-mL-mR);
+  const sy = v => mT + (1-(v-yMin)/(yMax-yMin))*(H-mT-mB);
+  let d = `M ${sx(pts[0].dock).toFixed(1)} ${sy(pts[0].best).toFixed(1)}`;
+  let prevY = pts[0].best;
+  for (let i=1;i<pts.length;i++){
+    d += ` L ${sx(pts[i].dock).toFixed(1)} ${sy(prevY).toFixed(1)} L ${sx(pts[i].dock).toFixed(1)} ${sy(pts[i].best).toFixed(1)}`;
+    prevY = pts[i].best;
+  }
+  d += ` L ${sx(xMax).toFixed(1)} ${sy(prevY).toFixed(1)}`;
+  let grid='';
+  [yMax,(yMax+yMin)/2,yMin].forEach(v=>{
+    const y=sy(v).toFixed(1);
+    grid += `<line class="grid" x1="${mL}" y1="${y}" x2="${W-mR}" y2="${y}"/>`
+          + `<text class="lbl" x="${mL-6}" y="${(+y+3).toFixed(1)}" text-anchor="end">${v.toFixed(2)}</text>`;
+  });
+  const axes = `<line class="axis" x1="${mL}" y1="${mT}" x2="${mL}" y2="${H-mB}"/>`
+             + `<line class="axis" x1="${mL}" y1="${H-mB}" x2="${W-mR}" y2="${H-mB}"/>`;
+  const xlab = `<text class="lbl" x="${mL}" y="${H-6}" text-anchor="start">0</text>`
+             + `<text class="lbl" x="${W-mR}" y="${H-6}" text-anchor="end">${xMax} docks</text>`;
+  const arrow = data.higher_better ? '↑ higher better' : '↓ lower better';
+  const best = data.best!=null ? (+data.best).toFixed(3) : '—';
+  const meta = `<div class="sub">${data.score_field||''} (${arrow}) · best ${best} · `
+             + `${pts.length} improvement${pts.length===1?'':'s'} over ${xMax} docks${data.live?' · live':''}</div>`;
+  return meta + `<div class="conv-chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`
+    + grid + axes + `<path class="curve" d="${d}"/>` + xlab + `</svg></div>`;
+}
+
+function galleryCards(items){
+  return `<div class="topgrid">` + items.map((it,i) => `
+    <div class="card">
+      ${it.svg || '<div class="muted" style="color:#888">no structure</div>'}
+      <div class="meta">
+        <span class="rank">#${it.rank!=null?it.rank:i+1}</span> &middot; <span class="score">${it.score}</span>
+        <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
+        <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
+      </div>
+    </div>`).join('') + `</div>`;
+}
+
+// ---- live progress (gallery + convergence) while a job is running ----
+let liveTopTimer = null, liveConvTimer = null;
+function stopLivePanels(){
+  if (liveTopTimer){ clearInterval(liveTopTimer); liveTopTimer=null; }
+  if (liveConvTimer){ clearInterval(liveConvTimer); liveConvTimer=null; }
+  el('livePanel').style.display = 'none';
+}
+async function pollLiveTop(){
+  if (!currentJob) return;
+  let d; try { d = await (await fetch(`/jobs/${currentJob}/top?n=12`)).json(); } catch(e){ return; }
+  const grid = el('liveGrid');
+  if (!d.ready || !d.items.length){
+    if (!grid.querySelector('.card')) grid.innerHTML = '<span class="muted">No docks yet…</span>';
+    return;
+  }
+  el('liveMeta').textContent = `${d.target||''} · live · ${d.total} scored`;
+  grid.innerHTML = galleryCards(d.items);
+}
+async function pollLiveConvergence(){
+  if (!currentJob) return;
+  let d; try { d = await (await fetch(`/jobs/${currentJob}/convergence`)).json(); } catch(e){ return; }
+  if (!d.ready || !d.points.length) return;
+  el('liveConv').innerHTML = convergenceSvg(d);
+}
+function startLivePanels(){
+  stopLivePanels();
+  el('livePanel').style.display = '';
+  el('liveGrid').innerHTML = ''; el('liveConv').innerHTML = ''; el('liveMeta').textContent = '';
+  pollLiveTop(); pollLiveConvergence();
+  liveTopTimer = setInterval(pollLiveTop, 8000);
+  liveConvTimer = setInterval(pollLiveConvergence, 8000);
+}
 
 function renderHits(result){
   const panel = el('hitsPanel'), host = el('hits');
@@ -384,10 +488,11 @@ function renderHits(result){
     html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
     if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
     html += `</div>`;
-    html += `<table class="hits"><thead><tr><th>#</th><th>score</th><th>name</th><th>SMILES</th></tr></thead><tbody>`;
-    (run.top||[]).forEach((h,i)=>{ html += `<tr><td>${i+1}</td><td class="score">${(+h.score).toFixed(2)}</td>
-      <td>${h.name}</td><td class="smi">${h.smiles}</td></tr>`; });
-    html += `</tbody></table></div>`;
+    if (run.convergence && run.convergence.points && run.convergence.points.length){
+      html += convergenceSvg(run.convergence);
+    }
+    html += galleryCards((run.top||[]).map((h,i)=>({rank:i+1, ...h})));
+    html += `</div>`;
   }
   host.innerHTML = html;
 }
@@ -411,6 +516,7 @@ el('history').addEventListener('change', async e=>{
   el('log').classList.remove('muted');
   el('log').textContent = `Loaded job ${id} (${d.status}).`;
   if (d.status === 'running' || d.status === 'queued') attachStream(id);
+  else stopLivePanels();
   renderHits(d.result);
 });
 

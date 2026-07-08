@@ -97,9 +97,16 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
                num_warmup: int = 3, num_cycles: int = 25,
                num_to_select: Optional[int] = None, seed: Optional[int] = None,
                mode: str = "minimize", concurrency: int = 1,
-               hide_progress: bool = True, **gnina_opts):
+               hide_progress: bool = True,
+               on_evaluator: Optional[Callable[[object], None]] = None,
+               **gnina_opts):
     """Run the full growth search. Returns ``(results, evaluator)`` where results
-    is the list of ``[score, smiles, name]`` rows the sampler collected."""
+    is the list of ``[score, smiles, name]`` rows the sampler collected.
+
+    ``on_evaluator``, if given, is called with the evaluator as soon as it's built
+    (before the search runs) so a caller can stash a live reference — e.g. for a
+    web UI to poll ``top_scored()``/``convergence()`` while docking is still in
+    progress."""
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
     files, route = build_growth_route(
@@ -109,6 +116,8 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
     evaluator = make_evaluator(fragment_sdf=fragment_sdf, receptor_path=receptor_path,
                                core_smarts=core_smarts, work_dir=str(work / "dock"),
                                **gnina_opts)
+    if on_evaluator is not None:
+        on_evaluator(evaluator)
     sampler = RouteSampler(mode=mode)
     if seed is not None:
         sampler.set_seed(seed)
