@@ -138,8 +138,23 @@
       </div>
     </div>
 
+    <div class="panel" id="filtersPanel" style="display:none">
+      <h2>4 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
+      <div class="checkline"><input type="checkbox" id="pains" checked><label style="margin:0">PAINS structural alerts</label></div>
+      <div class="checkline"><input type="checkbox" id="reos" checked><label style="margin:0">REOS functional-group filter</label></div>
+      <div class="row">
+        <div><label>MW min</label><input type="number" id="mwLo" placeholder="e.g. 150"></div>
+        <div><label>MW max</label><input type="number" id="mwHi" placeholder="e.g. 500"></div>
+      </div>
+      <div class="row">
+        <div><label>logP min</label><input type="number" id="logpLo" step="0.1" placeholder="-2"></div>
+        <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5"></div>
+      </div>
+      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
+    </div>
+
     <div class="panel" id="growPanel" style="display:none">
-      <h2>4 &middot; Growth run</h2>
+      <h2>5 &middot; Growth run</h2>
       <div class="grid3">
         <div><label>Search cycles</label><input type="number" id="numCycles" value="50" min="1"></div>
         <div><label>Warm-up / arm</label><input type="number" id="numWarmup" value="3" min="1"></div>
@@ -213,6 +228,7 @@ themeToggle.addEventListener('click', ()=>{
 
 function el(id){ return document.getElementById(id); }
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function numOrNull(input){ const v = (input.value||'').trim(); return v===''? null : parseFloat(v); }
 function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
@@ -285,13 +301,19 @@ function renderReactantSlots(){
   const need = neededClasses();
   const keys = Object.keys(need);
   const panel = el('reactantPanel'), host = el('reactantSlots');
-  if (!keys.length){ panel.style.display='none'; el('growPanel').style.display = analysis ? '' : 'none'; return; }
+  if (!keys.length){
+    panel.style.display='none';
+    el('filtersPanel').style.display = analysis ? '' : 'none';
+    el('growPanel').style.display = analysis ? '' : 'none';
+    return;
+  }
   panel.style.display = '';
   host.innerHTML = keys.map(cls =>
     `<label>${need[cls].label} <span class="chip">${need[cls].accepts.map(groupLabel).join(' / ')}</span></label>
      <input type="file" class="reactantFile" data-class="${cls}" accept=".smi">`).join('');
   // The pool box lists which classes the chosen reactions will draw from.
   el('poolBox').dataset.need = JSON.stringify(keys);
+  el('filtersPanel').style.display = '';
   el('growPanel').style.display = '';
   togglePoolMode();
 }
@@ -343,6 +365,11 @@ el('growBtn').addEventListener('click', async ()=>{
     score_field: el('scoreField').value,
     cnn_scoring: el('cnnScoring').value,
     seed: el('seed').value ? parseInt(el('seed').value) : null,
+    filters: {
+      pains: el('pains').checked, reos: el('reos').checked,
+      mw: [numOrNull(el('mwLo')), numOrNull(el('mwHi'))],
+      logp: [numOrNull(el('logpLo')), numOrNull(el('logpHi'))],
+    },
   };
   fd.append('fragment', el('fragment').files[0]);
   fd.append('receptor', el('receptor').files[0]);
@@ -428,8 +455,11 @@ function convergenceSvg(data){
     + grid + axes + `<path class="curve" d="${d}"/>` + xlab + `</svg></div>`;
 }
 
+// Cards only — the caller supplies the ".topgrid" container (some, like
+// #liveGrid, already have it in markup; wrapping here too would nest one
+// grid inside a single-cell grid item and collapse it to one column).
 function galleryCards(items){
-  return `<div class="topgrid">` + items.map((it,i) => `
+  return items.map((it,i) => `
     <div class="card">
       ${it.svg || '<div class="muted" style="color:#888">no structure</div>'}
       <div class="meta">
@@ -437,7 +467,7 @@ function galleryCards(items){
         <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
         <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
       </div>
-    </div>`).join('') + `</div>`;
+    </div>`).join('');
 }
 
 // ---- live progress (gallery + convergence) while a job is running ----
@@ -488,10 +518,14 @@ function renderHits(result){
     html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
     if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
     html += `</div>`;
+    if (run.rejections && Object.keys(run.rejections).length){
+      const rej = Object.entries(run.rejections).map(([k,n])=>`${esc(k)}: ${n}`).join(' · ');
+      html += `<div class="sub">rejected by filters — ${rej}</div>`;
+    }
     if (run.convergence && run.convergence.points && run.convergence.points.length){
       html += convergenceSvg(run.convergence);
     }
-    html += galleryCards((run.top||[]).map((h,i)=>({rank:i+1, ...h})));
+    html += `<div class="topgrid">` + galleryCards((run.top||[]).map((h,i)=>({rank:i+1, ...h}))) + `</div>`;
     html += `</div>`;
   }
   host.innerHTML = html;

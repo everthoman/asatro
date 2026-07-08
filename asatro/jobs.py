@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from asatro.engine.gnina_evaluator import MolFilters
 from asatro.growth import grow_accessible, run_growth
 from asatro.svg import mol_svg
 
@@ -88,6 +89,30 @@ def _slugify(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", (name or "").strip()).strip("._-")[:64]
 
 
+def _range_or_none(val) -> Optional[tuple]:
+    """``[lo, hi]`` (either may be blank/None) -> ``(lo, hi)`` floats, or None if
+    both ends are unset."""
+    if not val:
+        return None
+    lo, hi = val
+    lo = None if lo in (None, "") else float(lo)
+    hi = None if hi in (None, "") else float(hi)
+    if lo is None and hi is None:
+        return None
+    return (lo, hi)
+
+
+def make_filters(cfg: dict) -> MolFilters:
+    """Pre-docking PAINS/REOS/MW/logP filters from a job's ``filters`` config."""
+    fcfg = cfg.get("filters") or {}
+    return MolFilters(
+        use_pains=bool(fcfg.get("pains", False)),
+        use_reos=bool(fcfg.get("reos", False)),
+        mw_range=_range_or_none(fcfg.get("mw")),
+        logp_range=_range_or_none(fcfg.get("logp")),
+    )
+
+
 def make_class_resolver(reactant_by_class: Dict[str, str]):
     """A ReactantResolver that maps a component's accepted classes to the first
     uploaded reactant file tagged with one of those classes."""
@@ -136,6 +161,8 @@ def _summarize(out: dict, higher_is_better: Optional[bool], job_dir: Optional[Pa
                 "score_field": ev.score_field, "higher_better": bool(ev.higher_is_better),
                 "docked": st["docked"], "best": st["best_score"],
             }
+            if st.get("rejections"):
+                entry["rejections"] = st["rejections"]
             if job_dir is not None:
                 fname = f"poses_{i}.sdf"
                 if ev.write_top_poses(str(job_dir / fname), n=TOP_N) > 0:
@@ -171,6 +198,12 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         else:
             resolver = make_class_resolver(reactant_by_class)
 
+        mol_filters = make_filters(cfg)
+        if mol_filters.active:
+            job.log(f"Filters: PAINS {len(mol_filters.pains_patterns)} pattern(s), "
+                    f"REOS {len(mol_filters.reos_rules)} rule(s), MW {mol_filters.mw_range}, "
+                    f"logP {mol_filters.logp_range}")
+
         out = grow_accessible(
             fragment_sdf=fragment_path, receptor_pdb=receptor_path,
             reactant_resolver=resolver,
@@ -182,6 +215,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             seed=cfg.get("seed"),
             score_field=cfg.get("score_field", "minimizedAffinity"),
             cnn_scoring=cfg.get("cnn_scoring", "none"),
+            filters=mol_filters if mol_filters.active else None,
         )
         job.result = _summarize(out, higher_is_better=False, job_dir=job.dir)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))

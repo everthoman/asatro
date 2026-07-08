@@ -161,6 +161,33 @@ def test_growth_job_error_is_captured(tmp_path, monkeypatch):
     assert job.status == "error" and job.error
 
 
+def test_growth_job_passes_filters_to_runner(tmp_path, monkeypatch):
+    """The ``filters`` block of a job's config builds a MolFilters and reaches
+    the runner (and from there the evaluator) -- PAINS/REOS/MW/logP apply to
+    every enumerated product before docking."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = []
+
+    def runner(**k):
+        captured.append(k.get("filters"))
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1,
+             "filters": {"mw": [100, 400], "logp": [None, 5]}},
+        runner=runner)
+    _await(job)
+    assert job.status == "done"
+    assert captured and captured[0] is not None
+    f = captured[0]
+    assert f.mw_range == (100.0, 400.0)
+    assert f.logp_range == (None, 5.0)
+    assert f.pains_patterns == [] and f.reos_rules == []  # not requested
+
+
 def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     # Make the endpoint's background job use the fake runner instead of gnina.
