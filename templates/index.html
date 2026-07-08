@@ -113,7 +113,9 @@
       </div>
       <div id="poolBox">
         <div class="muted">One tagged <code>.smi</code> pool; Asatro prunes it to each
-          slot by functional-group class. <code>SMILES name</code> per line.</div>
+          slot by functional-group class. <code>SMILES name</code> per line.
+          Leave empty to use the bundled default pool (Enamine Rush-Delivery EU,
+          ~45k blocks).</div>
         <input type="file" id="poolFile" accept=".smi">
         <div class="row" style="margin-top:8px">
           <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
@@ -289,9 +291,9 @@ el('reagentSource').addEventListener('change', togglePoolMode);
 el('poolPreviewBtn').addEventListener('click', async ()=>{
   const f = el('poolFile').files[0];
   const out = el('poolPreview');
-  if (!f){ out.textContent = 'Choose a pool .smi first.'; return; }
   out.textContent = 'Annotating…';
-  const fd = new FormData(); fd.append('pool', f);
+  const fd = new FormData();
+  if (f) fd.append('pool', f);
   try {
     const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
     const need = JSON.parse(el('poolBox').dataset.need || '[]');
@@ -309,8 +311,7 @@ el('growBtn').addEventListener('click', async ()=>{
   if (!analysis){ return; }
   const fd = new FormData();
   if (poolMode()){
-    if (!el('poolFile').files.length){ alert('Choose a master pool .smi (or switch to per-class files).'); return; }
-    fd.append('pool', el('poolFile').files[0], 'pool.smi');
+    if (el('poolFile').files.length) fd.append('pool', el('poolFile').files[0], 'pool.smi');
   } else {
     const reactantInputs = [...document.querySelectorAll('.reactantFile')];
     if (!reactantInputs.length){ alert('No accessible reactions to grow.'); return; }

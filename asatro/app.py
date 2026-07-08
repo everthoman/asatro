@@ -28,6 +28,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
 PORT = int(os.environ.get("ASATRO_PORT", "5015"))
 
+# Bundled master pool (Enamine Rush-Delivery EU, reused from ts-gnina) — the
+# default reactant source when a run doesn't supply its own pool or per-class
+# libraries.
+DEFAULT_POOL_PATH = str(BASE_DIR / "asatro" / "data" / "enamine_rush_EU.smi")
+
 # Static catalog the UI needs to render reaction names + slot labels.
 CATALOG = {
     "reactions": [
@@ -92,12 +97,16 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
 # Growth jobs
 # ---------------------------------------------------------------------------
 @app.post("/pool-preview")
-async def pool_preview(pool: UploadFile = File(...)) -> dict:
+async def pool_preview(pool: UploadFile = File(default=None)) -> dict:
     """Annotate a master reagent pool: how many building blocks fall in each
     functional-group class (and how many carry no handle). This is the pruning a
-    reaction's slots would draw on."""
+    reaction's slots would draw on. With no upload, annotates the bundled default
+    pool."""
     from asatro.pool import Pool
-    p = Pool.from_file((await pool.read()).decode("utf-8", "replace"))
+    if pool is not None and pool.filename:
+        p = Pool.from_file((await pool.read()).decode("utf-8", "replace"))
+    else:
+        p = Pool.from_file(DEFAULT_POOL_PATH)
     return {"n_total": p.n_total, "n_tagged": p.n_tagged,
             "n_untagged": p.n_total - p.n_tagged, "counts": p.counts()}
 
@@ -113,6 +122,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     building blocks for the non-fragment slots — EITHER a single tagged master
     ``pool`` (.smi, pruned per reaction component by FG class) OR one ``reactants``
     library per slot (each file's name stem = its FG class, e.g. ``boronic.smi``).
+    Neither given falls back to the bundled default pool (Enamine Rush-Delivery EU).
     ``config`` is JSON (refine, num_warmup, num_cycles, num_to_select, seed,
     score_field, cnn_scoring). Returns the job id."""
     try:
@@ -142,7 +152,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
         reactant_by_class[cls] = str(p)
 
     if not pool_path and not reactant_by_class:
-        raise HTTPException(400, "provide a master pool (.smi) or per-class reactant libraries")
+        pool_path = DEFAULT_POOL_PATH  # bundled Enamine Rush-Delivery EU pool
 
     job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
                            reactant_by_class=reactant_by_class, pool_path=pool_path,

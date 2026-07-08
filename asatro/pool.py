@@ -66,8 +66,10 @@ class Pool:
             clean = _clean(raw_smiles)
             if clean is None:
                 continue
-            self.n_total += 1
             mol = Chem.MolFromSmiles(clean)
+            if mol is None:
+                continue
+            self.n_total += 1
             hit = False
             for cls, q in VOCAB.query.items():
                 if mol.HasSubstructMatch(q) and clean not in seen_per_class[cls]:
