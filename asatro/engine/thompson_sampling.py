@@ -1,3 +1,4 @@
+import itertools
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
@@ -355,6 +356,38 @@ class ThompsonSampler:
                 f"(all warm-up products were filtered, not undockable)")
         self.logger.info(f"Top score found during warmup: {max(warmup_scores):.3f}")
         return warmup_results
+
+    def dock_all(self, patience=None):
+        """Exhaustively dock every possible product, no bandit involved.
+
+        Only sane when at most one reagent component actually varies (the
+        caller is expected to check this): with a single free slot, warm-up
+        already has to touch every reagent to seed its prior, and a subsequent
+        adaptive search has nothing left to explore -- there is no unseen
+        ``(fixed slot(s), reagent)`` combination for it to find. This collapses
+        that redundant warm-up + search split into one exhaustive pass.
+        """
+        reagent_count_list = [len(x) for x in self.reagent_lists]
+        combos = [list(c) for c in itertools.product(*[range(n) for n in reagent_count_list])]
+        out_list = []
+        if patience and hasattr(self.evaluator, "reset_plateau"):
+            self.evaluator.reset_plateau()
+        pbar = tqdm(total=len(combos), desc="Exhaustive dock", disable=self.hide_progress)
+        for chunk in self._chunks(combos, self._batch_size()):
+            for smiles, name, score, _reason in self.evaluate_batch(chunk):
+                if np.isfinite(score):
+                    out_list.append([score, smiles, name])
+            pbar.update(len(chunk))
+            if patience and getattr(self.evaluator, "docks_since_best", 0) >= patience:
+                self.logger.info(
+                    f"Auto-stop: no score improvement in {patience} docks (plateau) "
+                    f"after {len(out_list)} docked.")
+                break
+        pbar.close()
+        if out_list:
+            top_score, top_smiles, top_name = (max(out_list) if self._mode.startswith("maximize") else min(out_list))
+            self.logger.info(f"Exhaustive dock done: {len(out_list)} scored, best {top_score:.3f} {top_smiles} {top_name}")
+        return out_list
 
     def _sample_one(self, rng) -> List[int]:
         """Draw one reagent selection from the current TS posteriors.

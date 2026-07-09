@@ -58,6 +58,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
+from asatro.chemistry.handles import neutralize
 from asatro.engine.gnina_evaluator import (
     GninaEvaluator,
     prepare_ligand_3d,
@@ -121,6 +122,12 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
         raise ValueError(f"Could not read fragment SDF: {fragment_sdf}")
     if frag.GetNumConformers() == 0:
         raise ValueError("Fragment SDF has no 3D conformer (need the bound pose)")
+    # Bound poses are often protonated (e.g. a primary amine as [NH3+]), but
+    # core_smarts is derived from the neutralized fragment (matching handles.py's
+    # analyze_fragment) and every reaction product has that atom neutral post-
+    # reaction. Neutralize here too so the carved core's charge state actually
+    # matches what it needs to substruct-match against.
+    frag = neutralize(frag)
     if core_smarts is None:
         return frag
     match, q = _match_core(frag, core_smarts)

@@ -6,7 +6,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 import asatro.jobs as jobs
-from asatro.jobs import JOBS, start_growth_job
+from asatro.jobs import JOBS, start_combi_job, start_growth_job
 
 
 def _bound_sdf(tmp_path, smiles="Brc1ccccc1"):
@@ -240,6 +240,122 @@ def test_growth_job_with_master_pool(tmp_path, monkeypatch):
     boronic_smi = calls[0]["reactant_files"][1]
     names = [l.split()[1] for l in open(boronic_smi).read().splitlines() if l.strip()]
     assert sorted(names) == ["phB", "tolB"]
+
+
+def _fake_combi_runner(**kwargs):
+    return ([[-7.5, "COMBI_SMILES", "p1"], [-6.1, "OTHER", "p2"]], None)
+
+
+def test_combi_job_runs_and_summarizes(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    rec = tmp_path / "receptor.pdb"; rec.write_text("")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
+    boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    job = start_combi_job(
+        receptor_path=str(rec), steps=["suzuki"],
+        reagent_files=[[str(halide), str(boronic)]],
+        center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=_fake_combi_runner)
+    _await(job)
+    assert job.status == "done"
+    run = job.result["runs"][0]
+    assert run["n_docked"] == 2
+    # ranked best-first (minimize: lowest score first)
+    assert run["top"][0]["score"] == -7.5
+    assert (job.dir / "results.json").is_file()
+    assert any("Combi job" in ln for ln in job.lines)
+
+
+def test_combi_job_error_is_captured(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+
+    def bad_runner(**kwargs):
+        raise ValueError("boom")
+
+    job = start_combi_job(
+        receptor_path="", steps=["suzuki"], reagent_files=[["a.smi", "b.smi"]],
+        center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0), runner=bad_runner)
+    _await(job)
+    assert job.status == "error" and job.error == "boom"
+
+
+def test_combi_endpoint_and_jobs_listing(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    # Make the endpoint's background job use the fake runner instead of gnina.
+    monkeypatch.setattr(jobs, "run_combi", _fake_combi_runner)
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[
+                ("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
+                ("reactants", ("halide.smi", b"Brc1ccccc1 phBr\n", "text/plain")),
+                ("reactants", ("boronic.smi", b"OB(O)c1ccccc1 phB\n", "text/plain")),
+            ],
+            data={"config": json.dumps({
+                "steps": ["suzuki"], "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0],
+                "num_cycles": 1, "num_warmup": 1})},
+        )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+
+        for _ in range(200):
+            d = client.get(f"/jobs/{job_id}").json()
+            if d["status"] in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.02)
+        assert d["status"] == "done", d
+        assert d["result"]["runs"][0]["n_docked"] == 2
+        assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
+
+
+def test_combi_endpoint_rejects_missing_steps(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[("receptor", ("receptor.pdb", b"", "chemical/x-pdb"))],
+            data={"config": json.dumps({})})
+        assert r.status_code == 400
+        assert "steps" in r.text
+
+
+def test_combi_endpoint_rejects_reagent_count_mismatch(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[
+                ("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
+                ("reactants", ("halide.smi", b"Brc1ccccc1 phBr\n", "text/plain")),
+            ],
+            data={"config": json.dumps({
+                "steps": ["suzuki"], "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]})})
+        assert r.status_code == 400
+        assert "need 2 reagent" in r.text
+
+
+def test_combi_endpoint_requires_binding_site(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[
+                ("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
+                ("reactants", ("halide.smi", b"Brc1ccccc1 phBr\n", "text/plain")),
+                ("reactants", ("boronic.smi", b"OB(O)c1ccccc1 phB\n", "text/plain")),
+            ],
+            data={"config": json.dumps({"steps": ["suzuki"]})})
+        assert r.status_code == 400
+        assert "reference ligand" in r.text
 
 
 def test_pool_preview_endpoint(tmp_path, monkeypatch):

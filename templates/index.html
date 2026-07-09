@@ -88,6 +88,14 @@
 <div class="wrap">
   <!-- LEFT: configuration -->
   <div>
+    <div class="panel" style="padding:10px 14px">
+      <div class="row">
+        <button class="btn" id="modeGrowthBtn" type="button">Fragment growth</button>
+        <button class="btn ghost" id="modeCombiBtn" type="button">Combinatorial search</button>
+      </div>
+    </div>
+
+    <div id="growthPanels">
     <div class="panel">
       <h2>1 &middot; Bound fragment &amp; receptor</h2>
       <div class="muted">Upload the fragment hit in its <b>bound pose</b> (SDF, 3D) and the prepared
@@ -156,8 +164,20 @@
     <div class="panel" id="growPanel" style="display:none">
       <h2>5 &middot; Growth run</h2>
       <div class="grid3">
-        <div><label>Search cycles</label><input type="number" id="numCycles" value="50" min="1"></div>
+        <div><label>Search method</label>
+          <select id="searchMethod">
+            <option value="ts">Thompson Sampling</option>
+            <option value="rws">Roulette Wheel</option>
+          </select></div>
         <div><label>Warm-up / arm</label><input type="number" id="numWarmup" value="3" min="1"></div>
+        <div><label>Search cycles</label><input type="number" id="numCycles" value="50" min="1"></div>
+      </div>
+      <div class="grid3" id="rwsParams" style="display:none">
+        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span></label><input type="number" id="rwsMinCore" value="50" min="1"></div>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label><input type="number" id="rwsStop" value="6000" min="1"></div>
+        <div></div>
+      </div>
+      <div class="grid3">
         <div><label>Reagents cap</label><input type="number" id="numToSelect" placeholder="all"></div>
       </div>
       <div class="grid3">
@@ -180,6 +200,100 @@
         <button class="btn" id="growBtn" type="button">Launch growth</button>
       </div>
     </div>
+    </div><!-- /growthPanels -->
+
+    <div id="combiPanels" style="display:none">
+    <div class="panel">
+      <h2>1 &middot; Reaction route</h2>
+      <div class="muted">No bound fragment &mdash; every slot of a (possibly multi-step) route is
+        Thompson-sampled from a real reagent library and freely docked (ts-gnina's own search,
+        reused as-is). The first step must be a "start" reaction; each added step extends the
+        running intermediate with one more reagent.</div>
+      <div id="combiSteps"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost" id="combiAddStepBtn" type="button">+ Add extend step</button>
+        <button class="btn ghost" id="combiRemoveStepBtn" type="button" disabled>&minus; Remove last step</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>2 &middot; Receptor &amp; binding site</h2>
+      <label>Receptor (PDB)</label>
+      <input type="file" id="combiReceptor" accept=".pdb">
+      <div class="checkline">
+        <label style="margin:0">Binding site</label>
+        <select id="combiSiteMode" style="width:auto">
+          <option value="reference">Reference ligand (autobox)</option>
+          <option value="pocket">Explicit pocket (center + size)</option>
+        </select>
+      </div>
+      <div id="combiRefBox">
+        <label>Reference ligand (SDF)</label>
+        <input type="file" id="combiReference" accept=".sdf,.mol">
+      </div>
+      <div id="combiPocketBox" class="grid3" style="display:none">
+        <div><label>Center X</label><input type="number" id="combiCx" step="0.1" value="0"></div>
+        <div><label>Center Y</label><input type="number" id="combiCy" step="0.1" value="0"></div>
+        <div><label>Center Z</label><input type="number" id="combiCz" step="0.1" value="0"></div>
+        <div><label>Size X</label><input type="number" id="combiSx" step="0.1" value="20"></div>
+        <div><label>Size Y</label><input type="number" id="combiSy" step="0.1" value="20"></div>
+        <div><label>Size Z</label><input type="number" id="combiSz" step="0.1" value="20"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>3 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
+      <div class="checkline"><input type="checkbox" id="combiPains" checked><label style="margin:0">PAINS structural alerts</label></div>
+      <div class="checkline"><input type="checkbox" id="combiReos" checked><label style="margin:0">REOS functional-group filter</label></div>
+      <div class="row">
+        <div><label>MW min</label><input type="number" id="combiMwLo" placeholder="e.g. 150"></div>
+        <div><label>MW max</label><input type="number" id="combiMwHi" placeholder="e.g. 500"></div>
+      </div>
+      <div class="row">
+        <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2"></div>
+        <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5"></div>
+      </div>
+      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
+    </div>
+
+    <div class="panel">
+      <h2>4 &middot; Combi search run</h2>
+      <div class="grid3">
+        <div><label>Search method</label>
+          <select id="combiSearchMethod">
+            <option value="ts">Thompson Sampling</option>
+            <option value="rws">Roulette Wheel</option>
+          </select></div>
+        <div><label>Warm-up / arm</label><input type="number" id="combiNumWarmup" value="3" min="1"></div>
+        <div><label>Search cycles</label><input type="number" id="combiNumCycles" value="50" min="1"></div>
+      </div>
+      <div class="grid3" id="combiRwsParams" style="display:none">
+        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span></label><input type="number" id="combiRwsMinCore" value="50" min="1"></div>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label><input type="number" id="combiRwsStop" value="6000" min="1"></div>
+        <div></div>
+      </div>
+      <div class="grid3">
+        <div><label>Reagents cap</label><input type="number" id="combiNumToSelect" placeholder="all"></div>
+        <div><label>Score field</label>
+          <select id="combiScoreField">
+            <option value="minimizedAffinity">minimizedAffinity</option>
+            <option value="CNNaffinity">CNNaffinity</option>
+            <option value="CNNscore">CNNscore</option>
+          </select></div>
+        <div><label>CNN scoring</label>
+          <select id="combiCnnScoring">
+            <option value="none">none (fast)</option>
+            <option value="rescore">rescore</option>
+          </select></div>
+      </div>
+      <label>Seed</label><input type="number" id="combiSeed" placeholder="random">
+      <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
+      <input type="text" id="combiSessionName" placeholder="e.g. suzuki_diversity_scan">
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="combiRunBtn" type="button">Launch combi search</button>
+      </div>
+    </div>
+    </div><!-- /combiPanels -->
   </div>
 
   <!-- RIGHT: run -->
@@ -232,6 +346,18 @@ function numOrNull(input){ const v = (input.value||'').trim(); return v===''? nu
 function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
+
+// ---- mode toggle (fragment growth vs combinatorial search) ----
+function setMode(mode){
+  const g = mode === 'growth';
+  el('growthPanels').style.display = g ? '' : 'none';
+  el('combiPanels').style.display = g ? 'none' : '';
+  el('modeGrowthBtn').className = 'btn' + (g ? '' : ' ghost');
+  el('modeCombiBtn').className = 'btn' + (g ? ' ghost' : '');
+}
+el('modeGrowthBtn').addEventListener('click', ()=>setMode('growth'));
+el('modeCombiBtn').addEventListener('click', ()=>setMode('combi'));
+setMode('growth');
 
 // ---- analyze (/prune) ----
 el('analyzeBtn').addEventListener('click', async ()=>{
@@ -344,6 +470,121 @@ el('poolPreviewBtn').addEventListener('click', async ()=>{
   } catch(e){ out.textContent = 'Preview failed: ' + e.message; }
 });
 
+el('searchMethod').addEventListener('change', e=>{
+  el('rwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
+});
+
+// ---- combi route builder (no fragment: every slot is a real reagent library) ----
+let combiStepDivs = [];
+
+// Reactions that continue the same chemistry as ``rid`` -- matched on the
+// name's family prefix (e.g. "Suzuki coupling") since reaction ids don't
+// share a prefix convention (suzuki -> suzuki_ext_*, but
+// reductive_amination -> redam_ext_*).
+function combiFamily(rid){ const rx = RXN[rid]; return rx ? rx.name.split(' (')[0] : null; }
+function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
+function combiExtendReactions(){
+  const fam = combiStepDivs.length ? combiFamily(combiStepDivs[0].querySelector('.combiStepRxn').value) : null;
+  return CATALOG.reactions.filter(r => r.role==='extend' && (!fam || combiFamily(r.id)===fam));
+}
+function renderCombiStepFiles(div){
+  const rid = div.querySelector('.combiStepRxn').value;
+  const rx = RXN[rid]; if (!rx) return;
+  div.querySelector('.combiStepFiles').innerHTML = rx.components.map(c =>
+    `<label>${c.label} <span class="chip">${(c.accepts||[]).map(groupLabel).join(' / ')}</span></label>
+     <input type="file" class="combiReactantFile" accept=".smi">`).join('');
+}
+function addCombiStep(){
+  const isFirst = combiStepDivs.length === 0;
+  const idx = combiStepDivs.length;
+  const opts = (isFirst ? combiStartReactions() : combiExtendReactions())
+    .map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.innerHTML = `<div class="head"><b>Step ${idx+1}${isFirst?' (start)':' (extend)'}</b></div>
+    <label>Reaction</label><select class="combiStepRxn">${opts}</select>
+    <div class="combiStepFiles"></div>`;
+  el('combiSteps').appendChild(div);
+  div.querySelector('.combiStepRxn').addEventListener('change', ()=>renderCombiStepFiles(div));
+  combiStepDivs.push(div);
+  renderCombiStepFiles(div);
+  el('combiRemoveStepBtn').disabled = combiStepDivs.length <= 1;
+}
+function removeCombiStep(){
+  if (combiStepDivs.length <= 1) return;
+  combiStepDivs.pop().remove();
+  el('combiRemoveStepBtn').disabled = combiStepDivs.length <= 1;
+}
+el('combiAddStepBtn').addEventListener('click', addCombiStep);
+el('combiRemoveStepBtn').addEventListener('click', removeCombiStep);
+addCombiStep(); // seed step 1 (start)
+
+function combiPocketMode(){ return el('combiSiteMode').value === 'pocket'; }
+function toggleCombiSiteMode(){
+  const pm = combiPocketMode();
+  el('combiRefBox').style.display = pm ? 'none' : '';
+  el('combiPocketBox').style.display = pm ? '' : 'none';
+}
+el('combiSiteMode').addEventListener('change', toggleCombiSiteMode);
+el('combiSearchMethod').addEventListener('change', e=>{
+  el('combiRwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
+});
+
+// ---- launch combi search (/combi) ----
+el('combiRunBtn').addEventListener('click', async ()=>{
+  const rec = el('combiReceptor').files[0];
+  if (!rec){ alert('Upload a receptor PDB.'); return; }
+  const fd = new FormData();
+  let missing = false;
+  combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
+    if (!inp.files.length){ missing = true; return; }
+    fd.append('reactants', inp.files[0]);
+  }));
+  if (missing){ alert('Upload a .smi library for every reagent slot.'); return; }
+  fd.append('receptor', rec);
+
+  const cfg = {
+    steps: combiStepDivs.map(d => d.querySelector('.combiStepRxn').value),
+    search_method: el('combiSearchMethod').value,
+    num_cycles: parseInt(el('combiNumCycles').value)||50,
+    num_warmup: parseInt(el('combiNumWarmup').value)||3,
+    min_cpds_per_core: parseInt(el('combiRwsMinCore').value)||50,
+    stop: parseInt(el('combiRwsStop').value)||6000,
+    num_to_select: el('combiNumToSelect').value ? parseInt(el('combiNumToSelect').value) : null,
+    score_field: el('combiScoreField').value,
+    cnn_scoring: el('combiCnnScoring').value,
+    seed: el('combiSeed').value ? parseInt(el('combiSeed').value) : null,
+    filters: {
+      pains: el('combiPains').checked, reos: el('combiReos').checked,
+      mw: [numOrNull(el('combiMwLo')), numOrNull(el('combiMwHi'))],
+      logp: [numOrNull(el('combiLogpLo')), numOrNull(el('combiLogpHi'))],
+    },
+  };
+  if (combiPocketMode()){
+    cfg.center = [parseFloat(el('combiCx').value)||0, parseFloat(el('combiCy').value)||0, parseFloat(el('combiCz').value)||0];
+    cfg.size = [parseFloat(el('combiSx').value)||20, parseFloat(el('combiSy').value)||20, parseFloat(el('combiSz').value)||20];
+  } else {
+    const ref = el('combiReference').files[0];
+    if (!ref){ alert('Upload a reference ligand SDF, or switch to explicit pocket.'); return; }
+    fd.append('reference', ref);
+  }
+  fd.append('config', JSON.stringify(cfg));
+  fd.append('session_name', el('combiSessionName').value.trim());
+
+  el('combiRunBtn').disabled = true;
+  el('log').classList.remove('muted'); el('log').textContent = '';
+  el('hitsPanel').style.display = 'none';
+  setStatus('queued');
+  try {
+    const res = await fetch('/combi', { method:'POST', body:fd });
+    if (!res.ok){ throw new Error(await res.text()); }
+    const { job_id } = await res.json();
+    attachStream(job_id);
+    loadHistory();
+  } catch(e){ logLine('Error: ' + e.message); setStatus('error'); }
+  el('combiRunBtn').disabled = false;
+});
+
 // ---- launch growth (/grow) ----
 el('growBtn').addEventListener('click', async ()=>{
   if (!analysis){ return; }
@@ -359,8 +600,11 @@ el('growBtn').addEventListener('click', async ()=>{
 
   const cfg = {
     refine: el('refine').checked,
+    search_method: el('searchMethod').value,
     num_cycles: parseInt(el('numCycles').value)||50,
     num_warmup: parseInt(el('numWarmup').value)||3,
+    min_cpds_per_core: parseInt(el('rwsMinCore').value)||50,
+    stop: parseInt(el('rwsStop').value)||6000,
     num_to_select: el('numToSelect').value ? parseInt(el('numToSelect').value) : null,
     score_field: el('scoreField').value,
     cnn_scoring: el('cnnScoring').value,
@@ -507,13 +751,19 @@ function renderHits(result){
   const panel = el('hitsPanel'), host = el('hits');
   if (!result || !result.runs){ panel.style.display='none'; return; }
   panel.style.display = '';
-  let html = `<div class="muted">Handles ${ (result.fg_classes||[]).map(groupLabel).join(', ') || '—'} ·
-    accessible reactions ${ (result.accessible_reactions||[]).join(', ') || '—'}</div>`;
+  // Growth jobs carry fg_classes/accessible_reactions (accessibility pre-pass);
+  // combi jobs don't -- they're a single explicit route, no pruning involved.
+  let html = ('fg_classes' in result) ? `<div class="muted">Handles ${ (result.fg_classes||[]).map(groupLabel).join(', ') || '—'} ·
+    accessible reactions ${ (result.accessible_reactions||[]).join(', ') || '—'}</div>` : '';
   for (const run of result.runs){
     const t = run.target;
-    const rx = RXN[t.reaction_id] || {name:t.reaction_id};
-    html += `<div class="target-block"><h3>${rx.name}
-      <span class="sub">slot ${t.fragment_slot} · core <code>${t.core_smarts}</code></span></h3>`;
+    if (t){
+      const rx = RXN[t.reaction_id] || {name:t.reaction_id};
+      html += `<div class="target-block"><h3>${rx.name}
+        <span class="sub">slot ${t.fragment_slot} · core <code>${t.core_smarts}</code></span></h3>`;
+    } else {
+      html += `<div class="target-block"><h3>Combi search</h3>`;
+    }
     if (run.skipped){ html += `<div class="warn">skipped — ${run.skipped}</div></div>`; continue; }
     html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
     if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
@@ -537,7 +787,7 @@ async function loadHistory(){
     const d = await (await fetch('/jobs')).json();
     const sel = el('history'); const cur = sel.value;
     sel.innerHTML = '<option value="">— job history —</option>' +
-      d.jobs.map(j => `<option value="${j.id}">${j.id} · ${j.status} · ${j.n_targets||0} target(s)</option>`).join('');
+      d.jobs.map(j => `<option value="${j.id}">${j.id} · ${j.status} · ${j.n_targets||0} run(s)</option>`).join('');
     sel.value = cur;
   } catch(e){}
 }

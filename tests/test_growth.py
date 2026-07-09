@@ -9,6 +9,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from asatro.chemistry.handles import derive_core
+from asatro.engine.evaluators import MWEvaluator
 from asatro.engine.route_sampler import RouteSampler
 from asatro.growth import build_growth_route, make_evaluator, fragment_smiles_from_sdf
 
@@ -45,6 +46,25 @@ def test_route_sampler_grows_from_fragment(tmp_path):
     mol, smi, name, sel = s._build_product([0, 0])
     assert mol is not None
     assert Chem.MolToSmiles(mol) == Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")  # biphenyl
+
+
+def test_route_sampler_rws_warmup_and_search(tmp_path):
+    """The Roulette Wheel Selection path (warm_up_rws/search_rws), lifted from
+    ts-gnina, is reachable from asatro's RouteSampler for a multi-reagent route
+    -- exercised here with a cheap MW evaluator instead of a real dock."""
+    bor = tmp_path / "boronic.smi"
+    bor.write_text("\n".join(f"OB(O)c1ccc({'C' * i})cc1 phB{i}" for i in range(1, 7)) + "\n")
+    files, route = build_growth_route("suzuki", "Brc1ccccc1", 0, {1: str(bor)}, tmp_path)
+    s = RouteSampler(mode="maximize")
+    s.set_hide_progress(True)
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route(route)
+    s.set_evaluator(MWEvaluator())
+    warmup = s.warm_up_rws(num_warmup_trials=2)
+    assert warmup and all(len(row) == 3 for row in warmup)
+    search = s.search_rws(num_targets=4, min_cpds_per_core=1, stop=100)
+    assert isinstance(search, list)
+    assert all(len(row) == 3 for row in search)
 
 
 def test_anchored_evaluator_constrained_pose(tmp_path):

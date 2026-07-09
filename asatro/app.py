@@ -2,7 +2,9 @@
 
 FastAPI surface for fragment growing: handle analysis (``/analyze``), the
 accessibility pre-pass (``/prune``), and accessibility-gated growth runs as
-background jobs (``/grow`` + ``/jobs`` + log streaming).
+background jobs (``/grow`` + ``/jobs`` + log streaming) -- plus the plain,
+unanchored ts-gnina combinatorial search (``/combi``), sharing the same job
+layer and endpoints.
 """
 from __future__ import annotations
 
@@ -20,9 +22,9 @@ from rdkit import Chem
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
-from asatro.chemistry.catalog import REACTIONS, VOCAB
+from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB
 from asatro.chemistry.stub_growth import assess_with_stubs
-from asatro.jobs import JOBS, jobs_dir, list_jobs, start_growth_job
+from asatro.jobs import JOBS, jobs_dir, list_jobs, start_combi_job, start_growth_job
 from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -125,7 +127,8 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     library per slot (each file's name stem = its FG class, e.g. ``boronic.smi``).
     Neither given falls back to the bundled default pool (Enamine Rush-Delivery EU).
     ``config`` is JSON (refine, num_warmup, num_cycles, num_to_select, seed,
-    score_field, cnn_scoring). Returns the job id."""
+    score_field, cnn_scoring, search_method [``"ts"``|``"rws"``], min_cpds_per_core,
+    stop). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:
@@ -158,6 +161,79 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
                            reactant_by_class=reactant_by_class, pool_path=pool_path,
                            cfg=cfg, session_name=session_name)
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.post("/combi")
+async def combi(receptor: UploadFile = File(...),
+                reference: UploadFile = File(default=None),
+                reactants: List[UploadFile] = File(default=[]),
+                config: str = Form("{}"), session_name: str = Form("")) -> dict:
+    """Start an unanchored (plain ts-gnina) combinatorial search as a background job.
+
+    No bound fragment: every slot of a (possibly multi-step) reaction route is
+    Thompson-sampled from a real reagent library and freely docked. Uploads: the
+    receptor (PDB), an optional ``reference`` ligand (SDF, for GNINA's autobox)
+    -- if omitted ``config.center``/``config.size`` must give an explicit pocket
+    -- and one reagent library (.smi) per route component, uploaded flat in
+    route order (step 0's components first in order, then step 1's, ...; counts
+    per step come from ``config.steps`` via the reaction catalog).
+
+    ``config`` is JSON: ``steps`` (list of reaction ids -- the first must be a
+    ``"start"`` reaction, later ones ``"extend"``), ``center``/``size`` ([x,y,z]
+    each, pocket mode), plus the same run knobs as ``/grow`` (num_warmup,
+    num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
+    [``"ts"``|``"rws"``], min_cpds_per_core, stop). Returns the job id."""
+    try:
+        cfg = json.loads(config or "{}")
+    except json.JSONDecodeError as e:
+        raise HTTPException(400, f"bad config JSON: {e}")
+
+    steps = cfg.get("steps") or []
+    if not steps:
+        raise HTTPException(400, "config.steps: at least one reaction id required")
+    counts = []
+    for rid in steps:
+        rxn = REACTION_BY_ID.get(rid)
+        if rxn is None:
+            raise HTTPException(400, f"unknown reaction: {rid}")
+        counts.append(len(rxn["components"]))
+    if len(reactants) != sum(counts):
+        raise HTTPException(
+            400, f"steps {steps} need {sum(counts)} reagent file(s) (route order), "
+            f"got {len(reactants)}")
+
+    center = tuple(cfg["center"]) if cfg.get("center") else None
+    size = tuple(cfg["size"]) if cfg.get("size") else None
+    reference_given = reference is not None and reference.filename
+    if not reference_given and center is None:
+        raise HTTPException(400, "give a reference ligand upload or config.center [x,y,z]")
+
+    stage = jobs_dir() / "_uploads" / f"{int(time.time()*1000)}"
+    stage.mkdir(parents=True, exist_ok=True)
+    rec_path = stage / "receptor.pdb"
+    rec_path.write_bytes(await receptor.read())
+
+    reference_path = None
+    if reference_given:
+        reference_path = str(stage / "reference.sdf")
+        Path(reference_path).write_bytes(await reference.read())
+
+    reagent_files: List[List[str]] = []
+    idx = 0
+    for si, n in enumerate(counts):
+        step_paths = []
+        for ci in range(n):
+            rf = reactants[idx]
+            p = stage / f"step{si}_comp{ci}_{Path(rf.filename or 'reagent.smi').name}"
+            p.write_bytes(await rf.read())
+            step_paths.append(str(p))
+            idx += 1
+        reagent_files.append(step_paths)
+
+    job = start_combi_job(receptor_path=str(rec_path), steps=steps, reagent_files=reagent_files,
+                          reference_path=reference_path, center=center, size=size,
+                          cfg=cfg, session_name=session_name)
     return {"job_id": job.id, "status": job.status}
 
 

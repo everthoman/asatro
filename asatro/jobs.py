@@ -1,8 +1,12 @@
-"""In-process job layer for Asatro growth runs.
+"""In-process job layer for Asatro growth and combi runs.
 
-A growth run is a background thread: run the accessibility pre-pass, then grow the
-surviving reaction/slots. Console lines stream live; metadata + a results summary
-persist under the job dir so finished runs stay viewable after a restart.
+Both run as a background thread and share the same ``GrowthJob`` bookkeeping
+(status, live log lines, evaluator handle for live polling, persisted results):
+a growth run does the accessibility pre-pass, then grows the surviving
+reaction/slots (one run per target); a combi run is always exactly one
+explicit, unanchored multi-step route (no pre-pass, no skips). Console lines
+stream live; metadata + a results summary persist under the job dir so
+finished runs stay viewable after a restart.
 
 Mirrors the TS app's Job pattern, slimmed for growth (no CNN re-dock sub-run).
 """
@@ -18,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from asatro.combi import run_combi
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.growth import grow_accessible, run_growth
 from asatro.svg import mol_svg
@@ -175,6 +180,37 @@ def _summarize(out: dict, higher_is_better: Optional[bool], job_dir: Optional[Pa
     }
 
 
+def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
+                     job_dir: Optional[Path] = None) -> dict:
+    """JSON-safe summary of a run_combi result, in the same ``{runs: [...]}``
+    shape ``_summarize`` produces for a growth job -- a combi job is just
+    always exactly one run (no accessibility pre-pass, no per-target skips),
+    so it carries a single-element ``runs`` list."""
+    if evaluator is not None:
+        ranked = evaluator.top_scored(TOP_N)
+        n_docked = evaluator.stats()["unique_scored"]
+    else:
+        hib = bool(higher_is_better)
+        ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
+        n_docked = len(rows)
+    entry = {"n_docked": n_docked,
+             "top": [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm)}
+                    for s, sm, nm in ranked]}
+    if evaluator is not None:
+        pts = evaluator.convergence()
+        st = evaluator.stats()
+        entry["convergence"] = {
+            "points": [{"dock": d, "best": b} for d, b in pts],
+            "score_field": evaluator.score_field, "higher_better": bool(evaluator.higher_is_better),
+            "docked": st["docked"], "best": st["best_score"],
+        }
+        if st.get("rejections"):
+            entry["rejections"] = st["rejections"]
+        if job_dir is not None and evaluator.write_top_poses(str(job_dir / "poses_0.sdf"), n=TOP_N) > 0:
+            entry["poses"] = "poses_0.sdf"
+    return {"runs": [entry]}
+
+
 def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
          reactant_by_class: Dict[str, str], pool_path: Optional[str],
          cfg: dict, runner: Callable) -> None:
@@ -204,6 +240,10 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                     f"REOS {len(mol_filters.reos_rules)} rule(s), MW {mol_filters.mw_range}, "
                     f"logP {mol_filters.logp_range}")
 
+        search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
+        job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
+                if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
+
         out = grow_accessible(
             fragment_sdf=fragment_path, receptor_pdb=receptor_path,
             reactant_resolver=resolver,
@@ -216,11 +256,71 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             score_field=cfg.get("score_field", "minimizedAffinity"),
             cnn_scoring=cfg.get("cnn_scoring", "none"),
             filters=mol_filters if mol_filters.active else None,
+            search_method=search_method,
+            min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
+            stop=int(cfg.get("stop", 6000)),
         )
         job.result = _summarize(out, higher_is_better=False, job_dir=job.dir)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
         job.log(f"Job {job.status} — {len(job.result['runs'])} target(s)")
+    except Exception as e:  # noqa: BLE001 — surface any failure to the UI
+        job.status = "error"
+        job.error = str(e)
+        job.log(f"ERROR: {e}")
+    finally:
+        job.evaluator = None
+        job.current_target = None
+        job.finished = time.time()
+        _persist_meta(job)
+
+
+def _run_combi(job: GrowthJob, receptor_path: str, steps: List[str],
+              reagent_files: List[List[str]], reference_path: Optional[str],
+              center: Optional[tuple], size: Optional[tuple],
+              cfg: dict, runner: Callable) -> None:
+    """Unanchored (plain ts-gnina) combinatorial search: one explicit
+    multi-step route, no accessibility pre-pass and so no per-target loop --
+    contrast with ``_run``'s multiple growth targets."""
+    job.status = "running"
+    _persist_meta(job)
+    job.log(f"Combi job {job.id} started — route {' -> '.join(steps)}")
+    try:
+        def _on_evaluator(ev):
+            job.evaluator = ev
+            job.current_target = " -> ".join(steps)
+
+        mol_filters = make_filters(cfg)
+        if mol_filters.active:
+            job.log(f"Filters: PAINS {len(mol_filters.pains_patterns)} pattern(s), "
+                    f"REOS {len(mol_filters.reos_rules)} rule(s), MW {mol_filters.mw_range}, "
+                    f"logP {mol_filters.logp_range}")
+
+        search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
+        job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
+                if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
+
+        rows, evaluator = runner(
+            receptor_path=receptor_path, steps=steps, reagent_files=reagent_files,
+            work_dir=str(job.dir / "run"), reference_path=reference_path,
+            center=center, size=size,
+            num_warmup=int(cfg.get("num_warmup", 3)),
+            num_cycles=int(cfg.get("num_cycles", 25)),
+            num_to_select=cfg.get("num_to_select"),
+            seed=cfg.get("seed"),
+            score_field=cfg.get("score_field", "minimizedAffinity"),
+            cnn_scoring=cfg.get("cnn_scoring", "none"),
+            filters=mol_filters if mol_filters.active else None,
+            search_method=search_method,
+            min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
+            stop=int(cfg.get("stop", 6000)),
+            progress_callback=job.log, cancel_event=job.cancel_event,
+            on_evaluator=_on_evaluator,
+        )
+        job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
+        (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
+        job.status = "cancelled" if job.cancel_event.is_set() else "done"
+        job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
         job.error = str(e)
@@ -258,6 +358,30 @@ def start_growth_job(*, fragment_path: str, receptor_path: str,
     job.thread = threading.Thread(
         target=_run,
         args=(job, fragment_path, receptor_path, reactant_by_class or {}, pool_path,
+              cfg or {}, runner),
+        daemon=True,
+    )
+    job.thread.start()
+    return job
+
+
+def start_combi_job(*, receptor_path: str, steps: List[str], reagent_files: List[List[str]],
+                    reference_path: Optional[str] = None, center: Optional[tuple] = None,
+                    size: Optional[tuple] = None, cfg: Optional[dict] = None,
+                    session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
+    """Create a job dir, register the job, and run an unanchored combi search in
+    a background thread. ``runner`` defaults to :func:`asatro.combi.run_combi`
+    (resolved at call time so it stays patchable), same convention as
+    :func:`start_growth_job`."""
+    runner = runner or run_combi
+    job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
+    job_dir = jobs_dir() / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    job = GrowthJob(id=job_id, dir=job_dir)
+    JOBS[job_id] = job
+    job.thread = threading.Thread(
+        target=_run_combi,
+        args=(job, receptor_path, steps, reagent_files, reference_path, center, size,
               cfg or {}, runner),
         daemon=True,
     )
