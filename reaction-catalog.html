@@ -83,16 +83,6 @@
   .search:focus, button:focus-visible, .search:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
   }
-  .role-toggle { display: flex; gap: 6px; }
-  .role-toggle button {
-    font-family: var(--mono); font-size: 12px; letter-spacing: .03em;
-    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
-    border-radius: 999px; padding: 7px 14px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
-  }
-  .role-toggle button:hover { border-color: var(--muted-dim); color: var(--text); }
-  .role-toggle button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-  .role-toggle button.active[data-role="extend"] { background: var(--extend); color: var(--extend-ink); border-color: var(--extend); }
-
   .no-results { display: none; padding: 48px 0; text-align: center; color: var(--muted); font-family: var(--serif); font-size: 16px; }
   .no-results.show { display: block; }
 
@@ -159,11 +149,6 @@
     </div>
     <div class="controls">
       <input class="search" id="search" type="text" placeholder="Search by name, id, or SMARTS&hellip;" autocomplete="off">
-      <div class="role-toggle" id="roleToggle">
-        <button class="active" data-role="all">All &middot; 54</button>
-        <button data-role="start">Start &middot; 35</button>
-        <button data-role="extend">Extend &middot; 19</button>
-      </div>
     </div>
   </header>
 
@@ -191,12 +176,9 @@ const REACTIONS = [{"id": "amide", "name": "Amide coupling (amine + acid)", "rol
 
 const tbody = document.getElementById('tbody');
 const searchEl = document.getElementById('search');
-const roleToggle = document.getElementById('roleToggle');
 const countShown = document.getElementById('countShown');
 const noResults = document.getElementById('noResults');
 const noResultsQuery = document.getElementById('noResultsQuery');
-
-let roleFilter = 'all';
 
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -239,8 +221,7 @@ function matchesSearch(r, q) {
 
 function render() {
   const q = searchEl.value.trim().toLowerCase();
-  const filtered = REACTIONS.filter(r =>
-    (roleFilter === 'all' || r.role === roleFilter) && matchesSearch(r, q));
+  const filtered = REACTIONS.filter(r => matchesSearch(r, q));
 
   tbody.innerHTML = filtered.map(rowHtml).join('');
   countShown.textContent = filtered.length;
@@ -254,13 +235,6 @@ function render() {
 }
 
 searchEl.addEventListener('input', render);
-roleToggle.addEventListener('click', e => {
-  const btn = e.target.closest('button');
-  if (!btn) return;
-  roleFilter = btn.dataset.role;
-  [...roleToggle.children].forEach(b => b.classList.toggle('active', b === btn));
-  render();
-});
 
 render();
 </script>

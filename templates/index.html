@@ -119,9 +119,12 @@
     </div>
 
     <div class="panel" id="resultsPanel" style="display:none">
-      <h2>2 &middot; Handles &amp; accessible reactions <span class="muted" style="font-weight:400">(pick step 1)</span></h2>
+      <h2>2 &middot; Handles &amp; accessible reactions</h2>
       <div id="fgClasses" style="margin-bottom:8px"></div>
-      <div id="reactionList"></div>
+      <label>Step 1</label>
+      <select id="step1Select">
+        <option value="">— choose an accessible reaction/slot —</option>
+      </select>
     </div>
 
     <div class="panel" id="growthRoutePanel" style="display:none">
@@ -438,6 +441,11 @@ el('analyzeBtn').addEventListener('click', async ()=>{
   el('analyzeBtn').disabled = false; el('analyzeBtn').textContent = 'Analyze accessibility';
 });
 
+// "rid|slotIndex" -> {reactionId, slotIndex, coreSmarts, fgClass}, rebuilt
+// each analysis -- backs the step1Select dropdown (only accessible slots are
+// ever added, so the menu can't offer a pruned/incompatible choice).
+let step1Choices = {};
+
 function renderAnalysis(){
   el('resultsPanel').style.display = '';
   growthStep1 = null;
@@ -449,44 +457,38 @@ function renderAnalysis(){
     (analysis.fg_classes.length ? analysis.fg_classes.map(c=>`<span class="chip">${groupLabel(c)}</span>`).join('')
       : '<span class="bad">none detected — this scaffold has no reactive handle</span>');
 
-  const list = el('reactionList'); list.innerHTML = '';
+  step1Choices = {};
+  const options = ['<option value="">— choose an accessible reaction/slot —</option>'];
   for (const [rid, info] of Object.entries(analysis.reactions)){
     if (!info.compatible) continue;
     const rx = RXN[rid] || {name: rid, components: []};
-    const acc = info.accessible;
-    const div = document.createElement('div');
-    div.className = 'step' + (acc ? '' : ' pruned');
-    const slots = (info.slots||[]).map(s=>{
-      const v = (s.vectors||[])[0];
-      const reach = v ? ` · reach ${('max_free' in v)? v.max_free+'Å':''}${v.fits?(' · fits '+v.fits.join('/')):''}` : '';
-      const ok = s.accessible !== false;
-      const radioId = `step1_${rid}_${s.index}`;
-      const pick = ok ? `<input type="radio" name="step1choice" id="${radioId}"
-        data-reaction="${rid}" data-slot="${s.index}" data-core="${esc(s.core_smarts)}"
-        data-fgclass="${s.fg_class}" style="width:auto;margin-right:6px">
-        <label for="${radioId}" style="display:inline;margin:0;cursor:pointer">pick as step 1</label> &middot; ` : '';
-      return `<div class="sub">${pick}slot ${s.index} = ${groupLabel(s.fg_class)} ·
-        core <code>${s.core_smarts}</code> <span class="${ok?'ok':'bad'}">${ok?'accessible':'blocked'}</span>${reach}</div>`;
-    }).join('');
-    div.innerHTML = `<div class="head"><b>${rx.name}</b>
-      <span class="${acc?'ok':'bad'}">${acc?'✓ accessible':'✗ pruned'}</span></div>${slots}`;
-    list.appendChild(div);
+    (info.slots||[]).forEach(s=>{
+      if (s.accessible === false) return;
+      const key = `${rid}|${s.index}`;
+      step1Choices[key] = { reactionId: rid, slotIndex: s.index, coreSmarts: s.core_smarts, fgClass: s.fg_class };
+      options.push(`<option value="${key}">${esc(rx.name)} — slot ${s.index} (${esc(groupLabel(s.fg_class))})</option>`);
+    });
   }
-  list.querySelectorAll('input[name="step1choice"]').forEach(r => r.addEventListener('change', onPickStep1));
+  el('step1Select').innerHTML = options.join('');
   renderReactantSlots();
 }
 
-function onPickStep1(e){
-  const t = e.target;
-  growthStep1 = { reactionId: t.dataset.reaction, slotIndex: parseInt(t.dataset.slot),
-                  coreSmarts: t.dataset.core, fgClass: t.dataset.fgclass };
+el('step1Select').addEventListener('change', e=>{
+  const choice = step1Choices[e.target.value];
   growthExtendStepDivs.forEach(d => d.remove());
   growthExtendStepDivs = [];
   el('growthRemoveStepBtn').disabled = true;
+  if (!choice){
+    growthStep1 = null;
+    el('growthRoutePanel').style.display = 'none';
+    renderReactantSlots();
+    return;
+  }
+  growthStep1 = choice;
   renderGrowthStep1Summary();
   el('growthRoutePanel').style.display = '';
   renderReactantSlots();
-}
+});
 
 function renderGrowthStep1Summary(){
   const box = el('growthStep1Summary');
