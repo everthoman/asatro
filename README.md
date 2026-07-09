@@ -80,6 +80,16 @@ reacting site's hybridization changes outright. Those fire and dock fine in
 core-RMSD guard for most candidates — a mismatch between "anchor a known
 binding mode" and "build a new ring around the anchor atom," not a bug.
 
+`suzuki`'s SMARTS (also verbatim Hartenfeller) only covers classic aryl/vinyl
+biaryl coupling (`H0;D3` on both partners) — confirmed against a real
+external dataset ([oxpig/syndirella](https://github.com/oxpig/syndirella)'s
+A71EV2A example): asatro reproduced its 1-step and (chemistry-wise, modulo
+an unresolved regiochemistry ambiguity where two isomers are equally valid
+matches) its first two amidation steps exactly, but a 3-step route using a
+*primary alkylboronic acid* (`R-CH2-B(OH)2`, coupling to form an Ar-CH2-
+bond rather than a biaryl one) doesn't fire — that's a different reaction
+subtype the current catalog doesn't cover, not a bug in this port.
+
 The **accessibility pre-pass** is in too. A fast geometric cone probe
 (`accessibility.py`) measures how far each growth vector reaches before hitting
 receptor atoms; an optional **stub-growth refinement** (`stub_growth.py`) then
