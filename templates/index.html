@@ -407,7 +407,7 @@ function extendStepOptionsHtml(){
     .map(r => `<option value="${r.id}|0">${esc(r.name)}</option>`).join('');
   const reused = CATALOG.reactions.filter(r => r.role === 'start').flatMap(r =>
     r.components.map((c, ci) =>
-      `<option value="${r.id}|${ci}">${esc(r.name)} — slot ${ci} (${esc(c.label)})</option>`)
+      `<option value="${r.id}|${ci}">${esc(r.name)} — slot ${ci + 1} (${esc(c.label)})</option>`)
   ).join('');
   return `<optgroup label="Extend reactions">${legacy}</optgroup>`
        + `<optgroup label="Any reaction (choose the intermediate's slot)">${reused}</optgroup>`;
@@ -489,7 +489,7 @@ function renderAnalysis(){
       if (s.accessible === false) return;
       const key = `${rid}|${s.index}`;
       step1Choices[key] = { reactionId: rid, slotIndex: s.index, coreSmarts: s.core_smarts, fgClass: s.fg_class };
-      options.push(`<option value="${key}">${esc(rx.name)} — slot ${s.index} (${esc(groupLabel(s.fg_class))})</option>`);
+      options.push(`<option value="${key}">${esc(rx.name)} — slot ${s.index + 1} (${esc(groupLabel(s.fg_class))})</option>`);
     });
   }
   el('step1Select').innerHTML = options.join('');
@@ -518,7 +518,7 @@ function renderGrowthStep1Summary(){
   if (!growthStep1){ box.innerHTML = ''; return; }
   const rx = RXN[growthStep1.reactionId] || {name: growthStep1.reactionId};
   box.innerHTML = `<div class="head"><b>Step 1 (start)</b></div>
-    <div class="sub">${rx.name} &middot; fragment fills slot ${growthStep1.slotIndex}
+    <div class="sub">${rx.name} &middot; fragment fills slot ${growthStep1.slotIndex + 1}
     (${groupLabel(growthStep1.fgClass)}) &middot; core <code>${growthStep1.coreSmarts}</code></div>`;
 }
 

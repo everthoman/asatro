@@ -72,7 +72,7 @@ def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slo
         rid, rxn = info["reaction_id"], info["rxn"]
         comps = rxn["components"]
         if i == 0 and not 0 <= fragment_slot < len(comps):
-            raise ValueError(f"fragment_slot {fragment_slot} out of range for '{rid}' "
+            raise ValueError(f"fragment_slot {fragment_slot + 1} out of range for '{rid}' "
                              f"({len(comps)} components)")
         step_files: List[str] = []
         labels: List[str] = []

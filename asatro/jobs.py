@@ -201,7 +201,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
     step0_id = resolve_step(steps[0], 0)["reaction_id"]
     step_ids = [step0_id] + [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps[1:], 1)]
     job.log(f"Growth job {job.id} started — route {' -> '.join(step_ids)} "
-            f"(fragment in slot {fragment_slot} of step 1)")
+            f"(fragment in slot {fragment_slot + 1} of step 1)")
     try:
         mol = Chem.MolFromMolFile(fragment_path, removeHs=True)
         if mol is None:
@@ -222,10 +222,10 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             raise ValueError(f"'{step0_id}' is not a compatible start reaction for this fragment")
         slot = next((s for s in info["slots"] if s["index"] == fragment_slot), None)
         if slot is None:
-            raise ValueError(f"fragment_slot {fragment_slot} is not a valid slot for '{step0_id}'")
+            raise ValueError(f"fragment_slot {fragment_slot + 1} is not a valid slot for '{step0_id}'")
         if not slot.get("accessible", True):
             raise ValueError(
-                f"slot {fragment_slot} of '{step0_id}' was pruned by the accessibility pre-pass")
+                f"slot {fragment_slot + 1} of '{step0_id}' was pruned by the accessibility pre-pass")
         core_smarts = slot["core_smarts"]
 
         if pool_path:
