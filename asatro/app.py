@@ -147,7 +147,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     fills), plus the same run knobs as ``/combi`` (refine, num_warmup,
     num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
     [``"ts"``|``"rws"``], min_cpds_per_core, stop, max_core_rmsd — the core-
-    drift placement guard, in Å). Returns the job id."""
+    drift placement guard, in Å — ``concurrency``, ``cpu``). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:
@@ -217,7 +217,10 @@ async def combi(receptor: UploadFile = File(...),
     ``"start"`` reaction, later ones ``"extend"``), ``center``/``size`` ([x,y,z]
     each, pocket mode), plus the same run knobs as ``/grow`` (num_warmup,
     num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
-    [``"ts"``|``"rws"``], min_cpds_per_core, stop). Returns the job id."""
+    [``"ts"``|``"rws"``], min_cpds_per_core, stop, ``concurrency`` — number of
+    products to build+dock in parallel (default 1), ``cpu`` — cores per dock
+    (default: ``DOCK_CPU`` split evenly across ``concurrency`` when unset)).
+    Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:

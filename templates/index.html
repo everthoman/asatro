@@ -207,6 +207,8 @@
       </div>
       <div class="grid3">
         <div><label>Reagents cap</label><input type="number" id="numToSelect" placeholder="all"></div>
+        <div><label>Concurrency <span class="chip">(parallel docks)</span></label><input type="number" id="concurrency" value="1" min="1"></div>
+        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span></label><input type="number" id="cpuPerDock" placeholder="auto" min="1"></div>
       </div>
       <div class="grid3">
         <div><label>Score field</label>
@@ -313,6 +315,11 @@
             <option value="none">none (fast)</option>
             <option value="rescore">rescore</option>
           </select></div>
+      </div>
+      <div class="grid3">
+        <div><label>Concurrency <span class="chip">(parallel docks)</span></label><input type="number" id="combiConcurrency" value="1" min="1"></div>
+        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span></label><input type="number" id="combiCpuPerDock" placeholder="auto" min="1"></div>
+        <div></div>
       </div>
       <label>Seed</label><input type="number" id="combiSeed" placeholder="random">
       <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
@@ -713,6 +720,8 @@ el('combiRunBtn').addEventListener('click', async ()=>{
     num_warmup: parseInt(el('combiNumWarmup').value)||3,
     min_cpds_per_core: parseInt(el('combiRwsMinCore').value)||50,
     stop: parseInt(el('combiRwsStop').value)||6000,
+    concurrency: parseInt(el('combiConcurrency').value)||1,
+    cpu: el('combiCpuPerDock').value ? parseInt(el('combiCpuPerDock').value) : null,
     num_to_select: el('combiNumToSelect').value ? parseInt(el('combiNumToSelect').value) : null,
     score_field: el('combiScoreField').value,
     cnn_scoring: el('combiCnnScoring').value,
@@ -773,6 +782,8 @@ el('growBtn').addEventListener('click', async ()=>{
     num_warmup: parseInt(el('numWarmup').value)||3,
     min_cpds_per_core: parseInt(el('rwsMinCore').value)||50,
     stop: parseInt(el('rwsStop').value)||6000,
+    concurrency: parseInt(el('concurrency').value)||1,
+    cpu: el('cpuPerDock').value ? parseInt(el('cpuPerDock').value) : null,
     num_to_select: el('numToSelect').value ? parseInt(el('numToSelect').value) : null,
     score_field: el('scoreField').value,
     cnn_scoring: el('cnnScoring').value,

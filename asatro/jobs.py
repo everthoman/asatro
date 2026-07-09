@@ -30,7 +30,7 @@ from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_re
 from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
-from asatro.engine.gnina_evaluator import MolFilters
+from asatro.engine.gnina_evaluator import DOCK_CPU, MolFilters
 from asatro.growth import run_growth
 from asatro.svg import mol_svg
 
@@ -172,6 +172,27 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
     return {"runs": [entry]}
 
 
+def _dock_resources(cfg: dict, job: GrowthJob) -> tuple:
+    """Resolve ``concurrency``/``cpu`` from the job config.
+
+    Docking is CPU-bound (``cnn_scoring="none"`` by default, see
+    ``gnina_evaluator.py``), and each individual dock otherwise defaults to
+    ``DOCK_CPU`` (all but a few reserved cores) -- fine at ``concurrency=1``,
+    but requesting that many threads per dock while running several docks in
+    parallel oversubscribes the box. If the caller sets ``concurrency`` without
+    an explicit ``cpu``, split ``DOCK_CPU`` evenly across the parallel docks
+    instead of leaving every one of them asking for all of it.
+    """
+    concurrency = max(1, int(cfg.get("concurrency", 1)))
+    cpu = cfg.get("cpu")
+    if cpu is None and concurrency > 1:
+        cpu = max(1, DOCK_CPU // concurrency)
+    if concurrency > 1:
+        job.log(f"Parallel docking: concurrency={concurrency}, {cpu or DOCK_CPU} cpu/dock "
+                f"(of {DOCK_CPU} available)")
+    return concurrency, cpu
+
+
 def _persist_steps(steps: List) -> List[dict]:
     """``job.result["steps"]``: the raw ``slot`` each step was given (not the
     resolver's computed ``intermediate_slot``), so a later, independent call
@@ -269,6 +290,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
+        concurrency, cpu = _dock_resources(cfg, job)
 
         def _on_evaluator(ev):
             job.evaluator = ev
@@ -289,6 +311,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
             stop=int(cfg.get("stop", 6000)),
             max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
+            concurrency=concurrency, cpu=cpu,
             progress_callback=job.log, cancel_event=job.cancel_event,
             on_evaluator=_on_evaluator,
         )
@@ -335,6 +358,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
+        concurrency, cpu = _dock_resources(cfg, job)
 
         rows, evaluator = runner(
             receptor_path=receptor_path, steps=steps, reagent_files=reagent_files,
@@ -350,6 +374,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
             search_method=search_method,
             min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
             stop=int(cfg.get("stop", 6000)),
+            concurrency=concurrency, cpu=cpu,
             progress_callback=job.log, cancel_event=job.cancel_event,
             on_evaluator=_on_evaluator,
         )
