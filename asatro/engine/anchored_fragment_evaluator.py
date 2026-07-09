@@ -191,8 +191,9 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     Extra ``input_dict`` keys (on top of GninaEvaluator's)
         fragment_sdf : str        - fragment in its bound pose (3D SDF). REQUIRED.
-                                     Also the natural choice for ``reference_path``
-                                     (autobox around the fragment).
+                                     Also satisfies GninaEvaluator's "give me a
+                                     site" requirement, though the box itself is
+                                     no longer sized from it -- see _box_flags.
         core_smarts  : str        - the conserved sub-fragment (exclude the
                                      leaving handle). Strongly recommended.
         max_core_rmsd: float (1.5)- reject if core drifts more than this (A).
@@ -222,6 +223,33 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         # --local_only: optimise the supplied (anchored) pose only; no global
         # search that would relocate the fragment. --minimize_iters keeps it short.
         return ["--local_only"] if self.local_only else []
+
+    # --- override hook 3: per-candidate box ------------------------------------
+    def _box_flags(self, sdf_block: str) -> List[str]:
+        """Size the box from *this candidate's own* just-built conformer
+        (core pinned to the bound pose, the rest freely embedded by
+        ``_prepare_pose``) instead of a box fixed once from the small
+        original fragment. A route that's grown well past the fragment needs
+        a box that covers the whole grown product, not one sized to the
+        anchor alone -- otherwise gnina's local optimisation has to
+        compromise the pose (including the anchored core) to fit, which the
+        core-RMSD guard then has to reject as drift, when a correctly-sized
+        box would have let the real elaboration dock cleanly."""
+        mol = Chem.MolFromMolBlock(sdf_block, sanitize=False)
+        if mol is None or mol.GetNumConformers() == 0:
+            return super()._box_flags(sdf_block)  # shouldn't happen; same block just parsed fine to write it
+        conf = mol.GetConformer()
+        xyz = np.array([list(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())])
+        lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+        center = (lo + hi) / 2
+        # Pad each side by autobox_add (matching --autobox_add's own
+        # per-side convention), floored at the class's configured/default
+        # box size so a tiny early-route candidate doesn't get a starved box.
+        size = np.maximum((hi - lo) + 2 * self.autobox_add, np.array(self.size, dtype=float))
+        return [
+            "--center_x", f"{center[0]:.3f}", "--center_y", f"{center[1]:.3f}", "--center_z", f"{center[2]:.3f}",
+            "--size_x", f"{size[0]:.3f}", "--size_y", f"{size[1]:.3f}", "--size_z", f"{size[2]:.3f}",
+        ]
 
     # --- override the pose reader to add the core-drift guard ------------------
     def _best_pose(self, sdf_path: str, smiles: str):

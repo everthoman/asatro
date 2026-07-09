@@ -535,6 +535,24 @@ class GninaEvaluator(Evaluator):
         e.g. ``--local_only`` for anchored docking."""
         return []
 
+    def _box_flags(self, sdf_block: str) -> List[str]:
+        """gnina's box CLI flags for this dock. Default: a fixed reference
+        ligand (autobox) or an explicit center/size, both set once at
+        construction and shared by every product. Subclasses can override to
+        size the box per-candidate instead -- see
+        ``AnchoredFragmentEvaluator``, which sizes it from the pose's own
+        conformer (already built by ``_prepare_pose`` before this is called)
+        so a route that's grown well past the original reference still gets
+        a box that actually covers it."""
+        if self.reference_path:
+            return ["--autobox_ligand", self.reference_path, "--autobox_add", str(self.autobox_add)]
+        cx, cy, cz = self.center
+        sx, sy, sz = self.size
+        return [
+            "--center_x", f"{cx:.3f}", "--center_y", f"{cy:.3f}", "--center_z", f"{cz:.3f}",
+            "--size_x", f"{sx:.3f}", "--size_y", f"{sy:.3f}", "--size_z", f"{sz:.3f}",
+        ]
+
     # -- Docking ------------------------------------------------------------
     def _dock(self, smiles: str) -> float:
         sdf_block, err = self._prepare_pose(smiles)
@@ -554,15 +572,7 @@ class GninaEvaluator(Evaluator):
             f.write(sdf_block if sdf_block.endswith("\n") else sdf_block + "\n")
 
         cmd = [self.gnina_path, "-r", self.receptor_path, "-l", lig_path, "-o", out_path]
-        if self.reference_path:
-            cmd += ["--autobox_ligand", self.reference_path, "--autobox_add", str(self.autobox_add)]
-        else:
-            cx, cy, cz = self.center
-            sx, sy, sz = self.size
-            cmd += [
-                "--center_x", f"{cx:.3f}", "--center_y", f"{cy:.3f}", "--center_z", f"{cz:.3f}",
-                "--size_x", f"{sx:.3f}", "--size_y", f"{sy:.3f}", "--size_z", f"{sz:.3f}",
-            ]
+        cmd += self._box_flags(sdf_block)
         cmd += [
             "--num_modes", str(self.num_modes),
             "--exhaustiveness", str(self.exhaustiveness),

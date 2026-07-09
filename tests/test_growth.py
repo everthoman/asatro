@@ -154,6 +154,43 @@ def test_anchored_evaluator_constrained_pose(tmp_path):
     assert placed.HasSubstructMatch(Chem.MolFromSmiles(core))
 
 
+def test_anchored_evaluator_box_scales_with_the_actual_candidate(tmp_path):
+    """Regression: the docking box used to be fixed once, sized only to the
+    small original fragment (via a static --autobox_ligand reference) --
+    every candidate in a route shared that one box no matter how far it had
+    grown. Confirmed with a real gnina dock that a starved box lets
+    --local_only's optimiser compromise the pose (including the anchored
+    core) to fit, which the core-RMSD guard then has to reject as drift --
+    a false negative caused by box sizing, not the elaboration itself. Now
+    each candidate's own just-embedded conformer sizes its own box."""
+    sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    core = derive_core("Brc1ccccc1", "aryl_halide")
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=str(rec), core_smarts=core,
+                        work_dir=str(tmp_path / "dock"))
+
+    small_block, err = ev._prepare_pose("c1ccccc1")  # just the conserved core itself
+    assert err is None
+    small_flags = dict(zip(ev._box_flags(small_block)[0::2], ev._box_flags(small_block)[1::2]))
+
+    # A long chain grown off the ring extends well past the fragment's own
+    # tiny footprint -- the box must grow to cover it, not stay pinned to
+    # the fragment's size/location.
+    grown_block, err = ev._prepare_pose("c1ccc(CCCCCCCCCCCCCCCC)cc1")
+    assert err is None
+    grown_flags = dict(zip(ev._box_flags(grown_block)[0::2], ev._box_flags(grown_block)[1::2]))
+
+    small_size = [float(small_flags[f"--size_{ax}"]) for ax in "xyz"]
+    grown_size = [float(grown_flags[f"--size_{ax}"]) for ax in "xyz"]
+    assert max(grown_size) > max(small_size) + 5  # materially bigger, not just noise
+
+    # The small candidate's box floors out at the evaluator's configured
+    # default size (nothing to grow into yet); the grown one exceeds it.
+    assert small_size == list(ev.size)
+    assert max(grown_size) > max(ev.size)
+
+
 def test_anchored_evaluator_max_core_rmsd_is_adjustable(tmp_path):
     sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
     rec = tmp_path / "receptor.pdb"
