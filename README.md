@@ -6,17 +6,12 @@ Asatro grows elaborations from a **bound fragment** in its crystallographic pose
 choosing what to make and where with **Thompson Sampling** over reaction × reactant
 space, and placing each candidate by constrained docking onto the original pose.
 
-It is a sibling of — but deliberately distinct from — the TS+GNINA combinatorial
-web app (`/opt/webapps/TS`), which Asatro's fragment functionality was split out of.
+It grew out of — and has since superseded — the TS+GNINA combinatorial web app
+(`/opt/webapps/TS`, now decommissioned): Asatro's fragment-anchored growth path
+was split out of it, and its reaction catalog, RWS sampler, and
+protecting-group handling have since been folded back in here.
 
-## Why it's different from Syndirella
-
-Syndirella elaborates a base compound **retrosynthetically and exhaustively**:
-decompose a known analogue, pull purchasable reactant analogues, enumerate the
-whole elaboration library, place every member (Fragmenstein), score. Cost scales
-with the enumerated library.
-
-Asatro instead is:
+Asatro is:
 
 1. **Forward & handle-driven** — it reads the reactive handles *on the bound
    fragment itself* and proposes the reactions those handles enable; no
@@ -31,16 +26,25 @@ See [DESIGN.md](DESIGN.md) for the full pipeline and open decisions.
 
 ## Status
 
-Early, but the first engine slice is in: **Tier-1 handle detection + auto-core
-derivation** (`asatro/chemistry/`). Given a fragment it reports the functional-group
-handles it bears, the compatible start reactions (and which slot the fragment
-fills), and the conserved core auto-derived for each handle.
+Working end-to-end and real-dock validated.
+
+**Tier-1 handle detection + auto-core derivation** (`asatro/chemistry/`). Given a
+fragment it reports the functional-group handles it bears, the compatible start
+reactions (and which slot the fragment fills), and the conserved core
+auto-derived for each handle.
 
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 17 passing
+python -m pytest tests/                                # 114 passing
 ```
+
+**Reaction catalog**: 54 reactions (35 start + 19 extend) across amide/Suzuki/
+SNAr/reductive-amination/Buchwald/Ullmann/Chan–Lam/esterification/Heck/
+oxadiazole–tetrazole–imidazole–triazole heterocycle synthesis/Negishi/HWE and
+more (`asatro/data/reactions.json`, `asatro/chemistry/catalog.py`). Browse the
+full set — id, components, accepted reagent classes, full SMARTS — at
+`GET /reactions`, linked from the app header.
 
 The **accessibility pre-pass** is in too. A fast geometric cone probe
 (`accessibility.py`) measures how far each growth vector reaches before hitting
@@ -55,35 +59,47 @@ curl -F fragment=@hit.sdf -F receptor=@receptor.pdb -F refine=true \
      http://localhost:5015/prune          # + stub-growth refinement
 ```
 
-The **TS growth engine** is lifted in too. `asatro/engine/` holds standalone
-copies of the Thompson-Sampling + GNINA stack (`AnchoredFragmentEvaluator`,
-`RouteSampler`, …); `asatro/growth.py` wires them up: the bound fragment is fixed
-in one start-reaction slot, the reactant library is sampled in the other(s), and
-each product is constrained-placed onto the bound pose and scored by GNINA. The
-accessibility pre-pass gates it — only surviving reaction/slots are searched.
+Two search paths share the same lifted Thompson-Sampling + GNINA stack
+(`asatro/engine/`: `AnchoredFragmentEvaluator`, `GninaEvaluator`, `RouteSampler`, …):
 
-Growth runs as a **background job**:
+- **Fragment growth** (`asatro/growth.py`): pick one accessible reaction/slot as
+  step 1 — the bound fragment fills that slot — and optionally chain further
+  "extend" steps onto it; each final product is constrained-placed onto the
+  bound pose and scored by GNINA, with an adjustable core-RMSD placement guard.
+  The accessibility pre-pass validates the chosen route before it runs.
+- **Combinatorial search** (`asatro/combi.py`): the same route-building/search
+  machinery with no bound fragment — every slot is a real reagent library,
+  freely embedded and docked (matching ts-gnina's own search).
+
+Either path is Thompson-Sampled by default, or Roulette Wheel Selection with
+thermal cycling (Zhao et al. 2025) for better coverage on 3+-component routes.
+Every product is stripped of Boc/Cbz/Fmoc/ester/boronate protecting groups
+before docking and reporting — commercial building blocks commonly carry one
+on a handle other than the one reacted, so the deliverable compound, not the
+protected intermediate, is what gets scored.
+
+Both run as **background jobs**:
 
 ```bash
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
      -F reactants=@boronic.smi \              # one .smi per FG-class slot
-     -F 'config={"num_cycles":50,"refine":true}' \
+     -F 'config={"steps":["suzuki"],"fragment_slot":0,"num_cycles":50,"refine":true}' \
      http://localhost:5015/grow               # -> {"job_id": ...}
-curl http://localhost:5015/jobs/<id>          # status + per-target top hits
+curl http://localhost:5015/jobs/<id>          # status + top hits
 curl http://localhost:5015/jobs/<id>/stream   # live console (SSE)
 ```
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
 
-A **browser UI** (`templates/index.html`, served at `/`) drives the whole flow:
-upload the bound fragment + receptor → *Analyze accessibility* (shows detected
-handles, per-reaction accessible/pruned status, and each auto-core) → upload a
-`.smi` library per surviving building-block slot → *Launch growth*, with a live
-SSE console, per-target results tables, and a job-history picker. Dark/light theme.
+A **browser UI** (`templates/index.html`, served at `/`) drives the whole flow —
+Fragment growth and Combinatorial search as two modes: upload inputs → *Analyze*
+(fragment growth) or build a route (combi) → configure reagents/filters/search →
+launch, with a live SSE console, structure gallery + convergence chart, and a
+job-history picker. Dark/light theme.
 
-Still to build: curated reactant libraries for the non-fragment slots, and a real
-gnina dock run to validate scoring. See [DESIGN.md](DESIGN.md).
+Still open: conflict-aware pool tagging (a difunctional block currently lands in
+every matching class) and persisted/curated pools. See [DESIGN.md](DESIGN.md).
 
 ## Setup
 

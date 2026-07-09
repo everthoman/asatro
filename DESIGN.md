@@ -119,15 +119,6 @@ Net effect: the main search only ever explores growable directions.
   exclusion yet.)
 - TODO: conflict-aware pool tagging; persisted/curated pools.
 
-## Differentiation summary (vs Syndirella)
-
-| | Syndirella | Asatro |
-|---|---|---|
-| Direction | retrosynthetic (decompose an analogue) | forward (handles on the bound hit) |
-| Library coverage | enumerate then place | Thompson-Sampled subset |
-| Pocket awareness | scoring-time | explicit pre-pass pruning of dead vectors |
-| Placement | Fragmenstein | constrained embed + local docking + drift guard |
-
 ## Open decisions (resolve when building)
 
 - **Tier-2 installable handles** in v1, or Tier-1 only first?
