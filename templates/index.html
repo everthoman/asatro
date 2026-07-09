@@ -371,16 +371,17 @@ function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
 
-// Reactions that continue the same chemistry as ``startRid`` -- matched on the
-// name's family prefix (e.g. "Suzuki coupling") since reaction ids don't share
-// a prefix convention (suzuki -> suzuki_ext_*, but reductive_amination ->
-// redam_ext_*). Shared by both the growth route builder (step 1 is picked from
-// the accessible reactions) and the combi route builder (step 1 is user-chosen).
-function reactionFamily(rid){ const rx = RXN[rid]; return rx ? rx.name.split(' (')[0] : null; }
-function extendOptionsFor(startRid){
-  const fam = startRid ? reactionFamily(startRid) : null;
-  return CATALOG.reactions.filter(r => r.role==='extend' && (!fam || reactionFamily(r.id)===fam));
-}
+// Every "extend" reaction is offered at every step, regardless of what came
+// before: bifunctional building blocks are the norm (a Suzuki reagent can
+// carry a free amine elsewhere on the scaffold for a later amide step), so an
+// intermediate having the right handle for a given extend reaction isn't tied
+// to which reaction produced it. The reaction SMARTS itself is the real gate
+// -- a step that doesn't chemically apply to a given intermediate just fails
+// to fire for that product (handled already, same as any other reagent
+// mismatch), not something the UI should pre-filter. Shared by both the
+// growth route builder (step 1 is picked from the accessible reactions) and
+// the combi route builder (step 1 is user-chosen).
+function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === 'extend'); }
 
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
@@ -473,9 +474,7 @@ function renderGrowthStep1Summary(){
 }
 
 function addGrowthStep(){
-  const opts = extendOptionsFor(growthStep1 ? growthStep1.reactionId : null)
-    .map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
-  if (!opts){ alert('No compatible extend reaction for this chemistry.'); return; }
+  const opts = allExtendReactions().map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   const idx = growthExtendStepDivs.length + 1;   // step 1 is the picked start reaction/slot
   const div = document.createElement('div');
   div.className = 'step';
@@ -575,9 +574,6 @@ el('searchMethod').addEventListener('change', e=>{
 let combiStepDivs = [];
 
 function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
-function combiExtendReactions(){
-  return extendOptionsFor(combiStepDivs.length ? combiStepDivs[0].querySelector('.combiStepRxn').value : null);
-}
 function renderCombiStepFiles(div){
   const rid = div.querySelector('.combiStepRxn').value;
   const rx = RXN[rid]; if (!rx) return;
@@ -588,7 +584,7 @@ function renderCombiStepFiles(div){
 function addCombiStep(){
   const isFirst = combiStepDivs.length === 0;
   const idx = combiStepDivs.length;
-  const opts = (isFirst ? combiStartReactions() : combiExtendReactions())
+  const opts = (isFirst ? combiStartReactions() : allExtendReactions())
     .map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
   const div = document.createElement('div');
   div.className = 'step';
