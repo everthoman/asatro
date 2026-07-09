@@ -16,18 +16,33 @@ from asatro.engine.route_sampler import RouteSampler
 # One hand-picked, class-matching example reagent per functional-group class --
 # covers every start reaction's components (each accepts[0] is looked up here).
 # Every entry validated to actually match its own class's detection SMARTS.
+# Sourced from Hartenfeller_reactions.txt's own reference educts wherever a
+# class is used as accepts[0] by some reaction; the 7 classes that only ever
+# appear as a secondary accepts[] alternative (e.g. "secondary_amine" always
+# trails "primary_amine") get a simple hand-picked example instead.
 _CLASS_EXAMPLES = {
-    "primary_amine": "CCN", "secondary_amine": "CCNCC", "carboxylic_acid": "CCC(=O)O",
-    "aryl_halide": "Brc1ccccc1", "activated_aryl_halide": "O=[N+]([O-])c1ccc(F)cc1",
-    "boronic": "OB(O)c1ccccc1", "aldehyde": "CCC=O", "ketone": "CC(=O)C",
-    "sulfonyl_chloride": "CS(=O)(=O)Cl", "terminal_alkyne": "C#Cc1ccccc1",
-    "azide": "CCN=[N+]=[N-]", "alkyl_halide": "CCBr", "isocyanate": "CCN=C=O",
-    "alcohol": "CCO", "phenol": "Oc1ccccc1", "thiol": "CCS", "acyl_halide": "CC(=O)Cl",
-    "hydrazide": "CC(=O)NN", "nitrile": "CC#N", "alkene": "C=Cc1ccccc1",
-    "nheterocycle": "c1cc[nH]c1", "diaminoarene": "Nc1ccccc1N", "organozinc": "CC[Zn]Br",
-    "phosphonate_ester": "CCOP(=O)(OCC)CC(=O)OCC", "alpha_fluoroketone": "CCC(=O)CF",
-    "amidine": "CC(=N)N", "alpha_ketoester": "CC(=O)C(=O)OCC",
-    "pinacolborane": "B1OC(C)(C)C(C)(C)O1",
+    "activated_aryl_halide": "c1cnc(F)cc1", "alcohol": "CCO", "aldehyde": "c1ccccc1C=O",
+    "alkene": "c1ccccc1C=C", "alkyl_halide": "CCBr", "alpha_haloketone": "CC(=O)C(Br)C",
+    "amidine": "N=C(N)NC", "aminophenol": "c1cc(O)c(N)cc1", "aminothiophenol": "c1c(S)c(N)ccc1",
+    "anthranilic_acid": "c1c(C(=O)O)c(N)ccc1", "aryl_1_2_diketone": "c1ccccc1C(=O)C(=O)c1ccccc1",
+    "aryl_halide": "c1ccccc1Br", "arylhydrazine": "c1ccccc1NN", "boronic": "c1ccccc1B(O)O",
+    "carboxylic_acid": "CC(=O)O", "cyclic_ketone_6ring": "C1(=O)CCNCC1",
+    "diketone_1_3": "CC(=O)CC(=O)C", "diketone_1_4": "CC(=O)CCC(=O)C", "formamide": "C(=O)N",
+    "hydrazide": "NNC(=O)C", "hydrazine": "NNC", "imide_nh": "CC(=O)NC(=O)C",
+    "indole_free_c3": "c1cccc2c1C=CN2", "internal_alkene": "c1ccccc1C(C)=CC",
+    "internal_alkyne": "CC#CC", "isocyanate": "CN=C=O", "isothiocyanate": "CN=C=S",
+    "ketone": "CCC(=O)C", "n_alkyl_diaminoarene": "c1c(NC)c(N)ccc1",
+    "nheterocycle": "N1C=NC=C1", "nitrile": "CC#N",
+    "ortho_activated_benzoic_acid": "c1c(C(=O)O)c([N+](=O)[O-])ccc1",
+    "ortho_acylbenzoic_acid": "c1cc(C(=O)O)c(C(=O)C)cc1", "ortho_acylphenol": "c1cc(C(=O)C)c(O)cc1",
+    "ortho_aminobenzaldehyde": "c1cccc(C=O)c1N", "ortho_halo_arylthioether": "c1cc(I)c(SC)cc1",
+    "ortho_haloaniline": "c1cc(I)c(N)cc1", "ortho_halophenol": "c1cc(I)c(O)cc1",
+    "phenethylamine": "c1cc(CCN)ccc1", "phenol": "c1ccccc1O", "primary_amine": "NC",
+    "sulfonamide_nh": "CNS(=O)(=O)C", "sulfonyl_chloride": "CS(=O)(=O)Cl",
+    "terminal_alkyne": "CC#C", "tetrazole_nh": "N1=NNC=N1", "thioamide": "NC(=S)C",
+    "thiol": "CCS", "organozinc": "CC[Zn]Br", "acyl_halide": "CC(=O)Cl",
+    "diaminoarene": "Nc1ccccc1N", "secondary_amine": "CCNCC",
+    "phosphonate_ester": "CCOP(=O)(OCC)CC(=O)OCC", "azide": "CCN=[N+]=[N-]",
 }
 
 
@@ -38,22 +53,23 @@ def _write(tmp_path, name, lines):
 
 
 def test_build_combi_route_single_start_step(tmp_path):
-    halide = _write(tmp_path, "halide.smi", ["Brc1ccccc1 phBr"])
     boronic = _write(tmp_path, "boronic.smi", ["OB(O)c1ccccc1 phB", "OB(O)c1ccncc1 pyB"])
-    files, route, summary = build_combi_route(["suzuki"], [[halide, boronic]], tmp_path)
-    assert files == [halide, boronic]
-    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2, None)]
+    halide = _write(tmp_path, "halide.smi", ["Brc1ccccc1 phBr"])
+    files, route, summary = build_combi_route(["suzuki"], [[boronic, halide]], tmp_path)
+    assert files == [boronic, halide]
+    assert route[0][1:] == (2, None)
     assert len(summary) == 1 and "suzuki" not in summary[0]  # human name, not the id
     assert "Suzuki" in summary[0]
 
 
 def test_build_combi_route_multi_step_start_then_extend(tmp_path):
-    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
     boronic1 = _write(tmp_path, "boronic1.smi", ["OB(O)c1ccccc1 phB"])
+    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
     boronic2 = _write(tmp_path, "boronic2.smi", ["OB(O)c1ccncc1 pyB"])
     files, route, summary = build_combi_route(
-        ["suzuki", "suzuki_ext_halide"], [[dihalide, boronic1], [boronic2]], tmp_path)
-    assert files == [dihalide, boronic1, boronic2]
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}],
+        [[boronic1, dihalide], [boronic2]], tmp_path)
+    assert files == [boronic1, dihalide, boronic2]
     assert [n for _smarts, n, _slot in route] == [2, 1]
     assert len(summary) == 2
 
@@ -62,21 +78,16 @@ def test_build_combi_route_reuses_start_reaction_as_extend_step_with_slot(tmp_pa
     """A 2-component "start" reaction (no hand-authored extend counterpart
     needed) reused for step 2, with an explicit slot binding the
     intermediate -- the generalized extend path."""
-    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
     boronic1 = _write(tmp_path, "boronic1.smi", ["OB(O)c1ccccc1 phB"])
-    halide2 = _write(tmp_path, "halide2.smi", ["Brc1ccncc1 pyBr"])
+    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
+    boronic2 = _write(tmp_path, "boronic2.smi", ["OB(O)c1ccncc1 pyB"])
     files, route, summary = build_combi_route(
         ["suzuki", {"reaction_id": "suzuki", "slot": 1}],
-        [[dihalide, boronic1], [halide2]], tmp_path)
-    assert files == [dihalide, boronic1, halide2]
+        [[boronic1, dihalide], [boronic2]], tmp_path)
+    assert files == [boronic1, dihalide, boronic2]
     assert [n for _smarts, n, _slot in route] == [2, 1]
-    assert route[1][2] == 1  # intermediate bound to slot 1 (the boronic acid slot)
+    assert route[1][2] == 1  # intermediate bound to slot 1 (the aryl-halide slot)
     assert len(summary) == 2
-
-
-def test_build_combi_route_rejects_non_start_first_step(tmp_path):
-    with pytest.raises(ValueError, match="must be a 'start'"):
-        build_combi_route(["suzuki_ext_halide"], [["dummy.smi"]], tmp_path)
 
 
 def test_build_combi_route_rejects_2component_later_step_with_no_slot(tmp_path):
@@ -99,17 +110,19 @@ def test_build_combi_route_rejects_unknown_reaction(tmp_path):
 
 def test_build_combi_route_rejects_step_count_mismatch(tmp_path):
     with pytest.raises(ValueError, match="reagent_files has"):
-        build_combi_route(["suzuki", "suzuki_ext_halide"], [["a.smi", "b.smi"]], tmp_path)
+        build_combi_route(
+            ["suzuki", {"reaction_id": "suzuki", "slot": 1}], [["a.smi", "b.smi"]], tmp_path)
 
 
 def test_route_sampler_builds_product_across_two_steps(tmp_path):
     """No fragment anywhere: both slots of the start step and the extend
     step's slot are real, independently varying reagent libraries."""
-    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
     boronic1 = _write(tmp_path, "boronic1.smi", ["OB(O)c1ccccc1 phB"])
+    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
     boronic2 = _write(tmp_path, "boronic2.smi", ["OB(O)c1ccncc1 pyB"])
     files, route, _summary = build_combi_route(
-        ["suzuki", "suzuki_ext_halide"], [[dihalide, boronic1], [boronic2]], tmp_path)
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}],
+        [[boronic1, dihalide], [boronic2]], tmp_path)
 
     s = RouteSampler(mode="minimize")
     s.read_reagents(reagent_file_list=files, num_to_select=None)
@@ -122,21 +135,22 @@ def test_route_sampler_builds_product_across_two_steps(tmp_path):
 
 
 def test_route_sampler_binds_intermediate_to_a_non_first_slot(tmp_path):
-    """Reuse "amide" generically for step 2 with slot=1 -- the intermediate
-    must bind the *acid* pattern (RunReactants position 1), not position 0 --
-    proving _build_product's positional insertion actually respects
-    intermediate_slot instead of always defaulting to position 0. A diacid
-    step-1 reagent leaves one free -COOH on the intermediate for step 2 to
-    react through, confirmed directly against RDKit beforehand: the same
-    intermediate mol fails to fire at position 0 (wrong pattern), only
-    position 1 (the acid slot) works."""
-    amine1 = _write(tmp_path, "amine1.smi", ["CCN ethylamine"])
+    """Reuse "schotten_baumann_amide" generically for step 2 with slot=0 --
+    the intermediate must bind the *acid* pattern (RunReactants position 0,
+    since this reaction's own component order is [acid, amine]), not
+    position 1 -- proving _build_product's positional insertion actually
+    respects intermediate_slot instead of always defaulting to position 0. A
+    diacid step-1 reagent leaves one free -COOH on the intermediate for step
+    2 to react through, confirmed directly against RDKit beforehand: the
+    same intermediate mol fails to fire at position 1 (wrong pattern), only
+    position 0 (the acid slot) works."""
     diacid = _write(tmp_path, "diacid.smi", ["OC(=O)c1ccc(C(=O)O)cc1 terephthalic"])
+    amine1 = _write(tmp_path, "amine1.smi", ["CCN ethylamine"])
     amine2 = _write(tmp_path, "amine2.smi", ["CCCN propylamine"])
     files, route, _summary = build_combi_route(
-        ["amide", {"reaction_id": "amide", "slot": 1}],
-        [[amine1, diacid], [amine2]], tmp_path)
-    assert route[1][2] == 1  # intermediate bound to the acid slot
+        ["schotten_baumann_amide", {"reaction_id": "schotten_baumann_amide", "slot": 0}],
+        [[diacid, amine1], [amine2]], tmp_path)
+    assert route[1][2] == 0  # intermediate bound to the acid slot
 
     s = RouteSampler(mode="minimize")
     s.read_reagents(reagent_file_list=files, num_to_select=None)
@@ -155,7 +169,7 @@ def test_route_sampler_searches_with_all_slots_variable(tmp_path):
                     [f"Brc1ccc({'C' * i})cc1 br{i}" for i in range(1, 5)])
     boronic = _write(tmp_path, "boronic.smi",
                      [f"OB(O)c1ccc({'C' * i})cc1 b{i}" for i in range(1, 5)])
-    files, route, _summary = build_combi_route(["suzuki"], [[halide, boronic]], tmp_path)
+    files, route, _summary = build_combi_route(["suzuki"], [[boronic, halide]], tmp_path)
 
     s = RouteSampler(mode="maximize")
     s.set_hide_progress(True)
@@ -181,7 +195,7 @@ class _AlwaysFailEvaluator:
 def test_route_sampler_warm_up_returns_empty_when_every_dock_fails(tmp_path):
     halide = _write(tmp_path, "halide.smi", ["Brc1ccccc1 phBr", "Brc1ccc(C)cc1 tolBr"])
     boronic = _write(tmp_path, "boronic.smi", ["OB(O)c1ccccc1 phB", "OB(O)c1ccncc1 pyB"])
-    files, route, _summary = build_combi_route(["suzuki"], [[halide, boronic]], tmp_path)
+    files, route, _summary = build_combi_route(["suzuki"], [[boronic, halide]], tmp_path)
 
     s = RouteSampler(mode="maximize")
     s.set_hide_progress(True)
@@ -192,15 +206,33 @@ def test_route_sampler_warm_up_returns_empty_when_every_dock_fails(tmp_path):
     assert warmup == []
 
 
+# A handful of reactions share a class with others but need a *stricter*
+# member of it than the class-wide representative in _CLASS_EXAMPLES -- e.g.
+# both "1H" and "2H" tetrazole tautomers satisfy the tetrazole_nh class (it
+# matches either), but each Mitsunobu tetrazole *regioisomer* variant is
+# written against one specific tautomer's atom positions (Hartenfeller's own
+# reference reagents differ per variant for exactly this reason); the two
+# nitro-position SNAr variants need an actual nitro group, not just any
+# "activated_aryl_halide" class member (the class is deliberately broader,
+# e.g. also covers pyridine-type activation). (component_index -> smiles)
+_PER_REACTION_OVERRIDES = {
+    "mitsunobu_tetrazole_3": {1: "N1N=NC=N1"},
+    "mitsunobu_tetrazole_4": {1: "N1N=NC=N1"},
+    "nucl_sub_aromatic_ortho_nitro": {0: "c1c([N+](=O)[O-])c(F)ccc1"},
+    "nucl_sub_aromatic_para_nitro": {0: "c1c(F)ccc([N+](=O)[O-])c1"},
+}
+
+
 @pytest.mark.parametrize("rxn", START_REACTIONS, ids=[r["id"] for r in START_REACTIONS])
 def test_every_start_reaction_builds_a_real_product(tmp_path, rxn):
-    """Combi-path coverage of the full ts-gnina-ported catalog: one hand-picked,
-    class-matching reagent per component actually fires the reaction SMARTS and
-    sanitizes -- catches SMARTS typos/bugs independent of the growth path's
-    leaving_smarts (which this doesn't exercise at all)."""
+    """Combi-path coverage of the full Hartenfeller-ported catalog: one
+    hand-picked, class-matching reagent per component actually fires the
+    reaction SMARTS and sanitizes -- catches SMARTS typos/bugs independent of
+    the growth path's leaving_smarts (which this doesn't exercise at all)."""
+    overrides = _PER_REACTION_OVERRIDES.get(rxn["id"], {})
     files = []
     for i, comp in enumerate(rxn["components"]):
-        smi = _CLASS_EXAMPLES[comp["accepts"][0]]
+        smi = overrides.get(i, _CLASS_EXAMPLES[comp["accepts"][0]])
         files.append(_write(tmp_path, f"r{i}.smi", [f"{smi} R{i}"]))
     s = RouteSampler(mode="minimize")
     s.set_hide_progress(True)

@@ -36,15 +36,31 @@ auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 114 passing
+python -m pytest tests/                                # 155 passing
 ```
 
-**Reaction catalog**: 54 reactions (35 start + 19 extend) across amide/Suzuki/
-SNAr/reductive-amination/Buchwald/Ullmann/Chan–Lam/esterification/Heck/
-oxadiazole–tetrazole–imidazole–triazole heterocycle synthesis/Negishi/HWE and
-more (`asatro/data/reactions.json`, `asatro/chemistry/catalog.py`). Browse the
-full set — id, components, accepted reagent classes, full SMARTS — at
-`GET /reactions`, linked from the app header.
+**Reaction catalog**: the full Hartenfeller et al. reaction SMIRKS set (58
+reactions — amide/Suzuki/SNAr/reductive-amination/Buchwald-Hartwig/Negishi/
+Sonogashira/Heck/Wittig/Mitsunobu/urea/thiourea and a dozen heterocycle
+syntheses: Pictet-Spengler, benzimidazole/-oxazole/-thiazole, quinazoline,
+pyrazole, Paal-Knorr pyrrole, Fischer indole, Friedländer quinoline,
+benzofuran/-thiophene, indole and more), 53 functional-group classes
+(`asatro/data/reactions.json`, `asatro/data/functional_groups.json`,
+`asatro/chemistry/catalog.py`). Every reaction is a single catalog row — any
+reaction can serve as step 1 *or* extend a running intermediate at one of its
+own slots (`resolve_step`), so there's no separate hand-authored start/extend
+duplication. Browse the full set — id, components, accepted reagent classes,
+full SMARTS — at `GET /reactions`, linked from the app header.
+
+Growth mode's placement guard (below) assumes a reacting handle's local
+geometry survives largely intact into the product (a leaving group departs,
+everything else stays anchored) — that holds for substitution/coupling-type
+reactions but not for the ring-forming ones in the set (Pictet-Spengler,
+benzimidazole/-thiazole/-oxazole, Paal-Knorr, Fischer indole, etc.), where the
+reacting site's hybridization changes outright. Those fire and dock fine in
+**combi** (unanchored) mode; in growth mode they'll typically fail the
+core-RMSD guard for most candidates — a mismatch between "anchor a known
+binding mode" and "build a new ring around the anchor atom," not a bug.
 
 The **accessibility pre-pass** is in too. A fast geometric cone probe
 (`accessibility.py`) measures how far each growth vector reaches before hitting
@@ -83,7 +99,7 @@ Both run as **background jobs**:
 ```bash
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
      -F reactants=@boronic.smi \              # one .smi per FG-class slot
-     -F 'config={"steps":["suzuki"],"fragment_slot":0,"num_cycles":50,"refine":true}' \
+     -F 'config={"steps":["suzuki"],"fragment_slot":1,"num_cycles":50,"refine":true}' \
      http://localhost:5015/grow               # -> {"job_id": ...}
 curl http://localhost:5015/jobs/<id>          # status + top hits
 curl http://localhost:5015/jobs/<id>/stream   # live console (SSE)

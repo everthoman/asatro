@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "_comment": "Functional-group vocabulary for Asatro handle detection. Each group has a 'smarts' (what marks the handle on a fragment) and an optional 'leaving_smarts' (the atoms that do NOT survive into the product when this group reacts). The conserved-core for grow-from-fragment = the fragment minus the leaving atoms (largest connected remnant). Absent/null leaving_smarts means nothing leaves (e.g. an amine N stays; the whole fragment is conserved). 'refinement' classes are subsets of 'parent'.",
   "groups": {
     "primary_amine": {
@@ -136,25 +136,178 @@
       "family": "phosphonate",
       "leaving_smarts": "[PX4](=[OX1])([OX2][CX4])[OX2][CX4]"
     },
-    "alpha_fluoroketone": {
-      "smarts": "[CX3](=[OX1])[CH2][F]",
-      "label": "Alpha-fluoroketone",
-      "family": "alpha_fluoroketone"
-    },
     "amidine": {
       "smarts": "[CX3](=[NH])[NH2]",
       "label": "Amidine",
       "family": "amidine"
     },
-    "alpha_ketoester": {
-      "smarts": "[#6][CX3](=[OX1])[CX3](=[OX1])[OX2][CX4]",
-      "label": "Alpha-keto acid ester",
-      "family": "alpha_ketoester"
+    "phenethylamine": {
+      "smarts": "[c]CC[NX3H2]",
+      "label": "2-Arylethylamine (phenethylamine)",
+      "family": "phenethylamine",
+      "leaving_smarts": null
     },
-    "pinacolborane": {
-      "smarts": "[BX3H1]1[OX2][CX4]([CX4])([CX4])[CX4]([CX4])([CX4])[OX2]1",
-      "label": "Pinacolborane (HBpin)",
-      "family": "boronic"
+    "n_alkyl_diaminoarene": {
+      "smarts": "[NX3H1;$(N[#6])][c]:[c][NH2]",
+      "label": "N-alkyl-1,2-diaminoarene",
+      "family": "diaminoarene",
+      "leaving_smarts": null
+    },
+    "aminothiophenol": {
+      "smarts": "[SX2H][c]:[c][NH2]",
+      "label": "2-Aminothiophenol",
+      "family": "aminothiophenol",
+      "leaving_smarts": null
+    },
+    "aminophenol": {
+      "smarts": "[OX2H][c]:[c][NH2]",
+      "label": "2-Aminophenol",
+      "family": "aminophenol",
+      "leaving_smarts": null
+    },
+    "alpha_haloketone": {
+      "smarts": "[CX3](=[OX1])[CH1,CH2][F,Cl,Br,I]",
+      "label": "Alpha-haloketone",
+      "family": "alpha_haloketone",
+      "leaving_smarts": "[F,Cl,Br,I;$([F,Cl,Br,I][CH1,CH2][CX3]=[OX1])]"
+    },
+    "thioamide": {
+      "smarts": "[NX3H2][CX3]=[SX1]",
+      "label": "Thioamide",
+      "family": "thioamide",
+      "leaving_smarts": null
+    },
+    "anthranilic_acid": {
+      "smarts": "[NH2][c]:[c][CX3](=[OX1])[OX2H1]",
+      "label": "Anthranilic acid (2-aminobenzoic acid)",
+      "family": "anthranilic_acid",
+      "leaving_smarts": null
+    },
+    "formamide": {
+      "smarts": "[NX3;H1,H2;!$(N-N);!$(N-C=N)][CX3;H1,$([CX3][#6])]=[OX1]",
+      "label": "Formamide/amide (Niementowski partner)",
+      "family": "formamide",
+      "leaving_smarts": null
+    },
+    "diketone_1_3": {
+      "smarts": "[#6][CX3](=[OX1])[CH2][CX3](=[OX1])[#6]",
+      "label": "1,3-Diketone",
+      "family": "diketone_1_3",
+      "leaving_smarts": null
+    },
+    "ortho_acylphenol": {
+      "smarts": "[OX2H][c]:[c][CX3](=[OX1])[#6]",
+      "label": "2-Acylphenol",
+      "family": "ortho_acylphenol",
+      "leaving_smarts": null
+    },
+    "cyclic_ketone_6ring": {
+      "smarts": "[CX3](=[OX1])1[CH2][CH2][#7,#6][CH2][CH2]1",
+      "label": "6-Ring cyclic ketone (e.g. piperidone)",
+      "family": "cyclic_ketone_6ring",
+      "leaving_smarts": null
+    },
+    "hydrazine": {
+      "smarts": "[NX3H2][NX3;H1,H2]",
+      "label": "Hydrazine",
+      "family": "hydrazine",
+      "leaving_smarts": null
+    },
+    "ortho_acylbenzoic_acid": {
+      "smarts": "[OX2H1][CX3](=[OX1])[c]:[c][CX3;H1,$([CX3][#6])]=[OX1]",
+      "label": "2-Acylbenzoic acid",
+      "family": "ortho_acylbenzoic_acid",
+      "leaving_smarts": null
+    },
+    "diketone_1_4": {
+      "smarts": "[#6][CX3](=[OX1])[CH2][CH2][CX3](=[OX1])[#6]",
+      "label": "1,4-Diketone",
+      "family": "diketone_1_4",
+      "leaving_smarts": null
+    },
+    "aryl_1_2_diketone": {
+      "smarts": "[c][CX3](=[OX1])[CX3](=[OX1])[c]",
+      "label": "Aryl 1,2-diketone (benzil-type)",
+      "family": "aryl_1_2_diketone",
+      "leaving_smarts": null
+    },
+    "arylhydrazine": {
+      "smarts": "[c][NX3H1][NX3H2]",
+      "label": "Arylhydrazine",
+      "family": "arylhydrazine",
+      "leaving_smarts": null
+    },
+    "ortho_aminobenzaldehyde": {
+      "smarts": "[NH2][c]:[c][CX3H1]=[OX1]",
+      "label": "2-Aminobenzaldehyde",
+      "family": "ortho_aminobenzaldehyde",
+      "leaving_smarts": null
+    },
+    "ortho_halophenol": {
+      "smarts": "[OX2H][c]:[c][F,Cl,Br,I]",
+      "label": "2-Halophenol",
+      "family": "ortho_halophenol",
+      "leaving_smarts": "[F,Cl,Br,I;$([F,Cl,Br,I][c])]"
+    },
+    "ortho_halo_arylthioether": {
+      "smarts": "[SX2]([#6])[c]:[c][F,Cl,Br,I]",
+      "label": "2-Halo(arylthio)benzene",
+      "family": "ortho_halo_arylthioether",
+      "leaving_smarts": "[F,Cl,Br,I;$([F,Cl,Br,I][c])]"
+    },
+    "ortho_haloaniline": {
+      "smarts": "[NH2][c]:[c][F,Cl,Br,I]",
+      "label": "2-Haloaniline",
+      "family": "ortho_haloaniline",
+      "leaving_smarts": "[F,Cl,Br,I;$([F,Cl,Br,I][c])]"
+    },
+    "internal_alkyne": {
+      "smarts": "[#6][CX2]#[CX2][#6]",
+      "label": "Internal (disubstituted) alkyne",
+      "family": "internal_alkyne",
+      "leaving_smarts": null
+    },
+    "indole_free_c3": {
+      "smarts": "[nH]1[cH][cH]c2ccccc12",
+      "label": "Indole (free C2/C3)",
+      "family": "indole_free_c3",
+      "leaving_smarts": null
+    },
+    "imide_nh": {
+      "smarts": "[NX3H1]([CX3]=[OX1])[CX3]=[OX1]",
+      "label": "Imide N-H",
+      "family": "imide_nh",
+      "leaving_smarts": null
+    },
+    "sulfonamide_nh": {
+      "smarts": "[NX3H1]([#6])[SX4](=[OX1])(=[OX1])",
+      "label": "Sulfonamide N-H",
+      "family": "sulfonamide_nh",
+      "leaving_smarts": null
+    },
+    "tetrazole_nh": {
+      "smarts": "[$([nH]1nncn1),$([nH]1cnnn1)]",
+      "label": "Tetrazole N-H (1H or 2H tautomer)",
+      "family": "tetrazole_nh",
+      "leaving_smarts": null
+    },
+    "internal_alkene": {
+      "smarts": "[#6][CX3H0]=[CX3H1][#6]",
+      "label": "Internal (trisubstituted-ish) alkene",
+      "family": "internal_alkene",
+      "leaving_smarts": null
+    },
+    "ortho_activated_benzoic_acid": {
+      "smarts": "[OX2H1][CX3](=[OX1])[c]:[c][C,S,N;$([C,S,N]=[OX1])]",
+      "label": "Ortho-EWG-activated benzoic acid",
+      "family": "ortho_activated_benzoic_acid",
+      "leaving_smarts": null
+    },
+    "isothiocyanate": {
+      "smarts": "[#6][NX2]=[CX2]=[SX1]",
+      "label": "Isothiocyanate",
+      "family": "isothiocyanate",
+      "leaving_smarts": null
     }
   }
 }

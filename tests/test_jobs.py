@@ -85,7 +85,7 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
     sdf = _bound_sdf(tmp_path)
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",        # open pocket
-        steps=["suzuki"], fragment_slot=0,
+        steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1}, runner=_fake_runner)
     _await(job)
@@ -95,7 +95,7 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
     # the pre-pass, not that it's the only accessible reaction.
     assert "suzuki" in job.result["accessible_reactions"]
     assert job.result["steps"] == [
-        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki coupling (aryl halide + boronic acid)"}]
+        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki"}]
     run = job.result["runs"][0]
     assert run["n_docked"] == 2
     # ranked best-first (minimize: lowest score first)
@@ -121,7 +121,7 @@ def test_growth_job_summarizes_from_evaluator_not_search_rows(tmp_path, monkeypa
 
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",
-        steps=["suzuki"], fragment_slot=0,
+        steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
     _await(job)
@@ -159,7 +159,7 @@ def test_growth_job_errors_when_chosen_slot_is_pruned(tmp_path, monkeypatch):
     called = []
     job = start_growth_job(
         fragment_path=sdf, receptor_path=str(wall),
-        steps=["suzuki"], fragment_slot=0,
+        steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={}, runner=lambda **k: called.append(k) or ([], None))
     _await(job)
@@ -173,7 +173,7 @@ def test_growth_job_error_is_captured(tmp_path, monkeypatch):
     bad = tmp_path / "bad.sdf"; bad.write_text("not an sdf")
     job = start_growth_job(
         fragment_path=str(bad), receptor_path="",
-        steps=["suzuki"], fragment_slot=0,
+        steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)}, runner=_fake_runner)
     _await(job)
     assert job.status == "error" and job.error
@@ -193,7 +193,7 @@ def test_growth_job_passes_filters_to_runner(tmp_path, monkeypatch):
 
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",
-        steps=["suzuki"], fragment_slot=0,
+        steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1,
              "filters": {"mw": [100, 400], "logp": [None, 5]}},
@@ -224,7 +224,7 @@ def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
                 "reactants": ("boronic.smi", b"OB(O)c1ccccc1 phB\n", "text/plain"),
             },
             data={"config": json.dumps({
-                "steps": ["suzuki"], "fragment_slot": 0,
+                "steps": ["suzuki"], "fragment_slot": 1,
                 "num_cycles": 1, "num_warmup": 1})},
         )
         assert r.status_code == 200, r.text
@@ -271,14 +271,14 @@ def test_growth_job_with_master_pool(tmp_path, monkeypatch):
         return ([[-7.0, "X", "x"]], None)
 
     job = start_growth_job(
-        fragment_path=sdf, receptor_path="", steps=["suzuki"], fragment_slot=0,
+        fragment_path=sdf, receptor_path="", steps=["suzuki"], fragment_slot=1,
         pool_path=str(pool), cfg={"num_cycles": 1}, runner=runner)
     _await(job)
     assert job.status == "done"
     assert len(calls) == 1
     # the pool was pruned to the boronic component (2 boronics, not the acid)
-    # -- reactant_files is one dict per step; step 0's boronic slot is index 1
-    boronic_smi = calls[0]["reactant_files"][0][1]
+    # -- reactant_files is one dict per step; step 0's boronic slot is index 0
+    boronic_smi = calls[0]["reactant_files"][0][0]
     names = [l.split()[1] for l in open(boronic_smi).read().splitlines() if l.strip()]
     assert sorted(names) == ["phB", "tolB"]
 
@@ -312,13 +312,13 @@ def test_combi_job_persists_steps_and_components(tmp_path, monkeypatch):
     /jobs/{id}/seed needs are both in the persisted result."""
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     rec = tmp_path / "receptor.pdb"; rec.write_text("")
-    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
     boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
     ev = _FakeEvaluator(
-        [(-7.5, "c1ccc(-c2ccccc2)cc1", "phBr_phB")],
+        [(-7.5, "c1ccc(-c2ccccc2)cc1", "phB_phBr")],
         components={"c1ccc(-c2ccccc2)cc1": [
-            {"smiles": "Brc1ccccc1", "name": "phBr"},
             {"smiles": "OB(O)c1ccccc1", "name": "phB"},
+            {"smiles": "Brc1ccccc1", "name": "phBr"},
         ]},
     )
 
@@ -327,17 +327,17 @@ def test_combi_job_persists_steps_and_components(tmp_path, monkeypatch):
 
     job = start_combi_job(
         receptor_path=str(rec), steps=["suzuki"],
-        reagent_files=[[str(halide), str(boronic)]],
+        reagent_files=[[str(boronic), str(halide)]],
         center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
         cfg={"num_cycles": 1}, runner=runner)
     _await(job)
     assert job.status == "done"
     assert job.result["steps"] == [
-        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki coupling (aryl halide + boronic acid)"}]
+        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki"}]
     top0 = job.result["runs"][0]["top"][0]
     assert top0["components"] == [
-        {"smiles": "Brc1ccccc1", "name": "phBr"},
         {"smiles": "OB(O)c1ccccc1", "name": "phB"},
+        {"smiles": "Brc1ccccc1", "name": "phBr"},
     ]
 
 
@@ -391,10 +391,10 @@ def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypa
     from rdkit import Chem
     product = Chem.CanonSmiles("CC(=O)NCc1ccncc1")  # amide of an amine + acetic acid
     ev = _FakeEvaluator(
-        [(-7.5, product, "amine1_acid1")],
+        [(-7.5, product, "acid1_amine1")],
         components={product: [
-            {"smiles": "NCc1ccncc1", "name": "amine1"},
             {"smiles": "CC(=O)O", "name": "acid1"},
+            {"smiles": "NCc1ccncc1", "name": "amine1"},
         ]},
     )
 
@@ -410,11 +410,12 @@ def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypa
             "/combi",
             files=[
                 ("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
-                ("reactants", ("amine.smi", b"NCc1ccncc1 amine1\n", "text/plain")),
                 ("reactants", ("acid.smi", b"CC(=O)O acid1\n", "text/plain")),
+                ("reactants", ("amine.smi", b"NCc1ccncc1 amine1\n", "text/plain")),
             ],
             data={"config": json.dumps({
-                "steps": ["amide"], "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]})},
+                "steps": ["schotten_baumann_amide"],
+                "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]})},
         )
         assert r.status_code == 200, r.text
         job_id = r.json()["job_id"]
@@ -425,18 +426,18 @@ def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypa
             time.sleep(0.02)
         assert d["status"] == "done", d
 
-        # component 0 = the amine
+        # component 0 = the acid (hydroxyl drops, carbonyl kept)
         r = client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 0})
         assert r.status_code == 200, r.text
         carved = Chem.MolFromMolBlock(r.text)
         assert carved is not None and carved.GetNumConformers() == 1
-        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("NCc1ccncc1")
+        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("CC=O")
 
-        # component 1 = the acid (hydroxyl drops, carbonyl kept)
+        # component 1 = the amine
         r = client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 1})
         assert r.status_code == 200, r.text
         carved = Chem.MolFromMolBlock(r.text)
-        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("CC=O")
+        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("NCc1ccncc1")
 
         # out-of-range rank / component_index -> 400
         assert client.post(f"/jobs/{job_id}/seed", data={"rank": 99, "component_index": 0}).status_code == 400
@@ -444,23 +445,24 @@ def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypa
 
 
 def test_seed_endpoint_carves_from_a_generalized_slot1_extend_step(tmp_path, monkeypatch):
-    """Step 2 reuses "amide" generically with slot=1 (intermediate binds the
-    acid pattern; a diacid step-1 reagent leaves a free -COOH for it to react
-    through -- see tests/test_combi.py's
+    """Step 2 reuses "schotten_baumann_amide" generically with slot=0
+    (intermediate binds the acid pattern -- this reaction's own component
+    order is [acid, amine]; a diacid step-1 reagent leaves a free -COOH for
+    it to react through -- see tests/test_combi.py's
     test_route_sampler_binds_intermediate_to_a_non_first_slot for the same
     chemistry proven directly against RDKit). Confirms job.result["steps"]
     persists "slot" correctly and /jobs/{id}/seed resolves the *fresh*
-    (slot-0) reagent of that reused step -- the one place a fresh_indices
+    (slot-1) reagent of that reused step -- the one place a fresh_indices
     mismatch between build_combi_route and component_route_meta would
     silently corrupt seed provenance."""
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     from rdkit import Chem
     product = Chem.CanonSmiles("CCNC(=O)c1ccc(C(=O)NCCC)cc1")
     ev = _FakeEvaluator(
-        [(-7.5, product, "amine1_diacid_amine2")],
+        [(-7.5, product, "diacid_amine1_amine2")],
         components={product: [
-            {"smiles": "CCN", "name": "amine1"},
             {"smiles": "OC(=O)c1ccc(C(=O)O)cc1", "name": "diacid"},
+            {"smiles": "CCN", "name": "amine1"},
             {"smiles": "CCCN", "name": "amine2"},
         ]},
     )
@@ -469,23 +471,25 @@ def test_seed_endpoint_carves_from_a_generalized_slot1_extend_step(tmp_path, mon
         return ([], ev)
 
     job = start_combi_job(
-        receptor_path="", steps=["amide", {"reaction_id": "amide", "slot": 1}],
-        reagent_files=[["amine1.smi", "diacid.smi"], ["amine2.smi"]],
+        receptor_path="",
+        steps=["schotten_baumann_amide",
+               {"reaction_id": "schotten_baumann_amide", "slot": 0}],
+        reagent_files=[["diacid.smi", "amine1.smi"], ["amine2.smi"]],
         center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
         cfg={"num_cycles": 1}, runner=runner)
     _await(job)
     assert job.status == "done"
     assert job.result["steps"] == [
-        {"reaction_id": "amide", "slot": None, "name": "Amide coupling (amine + acid)"},
-        {"reaction_id": "amide", "slot": 1, "name": "Amide coupling (amine + acid)"},
+        {"reaction_id": "schotten_baumann_amide", "slot": None, "name": "Schotten-Baumann_amide"},
+        {"reaction_id": "schotten_baumann_amide", "slot": 0, "name": "Schotten-Baumann_amide"},
     ]
 
     from starlette.testclient import TestClient
     from asatro.app import app
 
     with TestClient(app) as client:
-        # component_index 2 = step 2's sole fresh component (slot 0, the
-        # amine) -- slot 1 (the acid) is excluded since it binds the
+        # component_index 2 = step 2's sole fresh component (slot 1, the
+        # amine) -- slot 0 (the acid) is excluded since it binds the
         # intermediate, not a real reagent.
         r = client.post(f"/jobs/{job.id}/seed", data={"rank": 1, "component_index": 2})
         assert r.status_code == 200, r.text

@@ -18,19 +18,23 @@ def _docked(smiles, seed=7):
 
 
 def test_component_route_meta_single_step():
-    meta = component_route_meta(["amide"])
+    meta = component_route_meta(["schotten_baumann_amide"])
     assert meta == [
-        {"reaction_id": "amide", "label": "Primary amine", "accepts": ["primary_amine"]},
-        {"reaction_id": "amide", "label": "Carboxylic acid", "accepts": ["carboxylic_acid"]},
+        {"reaction_id": "schotten_baumann_amide", "label": "Carboxylic acid",
+         "accepts": ["carboxylic_acid"]},
+        {"reaction_id": "schotten_baumann_amide", "label": "Amine",
+         "accepts": ["primary_amine", "secondary_amine"]},
     ]
 
 
 def test_component_route_meta_multi_step_matches_route_order():
-    # suzuki (2 components) then suzuki_ext_halide (1 component) -- same
+    # suzuki (2 components) then schotten_baumann_amide reused generically
+    # (slot=0, its own acid slot bound to the intermediate) -- same
     # flattening order build_combi_route uses for reagent files.
-    meta = component_route_meta(["suzuki", "suzuki_ext_halide"])
-    assert [m["reaction_id"] for m in meta] == ["suzuki", "suzuki", "suzuki_ext_halide"]
-    assert [m["label"] for m in meta] == ["Aryl halide", "Boronic acid", "Boronic acid"]
+    meta = component_route_meta(
+        ["suzuki", {"reaction_id": "schotten_baumann_amide", "slot": 0}])
+    assert [m["reaction_id"] for m in meta] == ["suzuki", "suzuki", "schotten_baumann_amide"]
+    assert [m["label"] for m in meta] == ["Boronic acid", "Aryl halide", "Amine"]
 
 
 def test_component_route_meta_unknown_reaction():
@@ -49,25 +53,25 @@ def test_component_route_meta_generalized_slot_skips_intermediate_component():
     steps = ["suzuki", {"reaction_id": "suzuki", "slot": 1}]
     meta = component_route_meta(steps)
     assert [m["reaction_id"] for m in meta] == ["suzuki", "suzuki", "suzuki"]
-    assert [m["label"] for m in meta] == ["Aryl halide", "Boronic acid", "Aryl halide"]
+    assert [m["label"] for m in meta] == ["Boronic acid", "Aryl halide", "Boronic acid"]
 
     _files, route, _summary = build_combi_route(
-        steps, [["halide1.smi", "boronic1.smi"], ["halide2.smi"]], "/tmp")
+        steps, [["boronic1.smi", "halide1.smi"], ["boronic2.smi"]], "/tmp")
     assert len(meta) == sum(n for _s, n, _slot in route)
 
 
 def test_carve_fragment_recovers_the_amine_with_its_docked_coordinates():
     pose = _docked("CC(=O)NCc1ccncc1")  # amide product
-    meta = component_route_meta(["amide"])
-    carved = carve_fragment(pose, "NCc1ccncc1", meta[0]["accepts"])
+    meta = component_route_meta(["schotten_baumann_amide"])
+    carved = carve_fragment(pose, "NCc1ccncc1", meta[1]["accepts"])
     assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("NCc1ccncc1")
     assert carved.GetNumConformers() == 1
 
 
 def test_carve_fragment_recovers_the_acid():
     pose = _docked("CC(=O)NCc1ccncc1")
-    meta = component_route_meta(["amide"])
-    carved = carve_fragment(pose, "CC(=O)O", meta[1]["accepts"])
+    meta = component_route_meta(["schotten_baumann_amide"])
+    carved = carve_fragment(pose, "CC(=O)O", meta[0]["accepts"])
     # hydroxyl drops, carbonyl kept -- same conserved-core rule growth uses
     assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("CC=O")
 
@@ -77,11 +81,12 @@ def test_carve_fragment_output_is_growth_ready():
     a real bound fragment would -- it's still amine-compatible, so a follow-up
     growth run can pick amide coupling as step 1 again."""
     pose = _docked("CC(=O)NCc1ccncc1")
-    meta = component_route_meta(["amide"])
-    carved = carve_fragment(pose, "NCc1ccncc1", meta[0]["accepts"])
+    meta = component_route_meta(["schotten_baumann_amide"])
+    carved = carve_fragment(pose, "NCc1ccncc1", meta[1]["accepts"])
     a = analyze_fragment(Chem.MolToSmiles(carved))
-    assert a["reactions"]["amide"]["compatible"]
-    assert any(s["fg_class"] == "primary_amine" for s in a["reactions"]["amide"]["slots"])
+    assert a["reactions"]["schotten_baumann_amide"]["compatible"]
+    assert any(s["fg_class"] == "primary_amine"
+              for s in a["reactions"]["schotten_baumann_amide"]["slots"])
 
 
 def test_carve_fragment_unresolvable_class_raises():

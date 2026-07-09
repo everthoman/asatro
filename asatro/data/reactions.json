@@ -1,280 +1,16 @@
 {
-  "reagent_sets": {
-    "primary_amines_100": {
-      "file": "data/primary_amines_100.smi",
-      "count": 100,
-      "label": "Primary amines (100)"
-    },
-    "primary_amines_500": {
-      "file": "data/primary_amines_500.smi",
-      "count": 500,
-      "label": "Primary amines (500)"
-    },
-    "primary_amines_ok": {
-      "file": "data/primary_amines_ok.smi",
-      "count": 13842,
-      "label": "Primary amines (full, 13842)"
-    },
-    "carboxylic_acids_100": {
-      "file": "data/carboxylic_acids_100.smi",
-      "count": 100,
-      "label": "Carboxylic acids (100)"
-    },
-    "carboxylic_acids_500": {
-      "file": "data/carboxylic_acids_500.smi",
-      "count": 500,
-      "label": "Carboxylic acids (500)"
-    },
-    "carboxylic_acids_ok": {
-      "file": "data/carboxylic_acids_ok.smi",
-      "count": 4214,
-      "label": "Carboxylic acids (full, 4214)"
-    },
-    "aminobenzoic_100": {
-      "file": "data/aminobenzoic_100.smi",
-      "count": 100,
-      "label": "Aminobenzoic acids (100)"
-    },
-    "aminobenzoic_ok": {
-      "file": "data/aminobenzoic_ok.smi",
-      "count": 376,
-      "label": "Aminobenzoic acids (full, 376)"
-    },
-    "aryl_halides_100": {
-      "file": "data/aryl_halides_100.smi",
-      "count": 100,
-      "label": "Aryl/heteroaryl halides (100)"
-    },
-    "boronic_acids_100": {
-      "file": "data/boronic_acids_100.smi",
-      "count": 100,
-      "label": "Aryl boronic acids (100)"
-    },
-    "activated_aryl_halides_100": {
-      "file": "data/activated_aryl_halides_100.smi",
-      "count": 100,
-      "label": "Activated aryl halides (100)"
-    },
-    "aldehydes_ketones_100": {
-      "file": "data/aldehydes_ketones_100.smi",
-      "count": 100,
-      "label": "Aldehydes/ketones (100)"
-    }
-  },
   "reactions": [
     {
-      "id": "triazole_synthesis_2",
-      "name": "1,2,4-Triazole (acylhydrazide + nitrile, Pellizzari-type)",
+      "id": "pictet_spengler",
+      "name": "Pictet-Spengler",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[#6:1][CX3:2](=[OX1])[NX3H:3][NH2:4].[#6:5][CX2:6]#[NX1:7]>>[#6:1][c:2]1[n:4][n:3][c:6]([#6:5])[nH:7]1",
+      "smarts": "[cH1:1]1:[c:2](-[CH2:7]-[CH2:8]-[NH2:9]):[c:3]:[c:4]:[c:5]:[c:6]:1.[#6:11]-[CH1;R0:10]=[OD1]>>[c:1]12:[c:2](-[CH2:7]-[CH2:8]-[NH1:9]-[C:10]-2(-[#6:11])):[c:3]:[c:4]:[c:5]:[c:6]:1",
       "components": [
         {
-          "label": "Acylhydrazide",
+          "label": "Phenethylamine",
           "accepts": [
-            "hydrazide"
-          ]
-        },
-        {
-          "label": "Nitrile",
-          "accepts": [
-            "nitrile"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "oxadiazole_condensation",
-      "name": "1,3,4-Oxadiazole (acid + acylhydrazide)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1",
-      "components": [
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ]
-        },
-        {
-          "label": "Acylhydrazide",
-          "accepts": [
-            "hydrazide"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "oxadiazole_ext_acid",
-      "name": "1,3,4-Oxadiazole (extend: acid on intermediate + hydrazide)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1",
-      "components": [
-        {
-          "label": "Acylhydrazide",
-          "accepts": [
-            "hydrazide"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "oxadiazole_ext_hydrazide",
-      "name": "1,3,4-Oxadiazole (extend: hydrazide on intermediate + acid)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6].[#6:1][CX3:2](=[OX1])[OX2H]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1",
-      "components": [
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "amine_acetylation",
-      "name": "Acylation (amine + acyl halide → amide)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[NX3;H1,H2:1].[#6:2][CX3:3](=[OX1])[Cl,Br]>>[N:1][C:3](=[OX1])[#6:2]",
-      "components": [
-        {
-          "label": "Primary/secondary amine",
-          "accepts": [
-            "primary_amine",
-            "secondary_amine"
-          ]
-        },
-        {
-          "label": "Acyl halide",
-          "accepts": [
-            "acyl_halide"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "amine_acetylation_ext",
-      "name": "Acylation (extend: NH on intermediate + acyl halide)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[NX3;H1,H2:1].[#6:2][CX3:3](=[OX1])[Cl,Br]>>[N:1][C:3](=[OX1])[#6:2]",
-      "components": [
-        {
-          "label": "Acyl halide",
-          "accepts": [
-            "acyl_halide"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "amide",
-      "name": "Amide coupling (amine + acid)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[NH2:2][#6:1].[#6:4][C:3]([OH])=O>>[NH:2]([#6:1])[C:3]([#6:4])=O",
-      "components": [
-        {
-          "label": "Primary amine",
-          "accepts": [
-            "primary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
-          ]
-        },
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ],
-          "sets": [
-            "carboxylic_acids_100",
-            "carboxylic_acids_500",
-            "carboxylic_acids_ok"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "amide_ext_acid",
-      "name": "Amide coupling (extend: acid on intermediate + amine)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[#6:1][C:3](=[OX1])[OX2H1].[NX3;H1,H2;!$([NX3]C=O):2]>>[#6:1][C:3](=O)[N:2]",
-      "components": [
-        {
-          "label": "Primary amine",
-          "accepts": [
-            "primary_amine",
-            "secondary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "amide_ext_amine",
-      "name": "Amide coupling (extend: amine on intermediate + acid)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[#6:4][C:3]([OH])=O>>[N:2][C:3]([#6:4])=O",
-      "components": [
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ],
-          "sets": [
-            "carboxylic_acids_100",
-            "carboxylic_acids_500",
-            "carboxylic_acids_ok"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "pinacolatoborylation",
-      "name": "Anti-Markovnikov hydroboration (alkene + HBpin)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[CX3H2:1]=[CX3H1:2].[BX3H1:3]1[O:4][C:5]([C:8])([C:9])[C:6]([C:10])([C:11])[O:7]1>>[C:1]([B:3]1[O:4][C:5]([C:8])([C:9])[C:6]([C:10])([C:11])[O:7]1)[C:2]",
-      "components": [
-        {
-          "label": "Terminal alkene",
-          "accepts": [
-            "alkene"
-          ]
-        },
-        {
-          "label": "Pinacolborane (HBpin)",
-          "accepts": [
-            "pinacolborane"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "imidazole_condensation_amine",
-      "name": "Benzimidazole synthesis (1,2-diaminoarene + aldehyde)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[NH2:1][c:4][c:5][NH2:2].[#6:3][CX3H1:6]=[OX1]>>[#6:3][c:6]1[nH:1][c:4][c:5][n:2]1",
-      "components": [
-        {
-          "label": "1,2-Diaminoarene",
-          "accepts": [
-            "diaminoarene"
+            "phenethylamine"
           ]
         },
         {
@@ -286,16 +22,16 @@
       ]
     },
     {
-      "id": "imidazole_condensation_acid",
-      "name": "Benzimidazole synthesis (1,2-diaminoarene + carboxylic acid)",
+      "id": "benzimidazole_carboxylic_acid",
+      "name": "benzimidazole_derivatives_carboxylic-acid/ester",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NH2:1][c:4][c:5][NH2:2].[#6:3][CX3:6](=[OX1])[OX2H]>>[#6:3][c:6]1[nH:1][c:4][c:5][n:2]1",
+      "smarts": "[c;r6:1](-[NH1;$(N-[#6]):2]):[c;r6:3](-[NH2:4]).[#6:6]-[C;R0:5](=[OD1])-[#8;H1,$(O-[CH3])]>>[c:3]2:[c:1]:[n:2]:[c:5](-[#6:6]):[n:4]@2",
       "components": [
         {
-          "label": "1,2-Diaminoarene",
+          "label": "N-alkyl-1,2-diaminoarene",
           "accepts": [
-            "diaminoarene"
+            "n_alkyl_diaminoarene"
           ]
         },
         {
@@ -307,289 +43,79 @@
       ]
     },
     {
-      "id": "buchwald",
-      "name": "Buchwald-Hartwig (aryl Br/I + amine)",
+      "id": "benzimidazole_aldehyde",
+      "name": "benzimidazole_derivatives_aldehyde",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[NX3;H1,H2;!$([NX3]C=O);!$([NX3]=*);!$([NX3]S(=O)=O):2]>>[c:1][N:2]",
+      "smarts": "[c;r6:1](-[NH1;$(N-[#6]):2]):[c;r6:3](-[NH2:4]).[#6:6]-[CH1;R0:5](=[OD1])>>[c:3]2:[c:1]:[n:2]:[c:5](-[#6:6]):[n:4]@2",
       "components": [
         {
-          "label": "Aryl bromide/iodide",
+          "label": "N-alkyl-1,2-diaminoarene",
           "accepts": [
-            "aryl_halide"
+            "n_alkyl_diaminoarene"
           ]
         },
         {
-          "label": "Primary/secondary amine",
+          "label": "Aldehyde",
           "accepts": [
-            "primary_amine",
-            "secondary_amine"
+            "aldehyde"
           ]
         }
       ]
     },
     {
-      "id": "chan_lam",
-      "name": "Chan–Lam N-arylation (amine + boronic acid)",
+      "id": "benzothiazole",
+      "name": "benzothiazole",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O):1].[#6:2][BX3]([OX2])[OX2]>>[N:1][#6:2]",
+      "smarts": "[c;r6:1](-[SH1:2]):[c;r6:3](-[NH2:4]).[#6:6]-[CH1;R0:5](=[OD1])>>[c:3]2:[c:1]:[s:2]:[c:5](-[#6:6]):[n:4]@2",
       "components": [
         {
-          "label": "Primary/secondary amine",
+          "label": "2-Aminothiophenol",
           "accepts": [
-            "primary_amine",
-            "secondary_amine"
+            "aminothiophenol"
           ]
         },
         {
-          "label": "Boronic acid/ester",
+          "label": "Aldehyde",
           "accepts": [
-            "boronic"
+            "aldehyde"
           ]
         }
       ]
     },
     {
-      "id": "chan_lam_ext",
-      "name": "Chan–Lam N-arylation (extend: NH on intermediate + boronic acid)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O):1].[#6:2][BX3]([OX2])[OX2]>>[N:1][#6:2]",
-      "components": [
-        {
-          "label": "Boronic acid/ester",
-          "accepts": [
-            "boronic"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "cross_electrophile_coupling",
-      "name": "Cross-electrophile coupling (two alkyl halides → C–C)",
+      "id": "benzoxazole_aromatic_aldehyde",
+      "name": "benzoxazole_arom-aldehyde",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[#6;!a:1][Br,I].[#6;!a:2][Br,I]>>[#6:1][#6:2]",
+      "smarts": "[c:1](-[OH1;$(Oc1ccccc1):2]):[c;r6:3](-[NH2:4]).[c:6]-[CH1;R0:5](=[OD1])>>[c:3]2:[c:1]:[o:2]:[c:5](-[c:6]):[n:4]@2",
       "components": [
         {
-          "label": "Alkyl bromide/iodide",
+          "label": "2-Aminophenol",
           "accepts": [
-            "alkyl_halide"
+            "aminophenol"
           ]
         },
         {
-          "label": "Alkyl bromide/iodide",
+          "label": "Aromatic aldehyde",
           "accepts": [
-            "alkyl_halide"
+            "aldehyde"
           ]
         }
       ]
     },
     {
-      "id": "cuaac",
-      "name": "CuAAC (azide + terminal alkyne → 1,4-triazole)",
+      "id": "benzoxazole_carboxylic_acid",
+      "name": "benzoxazole_carboxylic-acid",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[#6:6][N:1]=[N+:2]=[N-:3].[C:4]#[CH:5]>>[#6:6][N+0:1]1[N+0:2]=[N+0:3][C:4]=[C:5]1",
+      "smarts": "[c;r6:1](-[OH1:2]):[c;r6:3](-[NH2:4]).[#6:6]-[C;R0:5](=[OD1])-[OH1]>>[c:3]2:[c:1]:[o:2]:[c:5](-[#6:6]):[n:4]@2",
       "components": [
         {
-          "label": "Azide",
+          "label": "2-Aminophenol",
           "accepts": [
-            "azide"
-          ]
-        },
-        {
-          "label": "Terminal alkyne",
-          "accepts": [
-            "terminal_alkyne"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "c_c_decarboxylation",
-      "name": "Decarboxylative C–C coupling (aryl halide + alpha-keto acid ester)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6:2][CX3:3](=[OX1:5])[CX3](=[OX1])[OX2][CX4]>>[c:1][C:3](=[O:5])[#6:2]",
-      "components": [
-        {
-          "label": "Aryl bromide/iodide",
-          "accepts": [
-            "aryl_halide"
-          ]
-        },
-        {
-          "label": "Alpha-keto acid ester",
-          "accepts": [
-            "alpha_ketoester"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "deoxygenative_coupling",
-      "name": "Deoxygenative C–C coupling (aryl halide + alkyl alcohol)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6;!a:2][OX2H]>>[c:1][#6:2]",
-      "components": [
-        {
-          "label": "Aryl bromide/iodide",
-          "accepts": [
-            "aryl_halide"
-          ]
-        },
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "esterification",
-      "name": "Esterification (carboxylic acid + alcohol)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]",
-      "components": [
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ]
-        },
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "esterification_ext_acid",
-      "name": "Esterification (extend: acid on intermediate + alcohol)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]",
-      "components": [
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "esterification_ext_oh",
-      "name": "Esterification (extend: OH on intermediate + acid)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[OX2H:3][CX4:4].[#6:1][CX3:2](=[OX1])[OX2H]>>[#6:1][C:2](=[OX1])[O:3][C:4]",
-      "components": [
-        {
-          "label": "Carboxylic acid",
-          "accepts": [
-            "carboxylic_acid"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "heck",
-      "name": "Heck reaction (aryl halide + terminal alkene)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[CX3H1:2]=[CX3H2:3]>>[c:1][C:2]=[C:3]",
-      "components": [
-        {
-          "label": "Aryl bromide/iodide",
-          "accepts": [
-            "aryl_halide"
-          ]
-        },
-        {
-          "label": "Terminal alkene",
-          "accepts": [
-            "alkene"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "heck_ext",
-      "name": "Heck reaction (extend: aryl halide on intermediate + alkene)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:1][Br,I].[CX3H1:2]=[CX3H2:3]>>[c:1][C:2]=[C:3]",
-      "components": [
-        {
-          "label": "Terminal alkene",
-          "accepts": [
-            "alkene"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "horner_wadsworth_emmons",
-      "name": "Horner–Wadsworth–Emmons (phosphonate ester + carbonyl → alkene)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[PX4](=[OX1])([OX2][#6])([OX2][#6])[CH2:1].[#6:2][CX3:3]=[OX1]>>[#6:2][C:3]=[C:1]",
-      "components": [
-        {
-          "label": "Phosphonate ester",
-          "accepts": [
-            "phosphonate_ester"
-          ]
-        },
-        {
-          "label": "Aldehyde/ketone",
-          "accepts": [
-            "aldehyde",
-            "ketone"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "imidazole_Xketone_synthesis",
-      "name": "Imidazole synthesis (alpha-fluoroketone + amidine)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[#6:1][CX3:2](=[OX1])[CH2:3][F].[NH2:4][CX3:5](=[NH:6])[#6:7]>>[#6:1][c:2]1[c:3][n:6][c:5]([#6:7])[nH:4]1",
-      "components": [
-        {
-          "label": "Alpha-fluoroketone",
-          "accepts": [
-            "alpha_fluoroketone"
-          ]
-        },
-        {
-          "label": "Amidine",
-          "accepts": [
-            "amidine"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "mitsunobu",
-      "name": "Mitsunobu (alcohol + carboxylic acid → ester)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[#6:1][OH:2].[#6:3][CX3:4](=[OX1:5])[OX2H]>>[#6:1][O:2][CX3:4](=[OX1:5])[#6:3]",
-      "components": [
-        {
-          "label": "Alcohol",
-          "accepts": [
-            "alcohol"
+            "aminophenol"
           ]
         },
         {
@@ -601,17 +127,73 @@
       ]
     },
     {
-      "id": "n_alkylation",
-      "name": "N-alkylation (amine + alkyl Br/I)",
+      "id": "thiazole",
+      "name": "thiazole",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O);!$([NX3]=*);!$([NX3]S(=O)=O):1].[#6;!a:2][Br,I]>>[N:1][#6:2]",
+      "smarts": "[#6:6]-[C;R0:1](=[OD1])-[CH1;R0:5](-[#6:7])-[*;#17,#35,#53].[NH2:2]-[C:3]=[SD1:4]>>[c:1]2(-[#6:6]):[n:2]:[c:3]:[s:4][c:5]([#6:7]):2",
       "components": [
         {
-          "label": "Primary/secondary amine",
+          "label": "Alpha-haloketone",
           "accepts": [
-            "primary_amine",
-            "secondary_amine"
+            "alpha_haloketone"
+          ]
+        },
+        {
+          "label": "Thioamide",
+          "accepts": [
+            "thioamide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "niementowski_quinazoline",
+      "name": "Niementowski_quinazoline",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c:1](-[C;$(C-c1ccccc1):2](=[OD1:3])-[OH1]):[c:4](-[NH2:5]).[N;!H0;!$(N-N);!$(N-C=N);!$(N(-C=O)-C=O):6]-[C;H1,$(C-[#6]):7]=[OD1]>>[c:4]2:[c:1]-[C:2](=[O:3])-[N:6]-[C:7]=[N:5]-2",
+      "components": [
+        {
+          "label": "Anthranilic acid",
+          "accepts": [
+            "anthranilic_acid"
+          ]
+        },
+        {
+          "label": "Formamide/amide",
+          "accepts": [
+            "formamide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tetrazole_terminal",
+      "name": "tetrazole_terminal",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[CH0;$(C-[#6]):1]#[NH0:2]>>[C:1]1=[N:2]-N-N=N-1",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tetrazole_connect_regioisomere_1",
+      "name": "tetrazole_connect_regioisomere_1",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[CH0;$(C-[#6]):1]#[NH0:2].[C;A;!$(C=O):3]-[*;#17,#35,#53]>>[C:1]1=[N:2]-N(-[C:3])-N=N-1",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
           ]
         },
         {
@@ -623,289 +205,750 @@
       ]
     },
     {
-      "id": "sn2_nheterocycle",
-      "name": "N-Alkylation of NH-heterocycle (alkyl halide + pyrrole/indole/imidazole)",
+      "id": "tetrazole_connect_regioisomere_2",
+      "name": "tetrazole_connect_regioisomere_2",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[CX4:1][Br,I].[nH:2]>>[C:1][n:2]",
+      "smarts": "[CH0;$(C-[#6]):1]#[NH0:2].[C;A;!$(C=O):3]-[*;#17,#35,#53]>>[C:1]1=[N:2]-N=N-N-1(-[C:3])",
       "components": [
         {
-          "label": "Alkyl bromide/iodide",
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        },
+        {
+          "label": "Alkyl halide",
           "accepts": [
             "alkyl_halide"
           ]
+        }
+      ]
+    },
+    {
+      "id": "huisgen_cu_catalyzed_1_4_subst",
+      "name": "Huisgen_Cu-catalyzed_1,4-subst",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[CH0;$(C-[#6]):1]#[CH1:2].[C;H1,H2;A;!$(C=O):3]-[*;#17,#35,#53,OH1]>>[C:1]1=[C:2]-N(-[C:3])-N=N-1",
+      "components": [
+        {
+          "label": "Terminal alkyne",
+          "accepts": [
+            "terminal_alkyne"
+          ]
         },
         {
-          "label": "NH-heterocycle",
+          "label": "Alkyl halide",
           "accepts": [
-            "nheterocycle"
+            "alkyl_halide"
           ]
         }
       ]
     },
     {
-      "id": "negishi",
-      "name": "Negishi coupling (aryl halide + organozinc)",
+      "id": "huisgen_ru_catalyzed_1_5_subst",
+      "name": "Huisgen_Ru-catalyzed_1,5_subst",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6:2][Zn][Cl,Br,I]>>[c:1][#6:2]",
+      "smarts": "[CH0;$(C-[#6]):1]#[CH1:2].[C;H1,H2;A;!$(C=O):3]-[*;#17,#35,#53,OH1]>>[C:1]1=[C:2]-N=NN(-[C:3])-1",
       "components": [
         {
-          "label": "Aryl bromide/iodide",
+          "label": "Terminal alkyne",
           "accepts": [
-            "aryl_halide"
+            "terminal_alkyne"
           ]
         },
         {
-          "label": "Organozinc halide",
+          "label": "Alkyl halide",
           "accepts": [
-            "organozinc"
+            "alkyl_halide"
           ]
         }
       ]
     },
     {
-      "id": "snar",
-      "name": "Nucleophilic aromatic substitution (SNAr)",
+      "id": "huisgen_disubst_alkyne",
+      "name": "Huisgen_disubst-alkyne",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][F,Cl].[NX3;H1,H2:2]>>[c:1][N:2]",
+      "smarts": "[CH0;$(C-[#6]):1]#[CH0;$(C-[#6]):2].[C;H1,H2;A;!$(C=O):3]-[*;#17,#35,#53,OH1]>>[C:1]1=[C:2]-N=NN(-[C:3])-1",
       "components": [
         {
-          "label": "Activated aryl halide",
+          "label": "Internal alkyne",
           "accepts": [
-            "activated_aryl_halide"
-          ],
-          "sets": [
-            "activated_aryl_halides_100"
+            "internal_alkyne"
+          ]
+        },
+        {
+          "label": "Alkyl halide",
+          "accepts": [
+            "alkyl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "triazole_1_2_4_acetohydrazide",
+      "name": "1,2,4-triazole_acetohydrazide",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[CH0;$(C-[#6]):1]#[NH0:2].[NH2:3]-[NH1:4]-[CH0;$(C-[#6]);R0:5]=[OD1]>>[N:2]1-[C:1]=[N:3]-[N:4]-[C:5]=1",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        },
+        {
+          "label": "Acylhydrazide",
+          "accepts": [
+            "hydrazide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "triazole_1_2_4_carboxylic_acid",
+      "name": "1,2,4-triazole_carboxylic-acid/ester",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[CH0;$(C-[#6]):1]#[NH0:2].[CH0;$(C-[#6]);R0:5](=[OD1])-[#8;H1,$(O-[CH3]),$(O-[CH2]-[CH3])]>>[N:2]1-[C:1]=N-N-[C:5]=1",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        },
+        {
+          "label": "Carboxylic acid",
+          "accepts": [
+            "carboxylic_acid"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nitrile_pyridine_3",
+      "name": "3-nitrile-pyridine",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;!$([#6](-C=O)-C=O):4]-[CH0:1](=[OD1])-[C;H1&!$(C-[*;!#6])&!$(C-C(=O)O),H2:2]-[CH0;R0:3](=[OD1])-[#6;!$([#6](-C=O)-C=O):5]>>[c:1]1(-[#6:4]):[c:2]:[c:3](-[#6:5]):n:c(-O):c(-C#N):1",
+      "components": [
+        {
+          "label": "1,3-Diketone",
+          "accepts": [
+            "diketone_1_3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "spiro_chromanone",
+      "name": "spiro-chromanone",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c:1](-[C;$(C-c1ccccc1):2](=[OD1:3])-[CH3:4]):[c:5](-[OH1:6]).[C;$(C1-[CH2]-[CH2]-[N,C]-[CH2]-[CH2]-1):7](=[OD1])>>[O:6]1-[c:5]:[c:1]-[C:2](=[OD1:3])-[C:4]-[C:7]-1",
+      "components": [
+        {
+          "label": "2-Acylphenol",
+          "accepts": [
+            "ortho_acylphenol"
+          ]
+        },
+        {
+          "label": "Cyclic ketone",
+          "accepts": [
+            "cyclic_ketone_6ring"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pyrazole",
+      "name": "pyrazole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;!$([#6](-C=O)-C=O):4]-[CH0:1](=[OD1])-[C;H1&!$(C-[*;!#6])&!$(C-C(=O)O),H2:2]-[CH0;R0:3](=[OD1])-[#6;!$([#6](-C=O)-C=O):5].[NH2:6]-[N;!H0;$(N-[#6]),H2:7]>>[C:1]1(-[#6:4])-[C:2]=[C:3](-[#6:5])-[N:7]-[N:6]=1",
+      "components": [
+        {
+          "label": "1,3-Diketone",
+          "accepts": [
+            "diketone_1_3"
+          ]
+        },
+        {
+          "label": "Hydrazine",
+          "accepts": [
+            "hydrazine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phthalazinone",
+      "name": "phthalazinone",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;r6:1](-[C;$(C=O):6]-[OH1]):[c;r6:2]-[C;H1,$(C-C):3]=[OD1].[NH2:4]-[NH1;$(N-[#6]);!$(NC=[O,S,N]):5]>>[c:1]1:[c:2]-[C:3]=[N:4]-[N:5]-[C:6]-1",
+      "components": [
+        {
+          "label": "2-Acylbenzoic acid",
+          "accepts": [
+            "ortho_acylbenzoic_acid"
+          ]
+        },
+        {
+          "label": "Hydrazine",
+          "accepts": [
+            "hydrazine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paal_knorr_pyrrole",
+      "name": "Paal-Knorr pyrrole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6:5]-[C;R0:1](=[OD1])-[C;H1,H2:2]-[C;H1,H2:3]-[C:4](=[OD1])-[#6:6].[NH2;$(N-[C,N]);!$(NC=[O,S,N]);!$(N([#6])[#6]);!$(N~N~N):7]>>[C:1]1(-[#6:5])=[C:2]-[C:3]=[C:4](-[#6:6])-[N:7]-1",
+      "components": [
+        {
+          "label": "1,4-Diketone",
+          "accepts": [
+            "diketone_1_4"
           ]
         },
         {
           "label": "Primary amine",
           "accepts": [
-            "primary_amine",
-            "secondary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
+            "primary_amine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "triaryl_imidazole",
+      "name": "triaryl-imidazole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;$(C-c1ccccc1):1](=[OD1])-[C;D3;$(C-c1ccccc1):2]~[O;D1,H1].[CH1;$(C-c):3]=[OD1]>>[C:1]1-N=[C:3]-[NH1]-[C:2]=1",
+      "components": [
+        {
+          "label": "Aryl 1,2-diketone",
+          "accepts": [
+            "aryl_1_2_diketone"
+          ]
+        },
+        {
+          "label": "Aromatic aldehyde",
+          "accepts": [
+            "aldehyde"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fischer_indole",
+      "name": "Fischer indole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[NH1;$(N-c1ccccc1):1](-[NH2])-[c:5]:[cH1:4].[C;$(C([#6])[#6]):2](=[OD1])-[CH2;$(C([#6])[#6]);!$(C(C=O)C=O):3]>>[C:5]1-[N:1]-[C:2]=[C:3]-[C:4]:1",
+      "components": [
+        {
+          "label": "Arylhydrazine",
+          "accepts": [
+            "arylhydrazine"
+          ]
+        },
+        {
+          "label": "Ketone",
+          "accepts": [
+            "ketone"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "friedlaender_chinoline",
+      "name": "Friedlaender chinoline",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[NH2;$(N-c1ccccc1):1]-[c:2]:[c:3]-[CH1:4]=[OD1].[C;$(C([#6])[#6]):6](=[OD1])-[CH2;$(C([#6])[#6]);!$(C(C=O)C=O):5]>>[N:1]1-[c:2]:[c:3]-[C:4]=[C:5]-[C:6]:1",
+      "components": [
+        {
+          "label": "2-Aminobenzaldehyde",
+          "accepts": [
+            "ortho_aminobenzaldehyde"
+          ]
+        },
+        {
+          "label": "Ketone",
+          "accepts": [
+            "ketone"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "benzofuran",
+      "name": "benzofuran",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[*;Br,I;$(*c1ccccc1)]-[c:1]:[c:2]-[OH1:3].[CH1:5]#[C;$(C-[#6]):4]>>[c:1]1:[c:2]-[O:3]-[C:4]=[C:5]-1",
+      "components": [
+        {
+          "label": "2-Halophenol",
+          "accepts": [
+            "ortho_halophenol"
+          ]
+        },
+        {
+          "label": "Terminal alkyne",
+          "accepts": [
+            "terminal_alkyne"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "benzothiophene",
+      "name": "benzothiophene",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[*;Br,I;$(*c1ccccc1)]-[c:1]:[c:2]-[SD2:3]-[CH3].[CH1:5]#[C;$(C-[#6]):4]>>[c:1]1:[c:2]-[S:3]-[C:4]=[C:5]-1",
+      "components": [
+        {
+          "label": "2-Halo(arylthio)benzene",
+          "accepts": [
+            "ortho_halo_arylthioether"
+          ]
+        },
+        {
+          "label": "Terminal alkyne",
+          "accepts": [
+            "terminal_alkyne"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "indole",
+      "name": "indole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[*;Br,I;$(*c1ccccc1)]-[c:1]:[c:2]-[NH2:3].[CH1:5]#[C;$(C-[#6]):4]>>[c:1]1:[c:2]-[N:3]-[C:4]=[C:5]-1",
+      "components": [
+        {
+          "label": "2-Haloaniline",
+          "accepts": [
+            "ortho_haloaniline"
+          ]
+        },
+        {
+          "label": "Terminal alkyne",
+          "accepts": [
+            "terminal_alkyne"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "oxadiazole",
+      "name": "oxadiazole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6:6][C:5]#[#7;D1:4].[#6:1][C:2](=[OD1:3])[OH1]>>[#6:6][c:5]1[n:4][o:3][c:2]([#6:1])n1",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        },
+        {
+          "label": "Carboxylic acid",
+          "accepts": [
+            "carboxylic_acid"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "williamson_ether",
+      "name": "Williamson ether",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;$([#6]~[#6]);!$([#6]=O):2][#8;H1:3].[Cl,Br,I][#6;H2;$([#6]~[#6]):4]>>[CH2:4][O:3][#6:2]",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Alkyl halide",
+          "accepts": [
+            "alkyl_halide"
           ]
         }
       ]
     },
     {
       "id": "reductive_amination",
-      "name": "Reductive amination (aldehyde/ketone + amine)",
+      "name": "reductive amination",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1].[NX3;H1,H2;!$([NX3]C=O):2]>>[C:1][N:2]",
+      "smarts": "[#6:4]-[C;H1,$([CH0](-[#6])[#6]):1]=[OD1].[N;H2,$([NH1;D2](C)C);!$(N-[#6]=[*]):3]-[C:5]>>[#6:4][C:1]-[N:3]-[C:5]",
       "components": [
         {
           "label": "Aldehyde/ketone",
           "accepts": [
             "aldehyde",
             "ketone"
-          ],
-          "sets": [
-            "aldehydes_ketones_100"
           ]
         },
         {
-          "label": "Primary amine",
+          "label": "Amine",
           "accepts": [
             "primary_amine",
             "secondary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
           ]
         }
       ]
     },
     {
-      "id": "redam_ext_amine",
-      "name": "Reductive amination (extend: amine on intermediate + aldehyde/ketone)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1]>>[C:1][N:2]",
-      "components": [
-        {
-          "label": "Aldehyde/ketone",
-          "accepts": [
-            "aldehyde",
-            "ketone"
-          ],
-          "sets": [
-            "aldehydes_ketones_100"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "redam_ext_carbonyl",
-      "name": "Reductive amination (extend: carbonyl on intermediate + amine)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1].[NX3;H1,H2;!$([NX3]C=O):2]>>[C:1][N:2]",
-      "components": [
-        {
-          "label": "Primary amine",
-          "accepts": [
-            "primary_amine",
-            "secondary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "ester_schotten_baumann",
-      "name": "Schotten–Baumann esterification (acyl halide + alcohol)",
+      "id": "suzuki",
+      "name": "Suzuki",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[#6:1][CX3:2](=[OX1])[Cl,Br].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]",
+      "smarts": "[#6;H0;D3;$([#6](~[#6])~[#6]):1]B(O)O.[#6;H0;D3;$([#6](~[#6])~[#6]):2][Cl,Br,I]>>[#6:2][#6:1]",
       "components": [
         {
-          "label": "Acyl halide",
+          "label": "Boronic acid",
           "accepts": [
-            "acyl_halide"
+            "boronic"
           ]
         },
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "snar_ext_amine",
-      "name": "SNAr (extend: amine on intermediate + aryl halide)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[c:1][F,Cl]>>[c:1][N:2]",
-      "components": [
-        {
-          "label": "Activated aryl halide",
-          "accepts": [
-            "activated_aryl_halide"
-          ],
-          "sets": [
-            "activated_aryl_halides_100"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "snar_ext_halide",
-      "name": "SNAr (extend: aryl halide on intermediate + amine)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:1][F,Cl].[NX3;H1,H2;!$([NX3]C=O):2]>>[c:1][N:2]",
-      "components": [
-        {
-          "label": "Primary amine",
-          "accepts": [
-            "primary_amine",
-            "secondary_amine"
-          ],
-          "sets": [
-            "primary_amines_100",
-            "primary_amines_500",
-            "primary_amines_ok"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "snar_alcohol",
-      "name": "SNAr O-arylation (activated aryl halide + alcohol)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[c:1][F,Cl].[OX2H:2][CX4:3]>>[c:1][O:2][C:3]",
-      "components": [
-        {
-          "label": "Activated aryl halide",
-          "accepts": [
-            "activated_aryl_halide"
-          ]
-        },
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "snar_alcohol_ext",
-      "name": "SNAr O-arylation (extend: aryl halide on intermediate + alcohol)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:1][F,Cl].[OX2H:2][CX4:3]>>[c:1][O:2][C:3]",
-      "components": [
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "snar_thiol",
-      "name": "SNAr thioether (aryl halide + thiol)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[c:1][F,Cl,Br,I].[SX2H:2][#6:3]>>[c:1][S:2][#6:3]",
-      "components": [
         {
           "label": "Aryl halide",
           "accepts": [
             "aryl_halide"
           ]
+        }
+      ]
+    },
+    {
+      "id": "piperidine_indole",
+      "name": "piperidine_indole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;H1:3]1:[c:4]:[c:5]:[c;H1:6]:[c:7]2:[nH:8]:[c:9]:[c;H1:1]:[c:2]:1:2.O=[C:10]1[#6;H2:11][#6;H2:12][N:13][#6;H2:14][#6;H2:15]1>>[#6;H2:12]3[#6;H1:11]=[C:10]([c:1]1:[c:9]:[n:8]:[c:7]2:[c:6]:[c:5]:[c:4]:[c:3]:[c:2]:1:2)[#6;H2:15][#6;H2:14][N:13]3",
+      "components": [
+        {
+          "label": "Indole (free C2/C3)",
+          "accepts": [
+            "indole_free_c3"
+          ]
         },
         {
-          "label": "Thiol",
+          "label": "Cyclic ketone",
           "accepts": [
-            "thiol"
+            "cyclic_ketone_6ring"
           ]
         }
       ]
     },
     {
-      "id": "snar_thiol_ext",
-      "name": "SNAr thioether (extend: aryl halide on intermediate + thiol)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:1][F,Cl,Br,I].[SX2H:2][#6:3]>>[c:1][S:2][#6:3]",
+      "id": "negishi",
+      "name": "Negishi",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;$([#6]~[#6]);!$([#6]~[S,N,O,P]):1][Cl,Br,I].[Cl,Br,I][#6;$([#6]~[#6]);!$([#6]~[S,N,O,P]):2]>>[#6:2][#6:1]",
       "components": [
         {
-          "label": "Thiol",
+          "label": "Alkyl/aryl halide",
           "accepts": [
-            "thiol"
+            "alkyl_halide",
+            "aryl_halide"
+          ]
+        },
+        {
+          "label": "Alkyl/aryl halide",
+          "accepts": [
+            "alkyl_halide",
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_imide",
+      "name": "Mitsunobu_imide",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[NH1;$(N(C=O)C=O):2]>>[C:1][N:2]",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Imide",
+          "accepts": [
+            "imide_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_phenole",
+      "name": "Mitsunobu_phenole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[OH1;$(Oc1ccccc1):2]>>[C:1][O:2]",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Phenol",
+          "accepts": [
+            "phenol"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_sulfonamide",
+      "name": "Mitsunobu_sulfonamide",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[NH1;$(N([#6])S(=O)=O):2]>>[C:1][N:2]",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Sulfonamide",
+          "accepts": [
+            "sulfonamide_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_tetrazole_1",
+      "name": "Mitsunobu_tetrazole_1",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[#7H1:2]1~[#7:3]~[#7:4]~[#7:5]~[#6:6]~1>>[C:1][#7:2]1:[#7:3]:[#7:4]:[#7:5]:[#6:6]:1",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Tetrazole",
+          "accepts": [
+            "tetrazole_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_tetrazole_2",
+      "name": "Mitsunobu_tetrazole_2",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[#7H1:2]1~[#7:3]~[#7:4]~[#7:5]~[#6:6]~1>>[#7H0:2]1:[#7:3]:[#7H0:4]([C:1]):[#7:5]:[#6:6]:1",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Tetrazole",
+          "accepts": [
+            "tetrazole_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_tetrazole_3",
+      "name": "Mitsunobu_tetrazole_3",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[#7:2]1~[#7:3]~[#7H1:4]~[#7:5]~[#6:6]~1>>[C:1][#7H0:2]1:[#7:3]:[#7H0:4]:[#7:5]:[#6:6]:1",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Tetrazole",
+          "accepts": [
+            "tetrazole_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mitsunobu_tetrazole_4",
+      "name": "Mitsunobu_tetrazole_4",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;H1&$(C([#6])[#6]),H2&$(C[#6]):1][OH1].[#7:2]1~[#7:3]~[#7H1:4]~[#7:5]~[#6:6]~1>>[#7:2]1:[#7:3]:[#7:4]([C:1]):[#7:5]:[#6:6]:1",
+      "components": [
+        {
+          "label": "Alcohol",
+          "accepts": [
+            "alcohol"
+          ]
+        },
+        {
+          "label": "Tetrazole",
+          "accepts": [
+            "tetrazole_nh"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "heck_terminal_vinyl",
+      "name": "Heck_terminal_vinyl",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;c,$(C(=O)O),$(C#N):3][#6;H1:2]=[#6;H2:1].[#6;$([#6]=[#6]),$(c:c):4][Cl,Br,I]>>[#6:4]/[#6:1]=[#6:2]/[#6:3]",
+      "components": [
+        {
+          "label": "Terminal alkene",
+          "accepts": [
+            "alkene"
+          ]
+        },
+        {
+          "label": "Aryl/vinyl halide",
+          "accepts": [
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "heck_non_terminal_vinyl",
+      "name": "Heck_non-terminal_vinyl",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;c,$(C(=O)O),$(C#N):3][#6:2]([#6:5])=[#6;H1;$([#6][#6]):1].[#6;$([#6]=[#6]),$(c:c):4][Cl,Br,I]>>[#6:4][#6;H0:1]=[#6:2]([#6:5])[#6:3]",
+      "components": [
+        {
+          "label": "Internal alkene",
+          "accepts": [
+            "internal_alkene"
+          ]
+        },
+        {
+          "label": "Aryl/vinyl halide",
+          "accepts": [
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stille",
+      "name": "Stille",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6;$(C=C-[#6]),$(c:c):1][Br,I].[Cl,Br,I][c:2]>>[c:2][#6:1]",
+      "components": [
+        {
+          "label": "Vinyl/aryl halide",
+          "accepts": [
+            "aryl_halide"
+          ]
+        },
+        {
+          "label": "Aryl halide",
+          "accepts": [
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grignard_carbonyl",
+      "name": "Grignard_carbonyl",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6:1][C:2]#[#7;D1].[Cl,Br,I][#6;$([#6]~[#6]);!$([#6]([Cl,Br,I])[Cl,Br,I]);!$([#6]=O):3]>>[#6:1][C:2](=O)[#6:3]",
+      "components": [
+        {
+          "label": "Nitrile",
+          "accepts": [
+            "nitrile"
+          ]
+        },
+        {
+          "label": "Alkyl/aryl halide",
+          "accepts": [
+            "alkyl_halide",
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "grignard_alcohol",
+      "name": "Grignard_alcohol",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[#6:1][C;H1,$([C]([#6])[#6]):2]=[OD1:3].[Cl,Br,I][#6;$([#6]~[#6]);!$([#6]([Cl,Br,I])[Cl,Br,I]);!$([#6]=O):4]>>[C:1][#6:2]([OH1:3])[#6:4]",
+      "components": [
+        {
+          "label": "Aldehyde/ketone",
+          "accepts": [
+            "aldehyde",
+            "ketone"
+          ]
+        },
+        {
+          "label": "Alkyl/aryl halide",
+          "accepts": [
+            "alkyl_halide",
+            "aryl_halide"
           ]
         }
       ]
     },
     {
       "id": "sonogashira",
-      "name": "Sonogashira (aryl Br/I + terminal alkyne)",
+      "name": "Sonogashira",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6:4][C:2]#[CH:3]>>[c:1][C:3]#[C:2][#6:4]",
+      "smarts": "[#6;$(C=C-[#6]),$(c:c):1][Br,I].[CH1;$(C#CC):2]>>[#6:1][C:2]",
       "components": [
         {
-          "label": "Aryl bromide/iodide",
+          "label": "Aryl/vinyl halide",
           "accepts": [
             "aryl_halide"
           ]
@@ -919,33 +962,33 @@
       ]
     },
     {
-      "id": "sulfonamide",
-      "name": "Sulfonamide coupling (amine + sulfonyl chloride)",
+      "id": "schotten_baumann_amide",
+      "name": "Schotten-Baumann_amide",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NX3;H1,H2:1].[#6:2][SX4:3](=[OX1])(=[OX1])[Cl]>>[N:1][S:3](=[OX1])(=[OX1])[#6:2]",
+      "smarts": "[C;$(C=O):1][OH1].[N;$(N[#6]);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[O,N]);!$(N[C,S]=[S,O,N]):2]>>[C:1][N+0:2]",
       "components": [
         {
-          "label": "Primary/secondary amine",
+          "label": "Carboxylic acid",
+          "accepts": [
+            "carboxylic_acid"
+          ]
+        },
+        {
+          "label": "Amine",
           "accepts": [
             "primary_amine",
             "secondary_amine"
           ]
-        },
-        {
-          "label": "Sulfonyl chloride",
-          "accepts": [
-            "sulfonyl_chloride"
-          ]
         }
       ]
     },
     {
-      "id": "ester_sulfonic_schotten_baumann",
-      "name": "Sulfonate ester (sulfonyl chloride + alcohol)",
+      "id": "sulfonamide",
+      "name": "sulfon_amide",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[#6:1][SX4:2](=[OX1])(=[OX1])[Cl].[OX2H:3][CX4:4]>>[#6:1][S:2](=[OX1])(=[OX1])[O:3][C:4]",
+      "smarts": "[S;$(S(=O)(=O)[C,N]):1][Cl].[N;$(NC);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[c,O]);!$(N[C,S]=[S,O,N]):2]>>[S:1][N+0:2]",
       "components": [
         {
           "label": "Sulfonyl chloride",
@@ -954,124 +997,63 @@
           ]
         },
         {
-          "label": "Aliphatic alcohol",
+          "label": "Amine",
           "accepts": [
-            "alcohol"
+            "primary_amine",
+            "secondary_amine"
           ]
         }
       ]
     },
     {
-      "id": "suzuki",
-      "name": "Suzuki coupling (aryl halide + boronic acid)",
+      "id": "n_arylation_heterocycles",
+      "name": "N-arylation_heterocycles",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]",
-      "components": [
-        {
-          "label": "Aryl halide",
-          "accepts": [
-            "aryl_halide"
-          ],
-          "sets": [
-            "aryl_halides_100"
-          ]
-        },
-        {
-          "label": "Boronic acid",
-          "accepts": [
-            "boronic"
-          ],
-          "sets": [
-            "boronic_acids_100"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "suzuki_ext_boronic",
-      "name": "Suzuki coupling (extend: boronic acid on intermediate + halide)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:2][B]([OX2])[OX2].[c:1][Cl,Br,I]>>[c:2][c:1]",
-      "components": [
-        {
-          "label": "Aryl halide",
-          "accepts": [
-            "aryl_halide"
-          ],
-          "sets": [
-            "aryl_halides_100"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "suzuki_ext_halide",
-      "name": "Suzuki coupling (extend: halide on intermediate + boronic acid)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]",
+      "smarts": "[c:1]B(O)O.[nH1;+0;r5;!$(n[#6]=[O,S,N]);!$(n~n~n);!$(n~n~c~n);!$(n~c~n~n):2]>>[c:1][n:2]",
       "components": [
         {
           "label": "Boronic acid",
           "accepts": [
             "boronic"
-          ],
-          "sets": [
-            "boronic_acids_100"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "tetrazole_synthesis",
-      "name": "Tetrazole synthesis (nitrile + organic azide → 1-substituted-5-R-tetrazole)",
-      "role": "start",
-      "takes_intermediate": false,
-      "smarts": "[#6:1][C:2]#[N:7].[#6:3][NX2:4]=[N+:5]=[N-:6]>>[#6:1][c:2]1[n+0:7][n+0:6][n+0:5][n+0:4]([#6:3])1",
-      "components": [
-        {
-          "label": "Nitrile",
-          "accepts": [
-            "nitrile"
           ]
         },
         {
-          "label": "Organic azide",
+          "label": "NH-heterocycle",
           "accepts": [
-            "azide"
+            "nheterocycle"
           ]
         }
       ]
     },
     {
-      "id": "ullmann_x",
-      "name": "Ullmann biaryl coupling (aryl halide + aryl halide)",
+      "id": "wittig",
+      "name": "Wittig",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[c:2][Br,I]>>[c:1][c:2]",
+      "smarts": "[#6:3]-[C;H1,$([CH0](-[#6])[#6]);!$(CC=O):1]=[OD1].[Cl,Br,I][C;H2;$(C-[#6]);!$(CC[I,Br]);!$(CCO[CH3]):2]>>[C:3][C:1]=[C:2]",
       "components": [
         {
-          "label": "Aryl halide",
+          "label": "Aldehyde/ketone",
           "accepts": [
-            "aryl_halide"
+            "aldehyde",
+            "ketone"
           ]
         },
         {
-          "label": "Aryl halide",
+          "label": "Alkyl halide",
           "accepts": [
-            "aryl_halide"
+            "alkyl_halide"
           ]
         }
       ]
     },
     {
-      "id": "ullmann_phenol",
-      "name": "Ullmann O-arylation (aryl halide + phenol)",
+      "id": "buchwald_hartwig",
+      "name": "Buchwald-Hartwig",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[OX2H:2][c:3]>>[c:1][O:2][c:3]",
+      "smarts": "[Cl,Br,I][c;$(c1:[c,n]:[c,n]:[c,n]:[c,n]:[c,n]:1):1].[N;$(NC)&!$(N=*)&!$([N-])&!$(N#*)&!$([ND3])&!$([ND4])&!$(N[c,O])&!$(N[C,S]=[S,O,N]),H2&$(Nc1:[c,n]:[c,n]:[c,n]:[c,n]:[c,n]:1):2]>>[c:1][N:2]",
       "components": [
         {
           "label": "Aryl halide",
@@ -1080,81 +1062,162 @@
           ]
         },
         {
-          "label": "Phenol",
+          "label": "Amine",
           "accepts": [
-            "phenol"
+            "primary_amine",
+            "secondary_amine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "imidazole",
+      "name": "imidazole",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[C;$(C([#6])[#6;!$([#6]Br)]):4](=[OD1])[CH;$(C([#6])[#6]):5]Br.[#7;H2:3][C;$(C(=N)(N)[c,#7]):2]=[#7;H1;D1:1]>>[C:4]1=[CH0:5][NH:3][C:2]=[N:1]1",
+      "components": [
+        {
+          "label": "Alpha-haloketone",
+          "accepts": [
+            "alpha_haloketone"
+          ]
+        },
+        {
+          "label": "Amidine",
+          "accepts": [
+            "amidine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "decarboxylative_coupling",
+      "name": "decarboxylative_coupling",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;$(c1[c;$(c[C,S,N](=[OD1])[*;R0;!$([OH1])])]cccc1):1][C;$(C(=O)[O;H1])].[c;$(c1aaccc1):2][Cl,Br,I]>>[c:1][c:2]",
+      "components": [
+        {
+          "label": "Ortho-activated benzoic acid",
+          "accepts": [
+            "ortho_activated_benzoic_acid"
+          ]
+        },
+        {
+          "label": "Aryl halide",
+          "accepts": [
+            "aryl_halide"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "heteroaromatic_nuc_sub",
+      "name": "heteroaromatic_nuc_sub",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;!$(c1ccccc1);$(c1[n,c]c[n,c]c[n,c]1):1][Cl,F].[N;$(NC);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[c,O]);!$(N[C,S]=[S,O,N]):2]>>[c:1][N:2]",
+      "components": [
+        {
+          "label": "Activated (hetero)aryl halide",
+          "accepts": [
+            "activated_aryl_halide"
+          ]
+        },
+        {
+          "label": "Amine",
+          "accepts": [
+            "primary_amine",
+            "secondary_amine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nucl_sub_aromatic_ortho_nitro",
+      "name": "nucl_sub_aromatic_ortho_nitro",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;$(c1c(N(~O)~O)cccc1):1][Cl,F].[N;$(NC);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[c,O]);!$(N[C,S]=[S,O,N]):2]>>[c:1][N:2]",
+      "components": [
+        {
+          "label": "Activated aryl halide",
+          "accepts": [
+            "activated_aryl_halide"
+          ]
+        },
+        {
+          "label": "Amine",
+          "accepts": [
+            "primary_amine",
+            "secondary_amine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nucl_sub_aromatic_para_nitro",
+      "name": "nucl_sub_aromatic_para_nitro",
+      "role": "start",
+      "takes_intermediate": false,
+      "smarts": "[c;$(c1ccc(N(~O)~O)cc1):1][Cl,F].[N;$(NC);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[c,O]);!$(N[C,S]=[S,O,N]):2]>>[c:1][N:2]",
+      "components": [
+        {
+          "label": "Activated aryl halide",
+          "accepts": [
+            "activated_aryl_halide"
+          ]
+        },
+        {
+          "label": "Amine",
+          "accepts": [
+            "primary_amine",
+            "secondary_amine"
           ]
         }
       ]
     },
     {
       "id": "urea",
-      "name": "Urea formation (amine + isocyanate)",
+      "name": "urea",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NX3;H2:1].[#6:5][NX2:2]=[CX2:3]=[OX1:4]>>[N:1][C:3](=[O:4])[N:2][#6:5]",
+      "smarts": "[N;$(N-[#6]):3]=[C;$(C=O):1].[N;$(N[#6]);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[O,N]);!$(N[C,S]=[S,O,N]):2]>>[N:3]-[C:1]-[N+0:2]",
       "components": [
-        {
-          "label": "Primary amine",
-          "accepts": [
-            "primary_amine"
-          ]
-        },
         {
           "label": "Isocyanate",
           "accepts": [
             "isocyanate"
           ]
+        },
+        {
+          "label": "Amine",
+          "accepts": [
+            "primary_amine",
+            "secondary_amine"
+          ]
         }
       ]
     },
     {
-      "id": "williamson",
-      "name": "Williamson ether synthesis (alcohol + alkyl halide)",
+      "id": "thiourea",
+      "name": "thiourea",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[OX2H:1][CX4:2].[CX4:3][Br,I]>>[O:1]([C:2])[C:3]",
+      "smarts": "[N;$(N-[#6]):3]=[C;$(C=S):1].[N;$(N[#6]);!$(N=*);!$([N-]);!$(N#*);!$([ND3]);!$([ND4]);!$(N[O,N]);!$(N[C,S]=[S,O,N]):2]>>[N:3]-[C:1]-[N+0:2]",
       "components": [
         {
-          "label": "Aliphatic alcohol",
+          "label": "Isothiocyanate",
           "accepts": [
-            "alcohol"
+            "isothiocyanate"
           ]
         },
         {
-          "label": "Alkyl bromide/iodide",
+          "label": "Amine",
           "accepts": [
-            "alkyl_halide"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "williamson_ext_halide",
-      "name": "Williamson ether synthesis (extend: alkyl halide on intermediate + alcohol)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[CX4:3][Br,I].[OX2H:1][CX4:2]>>[O:1]([C:2])[C:3]",
-      "components": [
-        {
-          "label": "Aliphatic alcohol",
-          "accepts": [
-            "alcohol"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "williamson_ext_oh",
-      "name": "Williamson ether synthesis (extend: OH on intermediate + alkyl halide)",
-      "role": "extend",
-      "takes_intermediate": true,
-      "smarts": "[OX2H:1][CX4:2].[CX4:3][Br,I]>>[O:1]([C:2])[C:3]",
-      "components": [
-        {
-          "label": "Alkyl bromide/iodide",
-          "accepts": [
-            "alkyl_halide"
+            "primary_amine",
+            "secondary_amine"
           ]
         }
       ]

@@ -28,11 +28,11 @@ def test_build_growth_route_places_fragment_and_library(tmp_path):
     bor = tmp_path / "boronic.smi"
     bor.write_text("OB(O)c1ccccc1 phB\nOB(O)c1ccncc1 pyB\n")
     files, route, summary = build_growth_route(
-        ["suzuki"], "Brc1ccccc1", 0, [{1: str(bor)}], tmp_path)
-    assert len(files) == 2 and files[0].endswith("fragment.smi")
-    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2, None)]
+        ["suzuki"], "Brc1ccccc1", 1, [{0: str(bor)}], tmp_path)
+    assert len(files) == 2 and files[1].endswith("fragment.smi")
+    assert route[0][1:] == (2, None)
     # fragment file is a single fixed entry
-    assert Chem.CanonSmiles(open(files[0]).read().split()[0]) == Chem.CanonSmiles("Brc1ccccc1")
+    assert Chem.CanonSmiles(open(files[1]).read().split()[0]) == Chem.CanonSmiles("Brc1ccccc1")
     assert len(summary) == 1 and "bound fragment" in summary[0]
 
 
@@ -46,18 +46,12 @@ def test_build_growth_route_chains_an_extend_step(tmp_path):
     bor2 = tmp_path / "boronic2.smi"
     bor2.write_text("OB(O)c1ccncc1 pyB\n")
     files, route, summary = build_growth_route(
-        ["suzuki", "suzuki_ext_halide"], "Brc1ccc(Br)cc1", 0,
-        [{1: str(bor)}, {0: str(bor2)}], tmp_path)
-    assert len(files) == 3 and files[0].endswith("fragment.smi")
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}], "Brc1ccc(Br)cc1", 1,
+        [{0: str(bor)}, {0: str(bor2)}], tmp_path)
+    assert len(files) == 3 and files[1].endswith("fragment.smi")
     assert [n for _smarts, n, _slot in route] == [2, 1]
     assert len(summary) == 2
     assert "Step 1" in summary[0] and "Step 2" in summary[1]
-
-
-def test_build_growth_route_rejects_non_start_first_step(tmp_path):
-    import pytest
-    with pytest.raises(ValueError, match="must be a 'start'"):
-        build_growth_route(["suzuki_ext_halide"], "Brc1ccccc1", 0, [{0: "dummy.smi"}], tmp_path)
 
 
 def test_build_growth_route_rejects_2component_later_step_with_no_slot(tmp_path):
@@ -68,24 +62,24 @@ def test_build_growth_route_rejects_2component_later_step_with_no_slot(tmp_path)
     what's still required is knowing which slot the intermediate fills."""
     import pytest
     with pytest.raises(ValueError, match="give 'slot'"):
-        build_growth_route(["suzuki", "suzuki"], "Brc1ccccc1", 0,
-                           [{1: "a.smi"}, {1: "b.smi"}], tmp_path)
+        build_growth_route(["suzuki", "suzuki"], "Brc1ccccc1", 1,
+                           [{0: "a.smi"}, {0: "b.smi"}], tmp_path)
 
 
 def test_build_growth_route_reuses_start_reaction_as_extend_step_with_slot(tmp_path):
     """A 2-component "start" reaction (no hand-authored extend counterpart
     needed) reused for step 2, with an explicit slot binding the
     intermediate -- the generalized extend path."""
-    bor = tmp_path / "boronic1.smi"
-    bor.write_text("OB(O)c1ccccc1 phB\n")
-    halide2 = tmp_path / "halide2.smi"
-    halide2.write_text("Brc1ccncc1 pyBr\n")
+    bor1 = tmp_path / "boronic1.smi"
+    bor1.write_text("OB(O)c1ccccc1 phB\n")
+    bor2 = tmp_path / "boronic2.smi"
+    bor2.write_text("OB(O)c1ccncc1 pyB\n")
     files, route, summary = build_growth_route(
-        ["suzuki", {"reaction_id": "suzuki", "slot": 1}], "Brc1ccc(Br)cc1", 0,
-        [{1: str(bor)}, {0: str(halide2)}], tmp_path)
-    assert len(files) == 3 and files[0].endswith("fragment.smi")
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}], "Brc1ccc(Br)cc1", 1,
+        [{0: str(bor1)}, {0: str(bor2)}], tmp_path)
+    assert len(files) == 3 and files[1].endswith("fragment.smi")
     assert [n for _smarts, n, _slot in route] == [2, 1]
-    assert route[1][2] == 1  # intermediate bound to slot 1 (the boronic acid slot)
+    assert route[1][2] == 1  # intermediate bound to slot 1 (the aryl-halide slot)
     assert len(summary) == 2
 
 
@@ -93,11 +87,11 @@ def test_route_sampler_grows_from_fragment(tmp_path):
     bor = tmp_path / "boronic.smi"
     bor.write_text("OB(O)c1ccccc1 phB\n")
     files, route, _summary = build_growth_route(
-        ["suzuki"], "Brc1ccccc1", 0, [{1: str(bor)}], tmp_path)
+        ["suzuki"], "Brc1ccccc1", 1, [{0: str(bor)}], tmp_path)
     s = RouteSampler(mode="minimize")
     s.read_reagents(reagent_file_list=files, num_to_select=None)
     s.set_route(route)
-    # component 0 has exactly the one fixed fragment; component 1 the boronic
+    # component 0 has the boronic library; component 1 has the fixed fragment
     assert len(s.reagent_lists[0]) == 1 and len(s.reagent_lists[1]) == 1
     mol, smi, name, sel = s._build_product([0, 0])
     assert mol is not None
@@ -112,8 +106,8 @@ def test_route_sampler_grows_from_fragment_across_two_steps(tmp_path):
     bor2 = tmp_path / "boronic2.smi"
     bor2.write_text("OB(O)c1ccncc1 pyB\n")
     files, route, _summary = build_growth_route(
-        ["suzuki", "suzuki_ext_halide"], "Brc1ccc(Br)cc1", 0,
-        [{1: str(bor1)}, {0: str(bor2)}], tmp_path)
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}], "Brc1ccc(Br)cc1", 1,
+        [{0: str(bor1)}, {0: str(bor2)}], tmp_path)
     s = RouteSampler(mode="minimize")
     s.read_reagents(reagent_file_list=files, num_to_select=None)
     s.set_route(route)
@@ -131,7 +125,7 @@ def test_route_sampler_rws_warmup_and_search(tmp_path):
     bor = tmp_path / "boronic.smi"
     bor.write_text("\n".join(f"OB(O)c1ccc({'C' * i})cc1 phB{i}" for i in range(1, 7)) + "\n")
     files, route, _summary = build_growth_route(
-        ["suzuki"], "Brc1ccccc1", 0, [{1: str(bor)}], tmp_path)
+        ["suzuki"], "Brc1ccccc1", 1, [{0: str(bor)}], tmp_path)
     s = RouteSampler(mode="maximize")
     s.set_hide_progress(True)
     s.read_reagents(reagent_file_list=files, num_to_select=None)

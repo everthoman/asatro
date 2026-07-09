@@ -382,26 +382,17 @@ function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
 
-// Every "extend" reaction is offered at every step, regardless of what came
-// before: bifunctional building blocks are the norm (a Suzuki reagent can
-// carry a free amine elsewhere on the scaffold for a later amide step), so an
-// intermediate having the right handle for a given extend reaction isn't tied
-// to which reaction produced it. The reaction SMARTS itself is the real gate
-// -- a step that doesn't chemically apply to a given intermediate just fails
-// to fire for that product (handled already, same as any other reagent
-// mismatch), not something the UI should pre-filter. Shared by both the
-// growth route builder (step 1 is picked from the accessible reactions) and
-// the combi route builder (step 1 is user-chosen).
-function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === 'extend'); }
-
-// Beyond the 19 hand-tuned "extend" rows above, ANY reaction can bind the
-// running intermediate at one of its own slots -- the same (reaction, slot)
-// idea step 1's picker already uses for the bound fragment, generalized to
-// every later step too. Both groups stay independently selectable: the
-// hand-tuned rows use loosened SMARTS patterns proven to match a "used"
-// intermediate atom more reliably, the generalized ones just reuse a
-// reaction's own un-modified SMARTS with the intermediate placed at the
-// chosen slot.
+// Any reaction can bind the running intermediate at one of its own slots --
+// the same (reaction, slot) idea step 1's picker already uses for the bound
+// fragment, generalized to every later step too: bifunctional building
+// blocks are the norm, so an intermediate having the right handle for a
+// given reaction isn't tied to which reaction produced it. The reaction
+// SMARTS itself is the real gate -- a step that doesn't chemically apply to
+// a given intermediate just fails to fire for that product (handled
+// already, same as any other reagent mismatch), not something the UI should
+// pre-filter. Shared by both the growth route builder (step 1 is picked
+// from the accessible reactions) and the combi route builder (step 1 is
+// user-chosen).
 //
 // Displayed slot numbers are route position, not the reaction's own raw
 // component index: the fragment/intermediate is always slot 1, and every
@@ -410,14 +401,10 @@ function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === '
 // fully determined by which step this is -- identical for every option in
 // this dropdown, regardless of which reaction/component gets picked.
 function extendStepOptionsHtml(slotNumber){
-  const legacy = allExtendReactions()
-    .map(r => `<option value="${r.id}|0">${esc(r.name)} — slot ${slotNumber}</option>`).join('');
-  const reused = CATALOG.reactions.filter(r => r.role === 'start').flatMap(r =>
+  return CATALOG.reactions.flatMap(r =>
     r.components.map((c, ci) =>
       `<option value="${r.id}|${ci}">${esc(r.name)} (${esc(c.label)}) — slot ${slotNumber}</option>`)
   ).join('');
-  return `<optgroup label="Extend reactions">${legacy}</optgroup>`
-       + `<optgroup label="Any reaction (choose the intermediate's slot)">${reused}</optgroup>`;
 }
 function parseExtendChoice(value){
   const [reactionId, slot] = value.split('|');

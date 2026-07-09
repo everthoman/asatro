@@ -17,23 +17,25 @@ def _compat(smiles):
 
 def test_detect_classes():
     assert detect_fg_classes("OC(=O)c1ccncc1") == ["carboxylic_acid"]
-    assert set(detect_fg_classes("OC(=O)c1ccccc1N")) == {"carboxylic_acid", "primary_amine"}
+    # ortho-aminobenzoic acid also matches the more specific anthranilic_acid class
+    assert set(detect_fg_classes("OC(=O)c1ccccc1N")) == {
+        "carboxylic_acid", "primary_amine", "anthranilic_acid"}
     assert detect_fg_classes("c1ccccc1") == []  # no handle
 
 
-def test_acid_fragment_compatible_with_amide_slot1():
-    info = analyze_fragment("OC(=O)c1ccncc1")["reactions"]["amide"]
+def test_acid_fragment_compatible_with_schotten_baumann_amide_slot0():
+    info = analyze_fragment("OC(=O)c1ccncc1")["reactions"]["schotten_baumann_amide"]
     assert info["compatible"]
     slots = {s["index"]: s for s in info["slots"]}
-    assert 1 in slots and slots[1]["fg_class"] == "carboxylic_acid"
-    assert slots[1]["core_smarts"] == "O=Cc1ccncc1"  # hydroxyl drops, carbonyl kept
+    assert 0 in slots and slots[0]["fg_class"] == "carboxylic_acid"
+    assert slots[0]["core_smarts"] == "O=Cc1ccncc1"  # hydroxyl drops, carbonyl kept
 
 
 def test_aryl_halide_fragment_suzuki_keeps_ring():
     # NH-aromatic ring system: the whole ring system is conserved, halide leaves.
     s = analyze_fragment("Brc1ccc2[nH]ccc2c1")
     assert s["reactions"]["suzuki"]["compatible"]
-    assert s["reactions"]["amide"]["compatible"] is False
+    assert s["reactions"]["schotten_baumann_amide"]["compatible"] is False
     core = derive_core("Brc1ccc2[nH]ccc2c1", "aryl_halide")
     assert core == "c1ccc2[nH]ccc2c1"
 
@@ -61,11 +63,12 @@ def test_no_handle_no_reactions():
 def test_protonated_and_charged_handles_detected():
     # Bound poses from prep are charged at physiological pH; detection must
     # neutralize first (protonated amine NH3+, deprotonated acid COO-).
-    assert detect_fg_classes("[NH3+]CCc1ccccc1") == ["primary_amine"]
+    # also matches the more specific phenethylamine class (Pictet-Spengler)
+    assert set(detect_fg_classes("[NH3+]CCc1ccccc1")) == {"primary_amine", "phenethylamine"}
     assert detect_fg_classes("[O-]C(=O)c1ccncc1") == ["carboxylic_acid"]
     a = analyze_fragment("[NH3+]CCc1ccccc1")
     assert a["fragment_smiles"] == Chem.CanonSmiles("NCCc1ccccc1")   # neutral
-    assert a["reactions"]["amide"]["compatible"]
+    assert a["reactions"]["schotten_baumann_amide"]["compatible"]
     # acid carboxylate still derives the carbonyl-kept core
     assert derive_core("[O-]C(=O)c1ccncc1", "carboxylic_acid") == "O=Cc1ccncc1"
 
