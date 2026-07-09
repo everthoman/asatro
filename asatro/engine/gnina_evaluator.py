@@ -9,6 +9,19 @@ with ``ligprepper``.
 
 Design notes
 ------------
+* Every product is first stripped of N-carbamate (Fmoc/Boc/Cbz) and ester/
+  boronate (tBu, Bn, Bpin) protecting groups via ``deprotect_smiles`` --
+  commercial building blocks commonly carry one of these on a *different*
+  handle than the one actually reacted (e.g. a Boc-protected amino acid used
+  for its free acid), and docking/reporting the still-protected form scores
+  a synthetic intermediate, not the deliverable compound. This happens right
+  after the raw product SMILES is computed, before the score cache lookup, so
+  every cache (score/reason/name/pose) is keyed by the free form throughout.
+  Deprotecting only once here (rather than after each step of a multi-step
+  route) is equivalent: every reactive-handle class already excludes its own
+  protected form, so a route step is never scheduled to react at a position
+  that's still protected -- the PG is a structural bystander from the first
+  step to the last, and stripping it commutes with every bond-forming step.
 * Every enumerated product is first run through :class:`MolFilters` (PAINS,
   REOS, MW range, logP range). A molecule that fails any enabled filter is
   *rejected before docking* by returning ``np.nan``. The Thompson Sampling
@@ -43,6 +56,59 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, Crippen, Descriptors
 
 from asatro.engine.evaluators import Evaluator
+
+# ---------------------------------------------------------------------------
+# N-protecting group removal — applied to every product before docking so
+# that Boc/Fmoc/Cbz building blocks are scored as their free-amine products.
+# ---------------------------------------------------------------------------
+_DEPROTECT_RXNS: List = []
+
+
+def _init_deprotect() -> None:
+    global _DEPROTECT_RXNS
+    _DEPROTECT_RXNS = [
+        # N-carbamate PGs
+        AllChem.ReactionFromSmarts("[N:1][C](=O)OCC1c2ccccc2-c2ccccc21>>[N:1]"),  # Fmoc
+        AllChem.ReactionFromSmarts("[N:1][C](=O)OC(C)(C)C>>[N:1]"),               # Boc
+        AllChem.ReactionFromSmarts("[N:1][C](=O)OCc1ccccc1>>[N:1]"),              # Cbz
+        # Acid PGs — [#6] neighbour on carbonyl excludes carbamates (N-C(=O)-O-)
+        AllChem.ReactionFromSmarts("[#6:2][C:1](=O)OC(C)(C)C>>[#6:2][C:1](=O)O"),  # tBu ester
+        AllChem.ReactionFromSmarts("[#6:2][C:1](=O)OCc1ccccc1>>[#6:2][C:1](=O)O"), # Bn ester
+        # Boronic esters
+        AllChem.ReactionFromSmarts("[#6:1][B]1OC(C)(C)C(C)(C)O1>>[#6:1][B](O)O"), # Bpin
+    ]
+
+
+_init_deprotect()
+
+
+def deprotect_smiles(smiles: str) -> str:
+    """Strip Fmoc/Boc/Cbz carbamate protecting groups (plus tBu/Bn ester and
+    Bpin boronate protection) from a SMILES string.
+
+    Iterates until no more groups can be removed (handles multiply-protected
+    intermediates). Returns the original SMILES unchanged on any parse error.
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return smiles
+    changed = True
+    while changed:
+        changed = False
+        for rxn in _DEPROTECT_RXNS:
+            products = rxn.RunReactants((mol,))
+            if not products:
+                continue
+            try:
+                p = products[0][0]
+                Chem.SanitizeMol(p)
+                mol = p
+                changed = True
+                break
+            except Exception:
+                continue
+    return Chem.MolToSmiles(mol)
+
 
 # ---------------------------------------------------------------------------
 # Configuration / external tools
@@ -400,25 +466,32 @@ class GninaEvaluator(Evaluator):
         except Exception:
             return np.nan, "fail"
 
+        # Deprotect early so every cache (score, reason, name, pose) is keyed
+        # by the free form. This makes top_scored() and write_top_poses() return
+        # deprotected SMILES directly, and avoids double-docking the same
+        # molecule once protected and once free.
+        dock_smiles = deprotect_smiles(smiles)
+        dock_mol = Chem.MolFromSmiles(dock_smiles) if dock_smiles != smiles else mol
+
         # The sampler stamps the reagent-combo name onto the mol; capture it so
         # the live gallery can label products before results.csv is written.
         if mol.HasProp("_Name"):
             with self._lock:
-                self._name_cache.setdefault(smiles, mol.GetProp("_Name"))
+                self._name_cache.setdefault(dock_smiles, mol.GetProp("_Name"))
 
         with self._lock:
-            if smiles in self._score_cache:
-                return self._score_cache[smiles], self._reason_cache.get(smiles)
+            if dock_smiles in self._score_cache:
+                return self._score_cache[dock_smiles], self._reason_cache.get(dock_smiles)
 
         # Hard filters before docking.
         if self.filters is not None and self.filters.active:
-            reason = self.filters.reject_reason(mol)
+            reason = self.filters.reject_reason(dock_mol or mol)
             if reason is not None:
                 key = reason.split(":")[0].split(" ")[0]
                 with self._lock:
                     self.rejections[key] = self.rejections.get(key, 0) + 1
-                    self._score_cache[smiles] = np.nan
-                    self._reason_cache[smiles] = "filtered"
+                    self._score_cache[dock_smiles] = np.nan
+                    self._reason_cache[dock_smiles] = "filtered"
                     total_rej = sum(self.rejections.values())
                     snapshot = dict(self.rejections)
                 if self.progress_callback is not None and total_rej % 100 == 0:
@@ -429,11 +502,11 @@ class GninaEvaluator(Evaluator):
 
         # Docking (the slow part) runs without the lock held so parallel docks
         # actually overlap; only the bookkeeping around it is serialised.
-        score = self._dock(smiles)
+        score = self._dock(dock_smiles)
         result_reason = None if np.isfinite(score) else "fail"
         with self._lock:
-            self._score_cache[smiles] = score
-            self._reason_cache[smiles] = result_reason
+            self._score_cache[dock_smiles] = score
+            self._reason_cache[dock_smiles] = result_reason
         self._emit_progress(score)
         return score, result_reason
 
