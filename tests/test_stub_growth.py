@@ -4,6 +4,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from asatro.chemistry.accessibility import assess_fragment, growth_vectors
+from asatro.chemistry.handles import neutralize
 from asatro.chemistry.stub_growth import (
     StubParams, assess_with_stubs, build_grown, refine_vector,
 )
@@ -67,6 +68,32 @@ def test_assess_with_stubs_blocked_vs_open():
     assert "suzuki" in openp["accessible_reactions"]
     stub = openp["reactions"]["suzuki"]["slots"][0]["stub"]
     assert stub["accessible"] and stub["vectors"][0]["largest_fit"] is not None
+
+
+def test_build_grown_handles_neutralized_charged_amine():
+    # Bound poses come in protonated ([NH3+]); neutralize() restores the
+    # neutral amine but *locks* the N's H count (RDKit Uncharger sets
+    # noImplicit=True) instead of leaving it on the auto-adjusting implicit-
+    # valence path. Growing a stub onto that N (amines have no leaving group
+    # to make room) used to overflow its valence and silently fail to
+    # sanitize -- build_grown must free a slot itself instead.
+    mol = neutralize(_embed("[NH3+]Cc1ccccc1"))
+    n = mol.GetAtomWithIdx(0)
+    assert n.GetSymbol() == "N" and n.GetNoImplicit()  # locked, as expected
+
+    ev = growth_vectors(mol, "primary_amine")[0]
+    built = build_grown(mol, ev.attach_idx, ev.leaving, "C")
+    assert built is not None
+    grown, _core_pairs, stub_idxs = built
+    assert len(stub_idxs) == 1
+
+
+def test_refine_vector_fits_a_neutralized_charged_amine_in_an_open_pocket():
+    mol = neutralize(_embed("[NH3+]Cc1ccccc1"))
+    ev = growth_vectors(mol, "primary_amine")[0]
+    res = refine_vector(mol, ev, np.empty((0, 3)))
+    assert res["accessible"]
+    assert res["fits"]
 
 
 def test_geometric_prune_skips_stub_work():

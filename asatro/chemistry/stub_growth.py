@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from rdkit.Chem import AllChem
 
 from asatro.chemistry.accessibility import ExitVector, growth_vectors
@@ -78,9 +78,28 @@ def build_grown(fragment: Chem.Mol, attach_idx: int, leaving: tuple, stub_smiles
 
     mol = combo.GetMol()
     try:
-        Chem.SanitizeMol(mol)
+        with rdBase.BlockLogs():
+            Chem.SanitizeMol(mol)
     except Exception:
-        return None
+        # A handle neutralized from a charged bound pose (e.g. a protonated
+        # amine's N) carries a *locked* explicit H count -- neutralize()'s
+        # Uncharger sets noImplicit=True, so RDKit won't auto-free a valence
+        # slot for the new bond the way it does for an ordinary implicit-H
+        # atom. The new substituent displaces exactly one H, same as any
+        # other handle, so free one explicitly and retry.
+        attach_atoms = [a for a in mol.GetAtoms()
+                        if a.HasProp("_o") and a.GetIntProp("_o") == attach_idx]
+        if not attach_atoms:
+            return None
+        attach_atom = attach_atoms[0]
+        if not (attach_atom.GetNoImplicit() and attach_atom.GetNumExplicitHs() > 0):
+            return None
+        attach_atom.SetNumExplicitHs(attach_atom.GetNumExplicitHs() - 1)
+        try:
+            with rdBase.BlockLogs():
+                Chem.SanitizeMol(mol)
+        except Exception:
+            return None
     core_pairs = [(a.GetIdx(), a.GetIntProp("_o")) for a in mol.GetAtoms() if a.HasProp("_o")]
     stub_idxs = [a.GetIdx() for a in mol.GetAtoms() if a.HasProp("_stub")]
     return mol, core_pairs, stub_idxs
