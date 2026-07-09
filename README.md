@@ -46,11 +46,29 @@ syntheses: Pictet-Spengler, benzimidazole/-oxazole/-thiazole, quinazoline,
 pyrazole, Paal-Knorr pyrrole, Fischer indole, Friedländer quinoline,
 benzofuran/-thiophene, indole and more), 53 functional-group classes
 (`asatro/data/reactions.json`, `asatro/data/functional_groups.json`,
-`asatro/chemistry/catalog.py`). Every reaction is a single catalog row — any
-reaction can serve as step 1 *or* extend a running intermediate at one of its
-own slots (`resolve_step`), so there's no separate hand-authored start/extend
-duplication. Browse the full set — id, components, accepted reagent classes,
-full SMARTS — at `GET /reactions`, linked from the app header.
+`asatro/chemistry/catalog.py`), ported from the reference set checked in at
+[`Hartenfeller_reactions.txt`](Hartenfeller_reactions.txt):
+
+> Hartenfeller, M.; Eberle, M.; Meier, P.; Nieto-Oberhuber, C.; Altmann, K.-H.;
+> Schneider, G.; Jacoby, E.; Renner, S. *A Collection of Robust Organic
+> Synthesis Reactions for In Silico Molecule Design.* J. Chem. Inf. Model.
+> **2011**, 51 (12), 3093–3098.
+
+Every reaction is a single catalog row — any reaction can serve as step 1
+*or* extend a running intermediate at one of its own slots (`resolve_step`),
+so there's no separate hand-authored start/extend duplication. Browse the
+full set — id, components, accepted reagent classes, full SMARTS — at
+`GET /reactions`, linked from the app header.
+
+Ported verbatim except one confirmed bug in the reference file itself:
+`decarboxylative_coupling`'s `!OH1` is a SMARTS scoping mistake (`!` binds
+only to `O`, so it means "not-oxygen, 1 H" rather than the clearly-intended
+"not a hydroxyl"), which excluded every real substrate — including the
+reference's own example reagent — from matching at all. Fixed the negation
+scoping; nothing else touched. (Asatro's own prior 54-reaction, ts-gnina-
+derived catalog is retired — this session found and fixed 6 similar
+regiochemistry/atom-loss bugs in it before switching to the validated
+reference set wholesale instead of continuing to audit our own port.)
 
 Growth mode's placement guard (below) assumes a reacting handle's local
 geometry survives largely intact into the product (a leaving group departs,
