@@ -94,7 +94,8 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
     # now (buchwald, sonogashira, ullmann, ...) -- just check suzuki survived
     # the pre-pass, not that it's the only accessible reaction.
     assert "suzuki" in job.result["accessible_reactions"]
-    assert job.result["steps"] == [{"reaction_id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)"}]
+    assert job.result["steps"] == [
+        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki coupling (aryl halide + boronic acid)"}]
     run = job.result["runs"][0]
     assert run["n_docked"] == 2
     # ranked best-first (minimize: lowest score first)
@@ -332,7 +333,7 @@ def test_combi_job_persists_steps_and_components(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     assert job.result["steps"] == [
-        {"reaction_id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)"}]
+        {"reaction_id": "suzuki", "slot": None, "name": "Suzuki coupling (aryl halide + boronic acid)"}]
     top0 = job.result["runs"][0]["top"][0]
     assert top0["components"] == [
         {"smiles": "Brc1ccccc1", "name": "phBr"},
@@ -440,6 +441,57 @@ def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypa
         # out-of-range rank / component_index -> 400
         assert client.post(f"/jobs/{job_id}/seed", data={"rank": 99, "component_index": 0}).status_code == 400
         assert client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 99}).status_code == 400
+
+
+def test_seed_endpoint_carves_from_a_generalized_slot1_extend_step(tmp_path, monkeypatch):
+    """Step 2 reuses "amide" generically with slot=1 (intermediate binds the
+    acid pattern; a diacid step-1 reagent leaves a free -COOH for it to react
+    through -- see tests/test_combi.py's
+    test_route_sampler_binds_intermediate_to_a_non_first_slot for the same
+    chemistry proven directly against RDKit). Confirms job.result["steps"]
+    persists "slot" correctly and /jobs/{id}/seed resolves the *fresh*
+    (slot-0) reagent of that reused step -- the one place a fresh_indices
+    mismatch between build_combi_route and component_route_meta would
+    silently corrupt seed provenance."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from rdkit import Chem
+    product = Chem.CanonSmiles("CCNC(=O)c1ccc(C(=O)NCCC)cc1")
+    ev = _FakeEvaluator(
+        [(-7.5, product, "amine1_diacid_amine2")],
+        components={product: [
+            {"smiles": "CCN", "name": "amine1"},
+            {"smiles": "OC(=O)c1ccc(C(=O)O)cc1", "name": "diacid"},
+            {"smiles": "CCCN", "name": "amine2"},
+        ]},
+    )
+
+    def runner(**k):
+        return ([], ev)
+
+    job = start_combi_job(
+        receptor_path="", steps=["amide", {"reaction_id": "amide", "slot": 1}],
+        reagent_files=[["amine1.smi", "diacid.smi"], ["amine2.smi"]],
+        center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
+        cfg={"num_cycles": 1}, runner=runner)
+    _await(job)
+    assert job.status == "done"
+    assert job.result["steps"] == [
+        {"reaction_id": "amide", "slot": None, "name": "Amide coupling (amine + acid)"},
+        {"reaction_id": "amide", "slot": 1, "name": "Amide coupling (amine + acid)"},
+    ]
+
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    with TestClient(app) as client:
+        # component_index 2 = step 2's sole fresh component (slot 0, the
+        # amine) -- slot 1 (the acid) is excluded since it binds the
+        # intermediate, not a real reagent.
+        r = client.post(f"/jobs/{job.id}/seed", data={"rank": 1, "component_index": 2})
+        assert r.status_code == 200, r.text
+        carved = Chem.MolFromMolBlock(r.text)
+        assert carved is not None and carved.GetNumConformers() == 1
+        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("CCCN")
 
 
 def test_seed_endpoint_unknown_job(tmp_path, monkeypatch):

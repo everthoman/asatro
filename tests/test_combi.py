@@ -42,7 +42,7 @@ def test_build_combi_route_single_start_step(tmp_path):
     boronic = _write(tmp_path, "boronic.smi", ["OB(O)c1ccccc1 phB", "OB(O)c1ccncc1 pyB"])
     files, route, summary = build_combi_route(["suzuki"], [[halide, boronic]], tmp_path)
     assert files == [halide, boronic]
-    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2)]
+    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2, None)]
     assert len(summary) == 1 and "suzuki" not in summary[0]  # human name, not the id
     assert "Suzuki" in summary[0]
 
@@ -54,7 +54,23 @@ def test_build_combi_route_multi_step_start_then_extend(tmp_path):
     files, route, summary = build_combi_route(
         ["suzuki", "suzuki_ext_halide"], [[dihalide, boronic1], [boronic2]], tmp_path)
     assert files == [dihalide, boronic1, boronic2]
-    assert [n for _smarts, n in route] == [2, 1]
+    assert [n for _smarts, n, _slot in route] == [2, 1]
+    assert len(summary) == 2
+
+
+def test_build_combi_route_reuses_start_reaction_as_extend_step_with_slot(tmp_path):
+    """A 2-component "start" reaction (no hand-authored extend counterpart
+    needed) reused for step 2, with an explicit slot binding the
+    intermediate -- the generalized extend path."""
+    dihalide = _write(tmp_path, "dihalide.smi", ["Brc1ccc(Br)cc1 dibromo"])
+    boronic1 = _write(tmp_path, "boronic1.smi", ["OB(O)c1ccccc1 phB"])
+    halide2 = _write(tmp_path, "halide2.smi", ["Brc1ccncc1 pyBr"])
+    files, route, summary = build_combi_route(
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}],
+        [[dihalide, boronic1], [halide2]], tmp_path)
+    assert files == [dihalide, boronic1, halide2]
+    assert [n for _smarts, n, _slot in route] == [2, 1]
+    assert route[1][2] == 1  # intermediate bound to slot 1 (the boronic acid slot)
     assert len(summary) == 2
 
 
@@ -63,8 +79,11 @@ def test_build_combi_route_rejects_non_start_first_step(tmp_path):
         build_combi_route(["suzuki_ext_halide"], [["dummy.smi"]], tmp_path)
 
 
-def test_build_combi_route_rejects_non_extend_later_step(tmp_path):
-    with pytest.raises(ValueError, match="must be an 'extend'"):
+def test_build_combi_route_rejects_2component_later_step_with_no_slot(tmp_path):
+    """Any reaction can serve as an extend step now, not just the
+    hand-authored role="extend" rows -- but a 2-component reaction needs an
+    explicit slot naming which component binds the running intermediate."""
+    with pytest.raises(ValueError, match="give 'slot'"):
         build_combi_route(["suzuki", "suzuki"], [["a.smi", "b.smi"], ["c.smi", "d.smi"]], tmp_path)
 
 
@@ -100,6 +119,31 @@ def test_route_sampler_builds_product_across_two_steps(tmp_path):
     assert mol is not None
     assert smi == Chem.CanonSmiles("c1ccc(-c2ccc(-c3ccncc3)cc2)cc1")
     assert "Br" not in Chem.MolToSmiles(mol)  # both halide slots consumed
+
+
+def test_route_sampler_binds_intermediate_to_a_non_first_slot(tmp_path):
+    """Reuse "amide" generically for step 2 with slot=1 -- the intermediate
+    must bind the *acid* pattern (RunReactants position 1), not position 0 --
+    proving _build_product's positional insertion actually respects
+    intermediate_slot instead of always defaulting to position 0. A diacid
+    step-1 reagent leaves one free -COOH on the intermediate for step 2 to
+    react through, confirmed directly against RDKit beforehand: the same
+    intermediate mol fails to fire at position 0 (wrong pattern), only
+    position 1 (the acid slot) works."""
+    amine1 = _write(tmp_path, "amine1.smi", ["CCN ethylamine"])
+    diacid = _write(tmp_path, "diacid.smi", ["OC(=O)c1ccc(C(=O)O)cc1 terephthalic"])
+    amine2 = _write(tmp_path, "amine2.smi", ["CCCN propylamine"])
+    files, route, _summary = build_combi_route(
+        ["amide", {"reaction_id": "amide", "slot": 1}],
+        [[amine1, diacid], [amine2]], tmp_path)
+    assert route[1][2] == 1  # intermediate bound to the acid slot
+
+    s = RouteSampler(mode="minimize")
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route(route)
+    mol, smi, _name, _sel = s._build_product([0, 0, 0])
+    assert mol is not None
+    assert smi == Chem.CanonSmiles("CCNC(=O)c1ccc(C(=O)NCCC)cc1")
 
 
 def test_route_sampler_searches_with_all_slots_variable(tmp_path):

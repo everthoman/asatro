@@ -394,6 +394,29 @@ function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.classNa
 // the combi route builder (step 1 is user-chosen).
 function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === 'extend'); }
 
+// Beyond the 19 hand-tuned "extend" rows above, ANY reaction can bind the
+// running intermediate at one of its own slots -- the same (reaction, slot)
+// idea step 1's picker already uses for the bound fragment, generalized to
+// every later step too. Both groups stay independently selectable: the
+// hand-tuned rows use loosened SMARTS patterns proven to match a "used"
+// intermediate atom more reliably, the generalized ones just reuse a
+// reaction's own un-modified SMARTS with the intermediate placed at the
+// chosen slot.
+function extendStepOptionsHtml(){
+  const legacy = allExtendReactions()
+    .map(r => `<option value="${r.id}|0">${esc(r.name)}</option>`).join('');
+  const reused = CATALOG.reactions.filter(r => r.role === 'start').flatMap(r =>
+    r.components.map((c, ci) =>
+      `<option value="${r.id}|${ci}">${esc(r.name)} — slot ${ci} (${esc(c.label)})</option>`)
+  ).join('');
+  return `<optgroup label="Extend reactions">${legacy}</optgroup>`
+       + `<optgroup label="Any reaction (choose the intermediate's slot)">${reused}</optgroup>`;
+}
+function parseExtendChoice(value){
+  const [reactionId, slot] = value.split('|');
+  return { reactionId, slot: parseInt(slot, 10) };
+}
+
 // CNNaffinity/CNN_VS only mean anything once gnina actually runs the CNN model
 // (cnn_scoring != "none"); with plain Vina scoring those fields are never
 // populated, so disable them in the score-field picker and fall back to
@@ -500,7 +523,7 @@ function renderGrowthStep1Summary(){
 }
 
 function addGrowthStep(){
-  const opts = allExtendReactions().map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  const opts = extendStepOptionsHtml();
   const idx = growthExtendStepDivs.length + 1;   // step 1 is the picked start reaction/slot
   const div = document.createElement('div');
   div.className = 'step';
@@ -536,8 +559,10 @@ function neededClasses(){
     });
   }
   growthExtendStepDivs.forEach(d=>{
-    const rx = RXN[d.querySelector('.growthStepRxn').value]; if (!rx) return;
-    rx.components.forEach(c=>{
+    const { reactionId, slot } = parseExtendChoice(d.querySelector('.growthStepRxn').value);
+    const rx = RXN[reactionId]; if (!rx) return;
+    rx.components.forEach((c, ci)=>{
+      if (ci === slot) return;    // the intermediate's slot
       const cls = (c.accepts||[])[0]; if (!cls) return;
       need[cls] = { label: c.label, accepts: c.accepts };
     });
@@ -604,17 +629,23 @@ let combiStepDivs = [];
 
 function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
 function renderCombiStepFiles(div){
-  const rid = div.querySelector('.combiStepRxn').value;
-  const rx = RXN[rid]; if (!rx) return;
-  div.querySelector('.combiStepFiles').innerHTML = rx.components.map(c =>
-    `<label>${c.label} <span class="chip">${(c.accepts||[]).map(groupLabel).join(' / ')}</span></label>
+  const isFirst = combiStepDivs.indexOf(div) === 0;
+  const value = div.querySelector('.combiStepRxn').value;
+  const { reactionId, slot } = isFirst ? { reactionId: value, slot: null } : parseExtendChoice(value);
+  const rx = RXN[reactionId]; if (!rx) return;
+  div.querySelector('.combiStepFiles').innerHTML = rx.components
+    .map((c, ci) => ({ c, ci }))
+    .filter(({ ci }) => ci !== slot)
+    .map(({ c }) =>
+      `<label>${c.label} <span class="chip">${(c.accepts||[]).map(groupLabel).join(' / ')}</span></label>
      <input type="file" class="combiReactantFile" accept=".smi">`).join('');
 }
 function addCombiStep(){
   const isFirst = combiStepDivs.length === 0;
   const idx = combiStepDivs.length;
-  const opts = (isFirst ? combiStartReactions() : allExtendReactions())
-    .map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  const opts = isFirst
+    ? combiStartReactions().map(r=>`<option value="${r.id}">${r.name}</option>`).join('')
+    : extendStepOptionsHtml();
   const div = document.createElement('div');
   div.className = 'step';
   div.innerHTML = `<div class="head"><b>Step ${idx+1}${isFirst?' (start)':' (extend)'}</b></div>
@@ -663,7 +694,12 @@ el('combiRunBtn').addEventListener('click', async ()=>{
   fd.append('receptor', rec);
 
   const cfg = {
-    steps: combiStepDivs.map(d => d.querySelector('.combiStepRxn').value),
+    steps: combiStepDivs.map((d, i) => {
+      const value = d.querySelector('.combiStepRxn').value;
+      if (i === 0) return value;
+      const { reactionId, slot } = parseExtendChoice(value);
+      return { reaction_id: reactionId, slot };
+    }),
     search_method: el('combiSearchMethod').value,
     num_cycles: parseInt(el('combiNumCycles').value)||50,
     num_warmup: parseInt(el('combiNumWarmup').value)||3,
@@ -719,7 +755,10 @@ el('growBtn').addEventListener('click', async ()=>{
 
   const cfg = {
     refine: el('refine').checked,
-    steps: [growthStep1.reactionId, ...growthExtendStepDivs.map(d => d.querySelector('.growthStepRxn').value)],
+    steps: [growthStep1.reactionId, ...growthExtendStepDivs.map(d => {
+      const { reactionId, slot } = parseExtendChoice(d.querySelector('.growthStepRxn').value);
+      return { reaction_id: reactionId, slot };
+    })],
     fragment_slot: growthStep1.slotIndex,
     search_method: el('searchMethod').value,
     num_cycles: parseInt(el('numCycles').value)||50,

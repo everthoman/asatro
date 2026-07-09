@@ -17,21 +17,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.engine.gnina_evaluator import GninaEvaluator, MolFilters
 from asatro.engine.route_sampler import RouteSampler
 
 
-def build_combi_route(steps: List[str], reagent_files: List[List[str]], work_dir: Path
-                      ) -> Tuple[List[str], List[Tuple[str, int]], List[str]]:
+def build_combi_route(steps: List[StepSpec], reagent_files: List[List[str]], work_dir: Path
+                      ) -> Tuple[List[str], List[Tuple[str, int, Optional[int]]], List[str]]:
     """Flat reagent-file list (route order) + the multi-step route + a
     human-readable summary, mirroring ts-gnina's own ``_build_route``.
 
-    ``steps`` is a list of reaction ids: the first must be a ``"start"``
-    reaction, every later one an ``"extend"`` reaction (consumes the running
-    intermediate plus its own new reagent(s)). ``reagent_files[i]`` is the
-    ordered list of already-resolved ``.smi`` paths for step ``i``'s
-    components — one per entry in that reaction's ``components``.
+    ``steps`` is a list of reaction ids (or ``{"reaction_id", "slot"}`` dicts
+    for steps 1+ that reuse a multi-component reaction generically -- see
+    ``asatro.chemistry.catalog.resolve_step``): the first must be a
+    ``"start"`` reaction, every later one consumes the running intermediate
+    plus its own new reagent(s). ``reagent_files[i]`` is the ordered list of
+    already-resolved ``.smi`` paths for step ``i``'s *fresh* components (one
+    per entry in that reaction's ``components``, minus whichever slot binds
+    the intermediate).
     """
     if not steps:
         raise ValueError("no reaction steps given")
@@ -39,26 +42,21 @@ def build_combi_route(steps: List[str], reagent_files: List[List[str]], work_dir
         raise ValueError(
             f"reagent_files has {len(reagent_files)} step(s), steps has {len(steps)}")
     files: List[str] = []
-    route: List[Tuple[str, int]] = []
+    route: List[Tuple[str, int, Optional[int]]] = []
     summary: List[str] = []
-    for i, rid in enumerate(steps):
-        rxn = REACTION_BY_ID.get(rid)
-        if rxn is None:
-            raise KeyError(f"unknown reaction: {rid}")
-        role = rxn.get("role")
-        if i == 0 and role != "start":
-            raise ValueError(f"step 1 must be a 'start' reaction, got '{rid}' ({role})")
-        if i > 0 and role != "extend":
-            raise ValueError(f"step {i + 1} must be an 'extend' reaction, got '{rid}' ({role})")
+    for i, step in enumerate(steps):
+        info = resolve_step(step, i)
+        rid, rxn = info["reaction_id"], info["rxn"]
         comps = rxn["components"]
         step_files = reagent_files[i]
-        if len(step_files) != len(comps):
+        if len(step_files) != len(info["fresh_indices"]):
             raise ValueError(
-                f"'{rid}' needs {len(comps)} reagent file(s) for step {i + 1}, "
+                f"'{rid}' needs {len(info['fresh_indices'])} reagent file(s) for step {i + 1}, "
                 f"got {len(step_files)}")
         files.extend(step_files)
-        route.append((rxn["smarts"], len(comps)))
-        labels = [f"{c['label']} [{Path(f).name}]" for c, f in zip(comps, step_files)]
+        route.append((rxn["smarts"], len(info["fresh_indices"]), info["intermediate_slot"]))
+        labels = [f"{comps[ci]['label']} [{Path(f).name}]"
+                 for ci, f in zip(info["fresh_indices"], step_files)]
         summary.append(f"Step {i + 1}: {rxn['name']} [{', '.join(labels)}]")
     return files, route, summary
 
@@ -88,7 +86,7 @@ def make_evaluator(*, receptor_path: str, work_dir: str,
     return GninaEvaluator(d)
 
 
-def run_combi(*, receptor_path: str, steps: List[str], reagent_files: List[List[str]],
+def run_combi(*, receptor_path: str, steps: List[StepSpec], reagent_files: List[List[str]],
              work_dir: str, reference_path: Optional[str] = None,
              center: Optional[Tuple[float, float, float]] = None,
              size: Optional[Tuple[float, float, float]] = None,

@@ -22,7 +22,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from rdkit import Chem
 
-from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.handles import neutralize
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
@@ -43,44 +43,41 @@ def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:
     return str(p)
 
 
-def build_growth_route(steps: List[str], fragment_smiles: str, fragment_slot: int,
+def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slot: int,
                        reactant_files: List[Dict[int, str]], work_dir: Path
-                       ) -> Tuple[List[str], List[Tuple[str, int]], List[str]]:
+                       ) -> Tuple[List[str], List[Tuple[str, int, Optional[int]]], List[str]]:
     """Reagent-file list (route order) + the multi-step route + a human-readable
     summary, mirroring ``combi.build_combi_route`` — except step 0's fragment
     slot is filled by the bound fragment (a one-entry reagent file) instead of a
     real library, so it never varies.
 
-    ``steps`` is a list of reaction ids: the first must be a ``"start"``
-    reaction, every later one an ``"extend"`` reaction (consumes the running
-    intermediate plus its own new reagent(s)). ``reactant_files[i]`` maps
-    component index -> resolved ``.smi`` path for step ``i``'s non-fragment
-    components (step 0 excludes ``fragment_slot``; later steps have no fragment
-    slot to exclude)."""
+    ``steps`` is a list of reaction ids (or ``{"reaction_id", "slot"}`` dicts
+    for steps 1+ that reuse a multi-component reaction generically -- see
+    ``asatro.chemistry.catalog.resolve_step``): the first must be a
+    ``"start"`` reaction, every later one consumes the running intermediate
+    plus its own new reagent(s). ``reactant_files[i]`` maps component index ->
+    resolved ``.smi`` path for step ``i``'s non-fragment/non-intermediate
+    components (step 0 excludes ``fragment_slot``; later steps exclude
+    whichever slot binds the intermediate)."""
     if not steps:
         raise ValueError("no reaction steps given")
     if len(reactant_files) != len(steps):
         raise ValueError(
             f"reactant_files has {len(reactant_files)} step(s), steps has {len(steps)}")
     files: List[str] = []
-    route: List[Tuple[str, int]] = []
+    route: List[Tuple[str, int, Optional[int]]] = []
     summary: List[str] = []
-    for i, rid in enumerate(steps):
-        rxn = REACTION_BY_ID.get(rid)
-        if rxn is None:
-            raise KeyError(f"unknown reaction: {rid}")
-        role = rxn.get("role")
-        if i == 0 and role != "start":
-            raise ValueError(f"step 1 must be a 'start' reaction, got '{rid}' ({role})")
-        if i > 0 and role != "extend":
-            raise ValueError(f"step {i + 1} must be an 'extend' reaction, got '{rid}' ({role})")
+    for i, step in enumerate(steps):
+        info = resolve_step(step, i)
+        rid, rxn = info["reaction_id"], info["rxn"]
         comps = rxn["components"]
         if i == 0 and not 0 <= fragment_slot < len(comps):
             raise ValueError(f"fragment_slot {fragment_slot} out of range for '{rid}' "
                              f"({len(comps)} components)")
         step_files: List[str] = []
         labels: List[str] = []
-        for ci, comp in enumerate(comps):
+        for ci in info["fresh_indices"]:
+            comp = comps[ci]
             if i == 0 and ci == fragment_slot:
                 f = write_fragment_smi(fragment_smiles, work_dir)
                 labels.append(f"{comp['label']} = bound fragment")
@@ -92,7 +89,7 @@ def build_growth_route(steps: List[str], fragment_smiles: str, fragment_slot: in
                 labels.append(f"{comp['label']} [{Path(f).name}]")
             step_files.append(f)
         files.extend(step_files)
-        route.append((rxn["smarts"], len(comps)))
+        route.append((rxn["smarts"], len(info["fresh_indices"]), info["intermediate_slot"]))
         summary.append(f"Step {i + 1}: {rxn['name']} [{', '.join(labels)}]")
     return files, route, summary
 
@@ -113,7 +110,7 @@ def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Option
     return AnchoredFragmentEvaluator(d)
 
 
-def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[str],
+def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                fragment_slot: int, core_smarts: Optional[str],
                reactant_files: List[Dict[int, str]], work_dir: str,
                num_warmup: int = 3, num_cycles: int = 25,

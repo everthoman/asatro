@@ -20,23 +20,28 @@ from typing import Dict, List
 
 from rdkit import Chem
 
-from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.handles import carve_substructure_3d, derive_core, detect_fg_classes
 
 
-def component_route_meta(steps: List[str]) -> List[Dict]:
+def component_route_meta(steps: List[StepSpec]) -> List[Dict]:
     """Flatten a route's reaction ids into one ``{reaction_id, label, accepts}``
-    per component, in the same order ``build_combi_route``/``build_growth_route``
-    already flatten reagent files -- i.e. matching the index into a scored
-    product's ``components`` list (see ``asatro.engine.gnina_evaluator.GninaEvaluator.components_scored``).
+    per *fresh* component, in the same order ``build_combi_route``/
+    ``build_growth_route`` already flatten reagent files -- i.e. matching the
+    index into a scored product's ``components`` list (see
+    ``asatro.engine.gnina_evaluator.GninaEvaluator.components_scored``). Steps
+    1+ that reuse a multi-component reaction generically (see
+    ``asatro.chemistry.catalog.resolve_step``) must carry the same ``slot``
+    they were built with, or this will misalign with what was actually
+    scored.
     """
     meta: List[Dict] = []
-    for rid in steps:
-        rxn = REACTION_BY_ID.get(rid)
-        if rxn is None:
-            raise KeyError(f"unknown reaction: {rid}")
-        for comp in rxn["components"]:
-            meta.append({"reaction_id": rid, "label": comp["label"],
+    for i, step in enumerate(steps):
+        info = resolve_step(step, i)
+        rxn = info["rxn"]
+        for ci in info["fresh_indices"]:
+            comp = rxn["components"][ci]
+            meta.append({"reaction_id": info["reaction_id"], "label": comp["label"],
                         "accepts": comp.get("accepts", [])})
     return meta
 

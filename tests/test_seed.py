@@ -39,6 +39,23 @@ def test_component_route_meta_unknown_reaction():
         component_route_meta(["not_a_reaction"])
 
 
+def test_component_route_meta_generalized_slot_skips_intermediate_component():
+    # suzuki reused for step 2 with slot=1 -- the boronic-acid slot binds the
+    # intermediate, so only the aryl-halide component (slot 0) should appear
+    # for that step; must stay in lockstep with what build_combi_route
+    # flattens for the identical steps.
+    from asatro.combi import build_combi_route
+
+    steps = ["suzuki", {"reaction_id": "suzuki", "slot": 1}]
+    meta = component_route_meta(steps)
+    assert [m["reaction_id"] for m in meta] == ["suzuki", "suzuki", "suzuki"]
+    assert [m["label"] for m in meta] == ["Aryl halide", "Boronic acid", "Aryl halide"]
+
+    _files, route, _summary = build_combi_route(
+        steps, [["halide1.smi", "boronic1.smi"], ["halide2.smi"]], "/tmp")
+    assert len(meta) == sum(n for _s, n, _slot in route)
+
+
 def test_carve_fragment_recovers_the_amine_with_its_docked_coordinates():
     pose = _docked("CC(=O)NCc1ccncc1")  # amide product
     meta = component_route_meta(["amide"])

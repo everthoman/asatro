@@ -27,7 +27,7 @@ from typing import Callable, Dict, List, Optional
 from rdkit import Chem
 
 from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
-from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
 from asatro.engine.gnina_evaluator import MolFilters
@@ -172,17 +172,35 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
     return {"runs": [entry]}
 
 
+def _persist_steps(steps: List) -> List[dict]:
+    """``job.result["steps"]``: the raw ``slot`` each step was given (not the
+    resolver's computed ``intermediate_slot``), so a later, independent call
+    to ``component_route_meta`` (e.g. from ``/jobs/{id}/seed``, possibly after
+    a restart) can re-derive everything itself from this one persisted source
+    of truth instead of a pre-resolved snapshot."""
+    out = []
+    for i, step in enumerate(steps):
+        info = resolve_step(step, i)
+        slot = None if i == 0 else (step.get("slot") if isinstance(step, dict) else None)
+        out.append({"reaction_id": info["reaction_id"], "slot": slot,
+                    "name": REACTION_BY_ID[info["reaction_id"]]["name"]})
+    return out
+
+
 def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
          reactant_by_class: Dict[str, str], pool_path: Optional[str],
-         steps: List[str], fragment_slot: int, cfg: dict, runner: Callable) -> None:
+         steps: List, fragment_slot: int, cfg: dict, runner: Callable) -> None:
     """Fragment-anchored growth: validate the user-chosen (steps[0], fragment_slot)
-    against the accessibility pre-pass, resolve every step's reagent components
-    (steps[1:] are extend reactions -- no fragment slot to skip), then run the
+    against the accessibility pre-pass, resolve every step's fresh reagent
+    components (step 0 skips ``fragment_slot``, steps 1+ skip whichever slot
+    binds the running intermediate -- see ``resolve_step``), then run the
     whole route as a single TS/RWS search -- contrast with ``_run_combi``'s
     unanchored, pre-pass-free route."""
     job.status = "running"
     _persist_meta(job)
-    job.log(f"Growth job {job.id} started — route {' -> '.join(steps)} "
+    step0_id = resolve_step(steps[0], 0)["reaction_id"]
+    step_ids = [step0_id] + [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps[1:], 1)]
+    job.log(f"Growth job {job.id} started — route {' -> '.join(step_ids)} "
             f"(fragment in slot {fragment_slot} of step 1)")
     try:
         mol = Chem.MolFromMolFile(fragment_path, removeHs=True)
@@ -199,15 +217,15 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         job.log(f"Handles {assessment['fg_classes']}; accessible reactions "
                 f"{assessment['accessible_reactions']}")
 
-        info = assessment["reactions"].get(steps[0])
+        info = assessment["reactions"].get(step0_id)
         if not info or not info.get("compatible"):
-            raise ValueError(f"'{steps[0]}' is not a compatible start reaction for this fragment")
+            raise ValueError(f"'{step0_id}' is not a compatible start reaction for this fragment")
         slot = next((s for s in info["slots"] if s["index"] == fragment_slot), None)
         if slot is None:
-            raise ValueError(f"fragment_slot {fragment_slot} is not a valid slot for '{steps[0]}'")
+            raise ValueError(f"fragment_slot {fragment_slot} is not a valid slot for '{step0_id}'")
         if not slot.get("accessible", True):
             raise ValueError(
-                f"slot {fragment_slot} of '{steps[0]}' was pruned by the accessibility pre-pass")
+                f"slot {fragment_slot} of '{step0_id}' was pruned by the accessibility pre-pass")
         core_smarts = slot["core_smarts"]
 
         if pool_path:
@@ -219,19 +237,19 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         else:
             resolver = make_class_resolver(reactant_by_class)
 
-        # Resolve every step's non-fragment components against the same
-        # source (pool or class-tagged files) -- "prune combined reagents for
-        # both steps" is just calling the reaction/component-agnostic
-        # resolver once per component, across the whole route.
+        # Resolve every step's fresh components against the same source (pool
+        # or class-tagged files) -- "prune combined reagents for both steps"
+        # is just calling the reaction/component-agnostic resolver once per
+        # fresh component, across the whole route.
         reactant_files: List[Dict[int, str]] = []
-        for i, rid in enumerate(steps):
-            rxn = REACTION_BY_ID.get(rid)
-            if rxn is None:
-                raise ValueError(f"unknown reaction: {rid}")
+        for i, step in enumerate(steps):
+            step_info = resolve_step(step, i)
+            rid, rxn = step_info["reaction_id"], step_info["rxn"]
             step_map: Dict[int, str] = {}
-            for ci, comp in enumerate(rxn["components"]):
+            for ci in step_info["fresh_indices"]:
                 if i == 0 and ci == fragment_slot:
                     continue
+                comp = rxn["components"][ci]
                 path = resolver(rid, ci, comp.get("accepts", []))
                 if not path:
                     raise ValueError(
@@ -251,7 +269,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
 
         def _on_evaluator(ev):
             job.evaluator = ev
-            job.current_target = " -> ".join(steps)
+            job.current_target = " -> ".join(step_ids)
 
         rows, evaluator = runner(
             fragment_sdf=fragment_path, receptor_path=receptor_path,
@@ -274,8 +292,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
         job.result["fg_classes"] = assessment["fg_classes"]
         job.result["accessible_reactions"] = assessment["accessible_reactions"]
-        job.result["steps"] = [{"reaction_id": rid, "name": REACTION_BY_ID[rid]["name"]}
-                               for rid in steps]
+        job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
         job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
@@ -290,7 +307,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         _persist_meta(job)
 
 
-def _run_combi(job: GrowthJob, receptor_path: str, steps: List[str],
+def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
               reagent_files: List[List[str]], reference_path: Optional[str],
               center: Optional[tuple], size: Optional[tuple],
               cfg: dict, runner: Callable) -> None:
@@ -299,11 +316,12 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List[str],
     contrast with ``_run``'s multiple growth targets."""
     job.status = "running"
     _persist_meta(job)
-    job.log(f"Combi job {job.id} started — route {' -> '.join(steps)}")
+    step_ids = [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps)]
+    job.log(f"Combi job {job.id} started — route {' -> '.join(step_ids)}")
     try:
         def _on_evaluator(ev):
             job.evaluator = ev
-            job.current_target = " -> ".join(steps)
+            job.current_target = " -> ".join(step_ids)
 
         mol_filters = make_filters(cfg)
         if mol_filters.active:
@@ -333,8 +351,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List[str],
             on_evaluator=_on_evaluator,
         )
         job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
-        job.result["steps"] = [{"reaction_id": rid, "name": REACTION_BY_ID[rid]["name"]}
-                               for rid in steps]
+        job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
         job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
@@ -356,7 +373,7 @@ def _persist_meta(job: GrowthJob) -> None:
         pass
 
 
-def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List[str],
+def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
                      fragment_slot: int, reactant_by_class: Optional[Dict[str, str]] = None,
                      pool_path: Optional[str] = None, cfg: Optional[dict] = None,
                      session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
@@ -385,7 +402,7 @@ def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List[str]
     return job
 
 
-def start_combi_job(*, receptor_path: str, steps: List[str], reagent_files: List[List[str]],
+def start_combi_job(*, receptor_path: str, steps: List, reagent_files: List[List[str]],
                     reference_path: Optional[str] = None, center: Optional[tuple] = None,
                     size: Optional[tuple] = None, cfg: Optional[dict] = None,
                     session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:

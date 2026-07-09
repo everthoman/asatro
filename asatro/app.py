@@ -23,7 +23,7 @@ from rdkit import Chem
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
-from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB
+from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, jobs_dir, list_jobs, start_combi_job, start_growth_job
 from asatro.seed import carve_fragment, component_route_meta
@@ -159,9 +159,13 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     if cfg.get("fragment_slot") is None:
         raise HTTPException(400, "config.fragment_slot: which component of step 1 the fragment fills")
     fragment_slot = int(cfg["fragment_slot"])
-    for rid in steps:
-        if REACTION_BY_ID.get(rid) is None:
-            raise HTTPException(400, f"unknown reaction: {rid}")
+    for i, s in enumerate(steps):
+        try:
+            resolve_step(s, i)
+        except KeyError as e:
+            raise HTTPException(400, str(e.args[0]) if e.args else str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     stage = jobs_dir() / "_uploads" / f"{int(time.time()*1000)}"
     stage.mkdir(parents=True, exist_ok=True)
@@ -223,11 +227,14 @@ async def combi(receptor: UploadFile = File(...),
     if not steps:
         raise HTTPException(400, "config.steps: at least one reaction id required")
     counts = []
-    for rid in steps:
-        rxn = REACTION_BY_ID.get(rid)
-        if rxn is None:
-            raise HTTPException(400, f"unknown reaction: {rid}")
-        counts.append(len(rxn["components"]))
+    for i, s in enumerate(steps):
+        try:
+            info = resolve_step(s, i)
+        except KeyError as e:
+            raise HTTPException(400, str(e.args[0]) if e.args else str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        counts.append(len(info["fresh_indices"]))
     if len(reactants) != sum(counts):
         raise HTTPException(
             400, f"steps {steps} need {sum(counts)} reagent file(s) (route order), "
@@ -365,7 +372,7 @@ async def seed_fragment(job_id: str, rank: int = Form(...),
     if not steps:
         raise HTTPException(400, "job has no route info to seed from")
     try:
-        meta = component_route_meta([s["reaction_id"] for s in steps])
+        meta = component_route_meta(steps)
     except KeyError as e:
         raise HTTPException(400, f"unknown reaction in job route: {e}")
 

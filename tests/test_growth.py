@@ -30,7 +30,7 @@ def test_build_growth_route_places_fragment_and_library(tmp_path):
     files, route, summary = build_growth_route(
         ["suzuki"], "Brc1ccccc1", 0, [{1: str(bor)}], tmp_path)
     assert len(files) == 2 and files[0].endswith("fragment.smi")
-    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2)]
+    assert route == [("[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", 2, None)]
     # fragment file is a single fixed entry
     assert Chem.CanonSmiles(open(files[0]).read().split()[0]) == Chem.CanonSmiles("Brc1ccccc1")
     assert len(summary) == 1 and "bound fragment" in summary[0]
@@ -49,7 +49,7 @@ def test_build_growth_route_chains_an_extend_step(tmp_path):
         ["suzuki", "suzuki_ext_halide"], "Brc1ccc(Br)cc1", 0,
         [{1: str(bor)}, {0: str(bor2)}], tmp_path)
     assert len(files) == 3 and files[0].endswith("fragment.smi")
-    assert [n for _smarts, n in route] == [2, 1]
+    assert [n for _smarts, n, _slot in route] == [2, 1]
     assert len(summary) == 2
     assert "Step 1" in summary[0] and "Step 2" in summary[1]
 
@@ -60,11 +60,33 @@ def test_build_growth_route_rejects_non_start_first_step(tmp_path):
         build_growth_route(["suzuki_ext_halide"], "Brc1ccccc1", 0, [{0: "dummy.smi"}], tmp_path)
 
 
-def test_build_growth_route_rejects_non_extend_later_step(tmp_path):
+def test_build_growth_route_rejects_2component_later_step_with_no_slot(tmp_path):
+    """A 2-component reaction reused for step 2+ needs an explicit slot
+    naming which of its components binds the running intermediate -- any
+    reaction can serve as an extend step now, not just the hand-authored
+    role="extend" rows, so the old "must be an extend reaction" rule is gone;
+    what's still required is knowing which slot the intermediate fills."""
     import pytest
-    with pytest.raises(ValueError, match="must be an 'extend'"):
+    with pytest.raises(ValueError, match="give 'slot'"):
         build_growth_route(["suzuki", "suzuki"], "Brc1ccccc1", 0,
                            [{1: "a.smi"}, {1: "b.smi"}], tmp_path)
+
+
+def test_build_growth_route_reuses_start_reaction_as_extend_step_with_slot(tmp_path):
+    """A 2-component "start" reaction (no hand-authored extend counterpart
+    needed) reused for step 2, with an explicit slot binding the
+    intermediate -- the generalized extend path."""
+    bor = tmp_path / "boronic1.smi"
+    bor.write_text("OB(O)c1ccccc1 phB\n")
+    halide2 = tmp_path / "halide2.smi"
+    halide2.write_text("Brc1ccncc1 pyBr\n")
+    files, route, summary = build_growth_route(
+        ["suzuki", {"reaction_id": "suzuki", "slot": 1}], "Brc1ccc(Br)cc1", 0,
+        [{1: str(bor)}, {0: str(halide2)}], tmp_path)
+    assert len(files) == 3 and files[0].endswith("fragment.smi")
+    assert [n for _smarts, n, _slot in route] == [2, 1]
+    assert route[1][2] == 1  # intermediate bound to slot 1 (the boronic acid slot)
+    assert len(summary) == 2
 
 
 def test_route_sampler_grows_from_fragment(tmp_path):
