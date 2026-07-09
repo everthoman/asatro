@@ -386,6 +386,22 @@ function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.classNa
 // the combi route builder (step 1 is user-chosen).
 function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === 'extend'); }
 
+// CNNaffinity/CNN_VS only mean anything once gnina actually runs the CNN model
+// (cnn_scoring != "none"); with plain Vina scoring those fields are never
+// populated, so disable them in the score-field picker and fall back to
+// minimizedAffinity rather than let the user select a field that won't exist.
+function syncScoreFieldOptions(cnnScoringId, scoreFieldId){
+  const cnnOn = el(cnnScoringId).value !== 'none';
+  const sel = el(scoreFieldId);
+  [...sel.options].forEach(opt => {
+    if (opt.value === 'minimizedAffinity') return;
+    opt.disabled = !cnnOn;
+  });
+  if (!cnnOn && sel.selectedOptions[0] && sel.selectedOptions[0].disabled){
+    sel.value = 'minimizedAffinity';
+  }
+}
+
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
   const g = mode === 'growth';
@@ -573,6 +589,9 @@ el('searchMethod').addEventListener('change', e=>{
   el('rwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
 });
 
+el('cnnScoring').addEventListener('change', ()=>syncScoreFieldOptions('cnnScoring', 'scoreField'));
+syncScoreFieldOptions('cnnScoring', 'scoreField');
+
 // ---- combi route builder (no fragment: every slot is a real reagent library) ----
 let combiStepDivs = [];
 
@@ -619,6 +638,9 @@ el('combiSiteMode').addEventListener('change', toggleCombiSiteMode);
 el('combiSearchMethod').addEventListener('change', e=>{
   el('combiRwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
 });
+
+el('combiCnnScoring').addEventListener('change', ()=>syncScoreFieldOptions('combiCnnScoring', 'combiScoreField'));
+syncScoreFieldOptions('combiCnnScoring', 'combiScoreField');
 
 // ---- launch combi search (/combi) ----
 el('combiRunBtn').addEventListener('click', async ()=>{
