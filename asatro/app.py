@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from rdkit import Chem
 
 from asatro import __version__
@@ -26,6 +26,7 @@ from asatro.chemistry.handles import analyze_fragment
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, jobs_dir, list_jobs, start_combi_job, start_growth_job
+from asatro.seed import carve_fragment, component_route_meta
 from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -337,6 +338,68 @@ async def job_poses(job_id: str, filename: str) -> FileResponse:
     if not p.is_file():
         raise HTTPException(404, "poses not found")
     return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
+
+
+@app.post("/jobs/{job_id}/seed")
+async def seed_fragment(job_id: str, rank: int = Form(...),
+                        component_index: int = Form(...)) -> Response:
+    """Carve a growth-ready fragment out of one reagent's contribution to a
+    finished job's ``rank``-th docked hit (1-based, matching the results
+    panel's display order) -- e.g. seed a growth run from the amine of a
+    combi job's best amide-coupling hit. Returns the carved fragment as a
+    downloadable SDF, with real 3D coordinates taken straight from that hit's
+    docked pose. Reuse the *same* receptor for the follow-up growth run so
+    the coordinate frame lines up."""
+    job = JOBS.get(job_id)
+    if job is not None:
+        result = job.result
+    else:
+        d = jobs_dir() / job_id
+        if not (d.is_dir() and (d / "results.json").is_file()):
+            raise HTTPException(404, "unknown job (or it hasn't produced results yet)")
+        result = json.loads((d / "results.json").read_text())
+    if not result or not result.get("runs"):
+        raise HTTPException(400, "job has no results yet")
+
+    steps = result.get("steps")
+    if not steps:
+        raise HTTPException(400, "job has no route info to seed from")
+    try:
+        meta = component_route_meta([s["reaction_id"] for s in steps])
+    except KeyError as e:
+        raise HTTPException(400, f"unknown reaction in job route: {e}")
+
+    top = result["runs"][0].get("top") or []
+    if not (1 <= rank <= len(top)):
+        raise HTTPException(400, f"rank {rank} out of range (job has {len(top)} top hit(s))")
+    components = top[rank - 1].get("components") or []
+    if not (0 <= component_index < len(components)) or component_index >= len(meta):
+        raise HTTPException(
+            400, f"component_index {component_index} out of range "
+            f"({len(components)} component(s) for this hit)")
+    reagent = components[component_index]
+    accepts = meta[component_index]["accepts"]
+
+    poses_path = jobs_dir() / job_id / "poses_0.sdf"
+    if not poses_path.is_file():
+        raise HTTPException(400, "no docked poses available to seed from")
+    pose_mol = None
+    for m in Chem.SDMolSupplier(str(poses_path), sanitize=True, removeHs=False):
+        if m is not None and m.HasProp("DockingRank") and int(m.GetProp("DockingRank")) == rank:
+            pose_mol = m
+            break
+    if pose_mol is None:
+        raise HTTPException(404, f"no pose found for rank {rank}")
+
+    try:
+        carved = carve_fragment(pose_mol, reagent["smiles"], accepts)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    sdf = Chem.MolToMolBlock(carved) + "$$$$\n"
+    filename = f"fragment_{job_id}_rank{rank}_comp{component_index}.sdf"
+    return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post("/jobs/{job_id}/cancel")

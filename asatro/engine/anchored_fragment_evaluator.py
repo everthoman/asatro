@@ -58,7 +58,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-from asatro.chemistry.handles import neutralize
+from asatro.chemistry.handles import carve_substructure_3d, neutralize
 from asatro.engine.gnina_evaluator import (
     GninaEvaluator,
     prepare_ligand_3d,
@@ -140,39 +140,16 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
             f"aromatic 'c1ccncc1', not kekulized 'C1=CC=NC=C1') and that you "
             f"excluded only the reacting handle, not ring atoms.")
     # Carve the matched atoms out *with their coordinates* into a core template.
-    core = Chem.RWMol()
-    conf = frag.GetConformer()
-    old2new = {}
-    new_conf_pts = []
-    for old_idx in match:
-        a = frag.GetAtomWithIdx(old_idx)
-        # Copy the whole atom (not just the atomic number) so explicit Hs,
-        # formal charge and the aromatic flag survive -- without the pyrrole
-        # N-H, an NH-aromatic core (indole/pyrrole/imidazole...) can't be
-        # kekulized and SanitizeMol below blows up with "Can't kekulize mol".
-        old2new[old_idx] = core.AddAtom(a)
-        new_conf_pts.append(conf.GetAtomPosition(old_idx))
-    for b in frag.GetBonds():
-        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
-        if i in old2new and j in old2new:
-            core.AddBond(old2new[i], old2new[j], b.GetBondType())
-    core = core.GetMol()
-    new_conf = Chem.Conformer(core.GetNumAtoms())
-    for new_idx, pt in enumerate(new_conf_pts):
-        new_conf.SetAtomPosition(new_idx, pt)
-    core.AddConformer(new_conf, assignId=True)
     try:
-        Chem.SanitizeMol(core)
-    except Exception as e:
-        # The carved sub-graph won't sanitize -- almost always because the
-        # core_smarts cut through an aromatic ring (an in-ring atom was
-        # excluded), leaving a partial ring that can't be kekulized.
+        return carve_substructure_3d(frag, match)
+    except ValueError as e:
+        # More specific context than the generic carving error: here we know
+        # it was core_smarts, not an arbitrary match, that cut the ring.
         raise ValueError(
             f"the conserved core carved from the fragment is not a valid "
             f"substructure ({e}). This usually means core_smarts excluded an "
             f"in-ring atom -- exclude only the reacting handle (the leaving "
             f"atom/group), and keep whole aromatic rings intact.") from e
-    return core
 
 
 def _constrained_pose_block(

@@ -42,6 +42,7 @@ OpenEye / joblib dependencies.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -431,6 +432,7 @@ class GninaEvaluator(Evaluator):
         self._reason_cache: Dict[str, Optional[str]] = {}  # smiles -> None | "filtered" | "fail"
         self._pose_cache: Dict[str, Tuple[float, Chem.Mol]] = {}  # smiles -> (score, pose mol)
         self._name_cache: Dict[str, str] = {}  # smiles -> reagent-combo name (for the live gallery)
+        self._components_cache: Dict[str, list] = {}  # smiles -> [{"smiles","name"}, ...] per component
         self.rejections: Dict[str, int] = {}
         self.prep_failures = 0
         self.dock_failures = 0
@@ -478,6 +480,17 @@ class GninaEvaluator(Evaluator):
         if mol.HasProp("_Name"):
             with self._lock:
                 self._name_cache.setdefault(dock_smiles, mol.GetProp("_Name"))
+        # It also stamps which reagent (smiles + name) filled each route
+        # component, so a finished hit can be traced back to one piece of it
+        # (e.g. "seed a growth fragment from this hit's amine").
+        if mol.HasProp("_Components"):
+            try:
+                components = json.loads(mol.GetProp("_Components"))
+            except (ValueError, TypeError):
+                components = None
+            if components:
+                with self._lock:
+                    self._components_cache.setdefault(dock_smiles, components)
 
         with self._lock:
             if dock_smiles in self._score_cache:
@@ -678,6 +691,15 @@ class GninaEvaluator(Evaluator):
                     for smi, s in self._score_cache.items() if np.isfinite(s)]
         rows.sort(key=lambda r: r[0], reverse=self.higher_is_better)
         return rows[: max(1, int(n))]
+
+    def components_scored(self) -> Dict[str, list]:
+        """Snapshot of ``smiles -> [{"smiles", "name"}, ...]`` -- which reagent
+        filled each route component, for every scored product that had one
+        stamped (i.e. built via ``RouteSampler``, not a bare ``evaluate``
+        call). Used to carve a growth fragment out of one component of a
+        finished hit's docked pose."""
+        with self._lock:
+            return dict(self._components_cache)
 
     def stats(self) -> dict:
         return {

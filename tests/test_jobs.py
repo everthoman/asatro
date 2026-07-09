@@ -36,8 +36,9 @@ class _FakeEvaluator:
     higher_is_better = False
     score_field = "minimizedAffinity"
 
-    def __init__(self, rows):
+    def __init__(self, rows, components=None):
         self._rows = rows  # [(score, smiles, name), ...]
+        self._components = components or {}  # smiles -> [{"smiles","name"}, ...]
 
     def top_scored(self, n=12):
         return sorted(self._rows, key=lambda r: r[0])[:n]
@@ -54,14 +55,18 @@ class _FakeEvaluator:
                 pts.append((i, best))
         return pts
 
+    def components_scored(self):
+        return dict(self._components)
+
     def write_top_poses(self, path, n=100):
         w = Chem.SDWriter(path)
         written = 0
-        for score, smi, name in sorted(self._rows, key=lambda r: r[0])[:n]:
+        for rank, (score, smi, name) in enumerate(sorted(self._rows, key=lambda r: r[0])[:n], start=1):
             m = Chem.AddHs(Chem.MolFromSmiles(smi))
             AllChem.EmbedMolecule(m, randomSeed=1)
             m = Chem.RemoveHs(m)
             m.SetProp("_Name", name)
+            m.SetProp("DockingRank", str(rank))
             w.write(m)
             written += 1
         w.close()
@@ -301,6 +306,40 @@ def test_combi_job_runs_and_summarizes(tmp_path, monkeypatch):
     assert any("Combi job" in ln for ln in job.lines)
 
 
+def test_combi_job_persists_steps_and_components(tmp_path, monkeypatch):
+    """The route (steps) and per-hit reagent provenance (components) that
+    /jobs/{id}/seed needs are both in the persisted result."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    rec = tmp_path / "receptor.pdb"; rec.write_text("")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
+    boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    ev = _FakeEvaluator(
+        [(-7.5, "c1ccc(-c2ccccc2)cc1", "phBr_phB")],
+        components={"c1ccc(-c2ccccc2)cc1": [
+            {"smiles": "Brc1ccccc1", "name": "phBr"},
+            {"smiles": "OB(O)c1ccccc1", "name": "phB"},
+        ]},
+    )
+
+    def runner(**k):
+        return ([], ev)
+
+    job = start_combi_job(
+        receptor_path=str(rec), steps=["suzuki"],
+        reagent_files=[[str(halide), str(boronic)]],
+        center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
+        cfg={"num_cycles": 1}, runner=runner)
+    _await(job)
+    assert job.status == "done"
+    assert job.result["steps"] == [
+        {"reaction_id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)"}]
+    top0 = job.result["runs"][0]["top"][0]
+    assert top0["components"] == [
+        {"smiles": "Brc1ccccc1", "name": "phBr"},
+        {"smiles": "OB(O)c1ccccc1", "name": "phB"},
+    ]
+
+
 def test_combi_job_error_is_captured(tmp_path, monkeypatch):
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
 
@@ -344,6 +383,72 @@ def test_combi_endpoint_and_jobs_listing(tmp_path, monkeypatch):
         assert d["status"] == "done", d
         assert d["result"]["runs"][0]["n_docked"] == 2
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
+
+
+def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from rdkit import Chem
+    product = Chem.CanonSmiles("CC(=O)NCc1ccncc1")  # amide of an amine + acetic acid
+    ev = _FakeEvaluator(
+        [(-7.5, product, "amine1_acid1")],
+        components={product: [
+            {"smiles": "NCc1ccncc1", "name": "amine1"},
+            {"smiles": "CC(=O)O", "name": "acid1"},
+        ]},
+    )
+
+    def runner(**k):
+        return ([], ev)
+
+    monkeypatch.setattr(jobs, "run_combi", runner)
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[
+                ("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
+                ("reactants", ("amine.smi", b"NCc1ccncc1 amine1\n", "text/plain")),
+                ("reactants", ("acid.smi", b"CC(=O)O acid1\n", "text/plain")),
+            ],
+            data={"config": json.dumps({
+                "steps": ["amide"], "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0]})},
+        )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+        for _ in range(200):
+            d = client.get(f"/jobs/{job_id}").json()
+            if d["status"] in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.02)
+        assert d["status"] == "done", d
+
+        # component 0 = the amine
+        r = client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 0})
+        assert r.status_code == 200, r.text
+        carved = Chem.MolFromMolBlock(r.text)
+        assert carved is not None and carved.GetNumConformers() == 1
+        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("NCc1ccncc1")
+
+        # component 1 = the acid (hydroxyl drops, carbonyl kept)
+        r = client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 1})
+        assert r.status_code == 200, r.text
+        carved = Chem.MolFromMolBlock(r.text)
+        assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("CC=O")
+
+        # out-of-range rank / component_index -> 400
+        assert client.post(f"/jobs/{job_id}/seed", data={"rank": 99, "component_index": 0}).status_code == 400
+        assert client.post(f"/jobs/{job_id}/seed", data={"rank": 1, "component_index": 99}).status_code == 400
+
+
+def test_seed_endpoint_unknown_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        r = client.post("/jobs/does-not-exist/seed", data={"rank": 1, "component_index": 0})
+        assert r.status_code == 404
 
 
 def test_combi_endpoint_rejects_missing_steps(tmp_path, monkeypatch):

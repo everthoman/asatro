@@ -1,7 +1,13 @@
 """Tier-1 handle detection + auto-core derivation."""
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
-from asatro.chemistry.handles import analyze_fragment, derive_core, detect_fg_classes
+from asatro.chemistry.handles import (
+    analyze_fragment,
+    carve_substructure_3d,
+    derive_core,
+    detect_fg_classes,
+)
 
 
 def _compat(smiles):
@@ -62,3 +68,32 @@ def test_protonated_and_charged_handles_detected():
     assert a["reactions"]["amide"]["compatible"]
     # acid carboxylate still derives the carbonyl-kept core
     assert derive_core("[O-]C(=O)c1ccncc1", "carboxylic_acid") == "O=Cc1ccncc1"
+
+
+def test_carve_substructure_3d_keeps_coordinates_and_connectivity():
+    m = Chem.AddHs(Chem.MolFromSmiles("CC(=O)NCc1ccncc1"))  # an amide product
+    AllChem.EmbedMolecule(m, randomSeed=7)
+    AllChem.MMFFOptimizeMolecule(m)
+    m = Chem.RemoveHs(m)
+    core_q = Chem.MolFromSmiles("NCc1ccncc1")  # the amine's own conserved core
+    match = m.GetSubstructMatch(core_q)
+    assert match
+
+    carved = carve_substructure_3d(m, match)
+    assert carved.GetNumConformers() == 1
+    assert Chem.MolToSmiles(carved) == Chem.CanonSmiles("NCc1ccncc1")
+    # coordinates are the real docked/embedded ones, not a fresh embed
+    conf, orig_conf = carved.GetConformer(), m.GetConformer()
+    for new_idx, old_idx in enumerate(match):
+        new_pt, old_pt = conf.GetAtomPosition(new_idx), orig_conf.GetAtomPosition(old_idx)
+        assert (new_pt.x, new_pt.y, new_pt.z) == (old_pt.x, old_pt.y, old_pt.z)
+
+
+def test_carve_substructure_3d_rejects_ring_cutting_match():
+    m = Chem.AddHs(Chem.MolFromSmiles("c1ccccc1C"))
+    AllChem.EmbedMolecule(m, randomSeed=1)
+    m = Chem.RemoveHs(m)
+    # A match that includes only part of the aromatic ring can't sanitize.
+    import pytest
+    with pytest.raises(ValueError, match="not a valid fragment"):
+        carve_substructure_3d(m, (0, 1, 2))

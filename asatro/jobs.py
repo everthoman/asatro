@@ -147,12 +147,15 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
     if evaluator is not None:
         ranked = evaluator.top_scored(TOP_N)
         n_docked = evaluator.stats()["unique_scored"]
+        components_by_smiles = evaluator.components_scored()
     else:
         hib = bool(higher_is_better)
         ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
         n_docked = len(rows)
+        components_by_smiles = {}
     entry = {"n_docked": n_docked,
-             "top": [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm)}
+             "top": [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm),
+                     "components": components_by_smiles.get(sm, [])}
                     for s, sm, nm in ranked]}
     if evaluator is not None:
         pts = evaluator.convergence()
@@ -330,6 +333,8 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List[str],
             on_evaluator=_on_evaluator,
         )
         job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
+        job.result["steps"] = [{"reaction_id": rid, "name": REACTION_BY_ID[rid]["name"]}
+                               for rid in steps]
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
         job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")

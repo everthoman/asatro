@@ -1,4 +1,5 @@
 import itertools
+import json
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional, Tuple
@@ -155,11 +156,11 @@ class ThompsonSampler:
             return None, "FAIL", product_name, selected_reagents
         return prod_mol, product_smiles, product_name, selected_reagents
 
-    def _score_product(self, prod_mol, product_name: str) -> float:
+    def _score_product(self, prod_mol, product_name: str, selected_reagents=None) -> float:
         """Score one product. This is the slow (docking) step run in parallel."""
-        return self._score_product_detailed(prod_mol, product_name)[0]
+        return self._score_product_detailed(prod_mol, product_name, selected_reagents)[0]
 
-    def _score_product_detailed(self, prod_mol, product_name: str):
+    def _score_product_detailed(self, prod_mol, product_name: str, selected_reagents=None):
         """Score one product, returning ``(score, reason)``.
 
         ``reason`` is ``None`` for a real score, ``"filtered"`` if the evaluator
@@ -174,6 +175,9 @@ class ThompsonSampler:
         # live gallery reads it back); harmless for evaluators that ignore it.
         try:
             prod_mol.SetProp("_Name", product_name)
+            if selected_reagents:
+                prod_mol.SetProp("_Components", json.dumps(
+                    [{"smiles": r.smiles, "name": r.reagent_name} for r in selected_reagents]))
         except Exception:
             pass
         detailed = getattr(self.evaluator, "evaluate_detailed", None)
@@ -196,7 +200,7 @@ class ThompsonSampler:
         prod_mol, product_smiles, product_name, selected_reagents = self._build_product(choice_list)
         res = np.nan
         if prod_mol is not None:
-            res = self._score_product(prod_mol, product_name)
+            res = self._score_product(prod_mol, product_name, selected_reagents)
             self._record(selected_reagents, res)
         return product_smiles, product_name, res
 
@@ -235,7 +239,8 @@ class ThompsonSampler:
         if self.concurrency > 1 and len(dock_idx) > 1:
             pending_exc = None
             with ThreadPoolExecutor(max_workers=self.concurrency) as ex:
-                futs = {ex.submit(self._score_product_detailed, built[i][0], built[i][2]): i for i in dock_idx}
+                futs = {ex.submit(self._score_product_detailed, built[i][0], built[i][2], built[i][3]): i
+                       for i in dock_idx}
                 for fut in as_completed(futs):
                     try:
                         scores[futs[fut]], reasons[futs[fut]] = fut.result()
@@ -248,7 +253,7 @@ class ThompsonSampler:
                 raise pending_exc
         else:
             for i in dock_idx:
-                scores[i], reasons[i] = self._score_product_detailed(built[i][0], built[i][2])
+                scores[i], reasons[i] = self._score_product_detailed(built[i][0], built[i][2], built[i][3])
 
         results = [(built[i][1], built[i][2], scores[i], reasons[i]) for i in range(len(built))]
         return results, built

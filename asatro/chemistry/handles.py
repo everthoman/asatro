@@ -10,7 +10,7 @@ constrained placement, and surfaced so the user can see/override it.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 from rdkit import Chem
 
@@ -93,6 +93,51 @@ def derive_core(frag: MolOrSmiles, fg_class: str) -> str:
         return Chem.MolToSmiles(mol)
     core = max(frags, key=lambda x: x.GetNumAtoms())
     return Chem.MolToSmiles(core)
+
+
+def carve_substructure_3d(mol: Chem.Mol, match: Sequence[int]) -> Chem.Mol:
+    """Carve the atoms in ``match`` out of ``mol`` *with their conformer
+    coordinates*, keeping only the bonds between them, and sanitize the result.
+
+    Used to build a template mol from a real 3D structure: the conserved core
+    of a bound fragment (``AnchoredFragmentEvaluator._load_core``), or a
+    growth-ready fragment carved out of one reagent's contribution to a
+    finished combi/growth hit's docked pose (``asatro/seed.py``). ``mol`` must
+    have a conformer; ``match`` is a substructure-match atom-index tuple
+    (e.g. from ``GetSubstructMatch``) into it.
+    """
+    core = Chem.RWMol()
+    conf = mol.GetConformer()
+    old2new: Dict[int, int] = {}
+    new_conf_pts = []
+    for old_idx in match:
+        a = mol.GetAtomWithIdx(old_idx)
+        # Copy the whole atom (not just the atomic number) so explicit Hs,
+        # formal charge and the aromatic flag survive -- without the pyrrole
+        # N-H, an NH-aromatic core (indole/pyrrole/imidazole...) can't be
+        # kekulized and SanitizeMol below blows up with "Can't kekulize mol".
+        old2new[old_idx] = core.AddAtom(a)
+        new_conf_pts.append(conf.GetAtomPosition(old_idx))
+    for b in mol.GetBonds():
+        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
+        if i in old2new and j in old2new:
+            core.AddBond(old2new[i], old2new[j], b.GetBondType())
+    core = core.GetMol()
+    new_conf = Chem.Conformer(core.GetNumAtoms())
+    for new_idx, pt in enumerate(new_conf_pts):
+        new_conf.SetAtomPosition(new_idx, pt)
+    core.AddConformer(new_conf, assignId=True)
+    try:
+        Chem.SanitizeMol(core)
+    except Exception as e:
+        # The carved sub-graph won't sanitize -- almost always because the
+        # match cut through an aromatic ring (an in-ring atom was excluded),
+        # leaving a partial ring that can't be kekulized.
+        raise ValueError(
+            f"the carved substructure is not a valid fragment on its own "
+            f"({e}). This usually means the match excluded an in-ring atom "
+            f"-- keep whole aromatic rings intact.") from e
+    return core
 
 
 def analyze_fragment(frag: MolOrSmiles) -> dict:
