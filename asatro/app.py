@@ -30,6 +30,7 @@ from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
+REACTION_TABLE_HTML = (BASE_DIR / "reaction-catalog.html").read_text()
 PORT = int(os.environ.get("ASATRO_PORT", "5015"))
 
 # Bundled master pool (Enamine Rush-Delivery EU, reused from ts-gnina) — the
@@ -62,6 +63,13 @@ async def index() -> HTMLResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "app": "asatro", "version": __version__}
+
+
+@app.get("/reactions", response_class=HTMLResponse)
+async def reactions_page() -> HTMLResponse:
+    """Standalone reference: every reaction in the catalog, searchable, with its
+    full SMARTS and accepted reagent classes."""
+    return HTMLResponse(REACTION_TABLE_HTML)
 
 
 @app.get("/analyze")
