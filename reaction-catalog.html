@@ -1,0 +1,266 @@
+<title>Asatro Reaction Catalog</title>
+<style>
+  :root {
+    --bg: #0e1512;
+    --panel: #141d19;
+    --panel-2: #101815;
+    --border: #24322b;
+    --border-soft: #1c2721;
+    --text: #e6ede8;
+    --muted: #8ea99c;
+    --muted-dim: #5f7568;
+    --accent: #45c79b;
+    --accent-ink: #052b20;
+    --extend: #d9a256;
+    --extend-ink: #2e1c04;
+    --code-bg: #0a0f0c;
+    --shadow: 0 1px 0 rgba(0,0,0,.4);
+    --serif: Iowan Old Style, "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f7f5; --panel: #ffffff; --panel-2: #eef2ef; --border: #d7e2db; --border-soft: #e3ece6;
+      --text: #16211c; --muted: #5c7267; --muted-dim: #859185;
+      --accent: #1f8f68; --accent-ink: #eafff5; --extend: #a8701f; --extend-ink: #fff6e8;
+      --code-bg: #eef2ee; --shadow: 0 1px 0 rgba(0,0,0,.05);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1512; --panel: #141d19; --panel-2: #101815; --border: #24322b; --border-soft: #1c2721;
+    --text: #e6ede8; --muted: #8ea99c; --muted-dim: #5f7568;
+    --accent: #45c79b; --accent-ink: #052b20; --extend: #d9a256; --extend-ink: #2e1c04;
+    --code-bg: #0a0f0c; --shadow: 0 1px 0 rgba(0,0,0,.4);
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f7f5; --panel: #ffffff; --panel-2: #eef2ef; --border: #d7e2db; --border-soft: #e3ece6;
+    --text: #16211c; --muted: #5c7267; --muted-dim: #859185;
+    --accent: #1f8f68; --accent-ink: #eafff5; --extend: #a8701f; --extend-ink: #fff6e8;
+    --code-bg: #eef2ee; --shadow: 0 1px 0 rgba(0,0,0,.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 64px; }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: linear-gradient(180deg, var(--bg) 78%, transparent);
+    padding: 28px 0 16px;
+  }
+  .masthead {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
+    flex-wrap: wrap; margin-bottom: 16px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: 28px; letter-spacing: .2px;
+    margin: 0; text-wrap: balance;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .kicker {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--muted-dim); margin: 0 0 6px;
+  }
+  .count {
+    font-family: var(--mono); font-size: 13px; color: var(--muted); white-space: nowrap;
+    padding-top: 6px;
+  }
+  .count b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .search {
+    flex: 1 1 280px; min-width: 220px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px; font-family: var(--sans); font-size: 14px; color: var(--text);
+  }
+  .search::placeholder { color: var(--muted-dim); }
+  .search:focus, button:focus-visible, .search:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .role-toggle { display: flex; gap: 6px; }
+  .role-toggle button {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .03em;
+    background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 14px; cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  }
+  .role-toggle button:hover { border-color: var(--muted-dim); color: var(--text); }
+  .role-toggle button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .role-toggle button.active[data-role="extend"] { background: var(--extend); color: var(--extend-ink); border-color: var(--extend); }
+
+  .no-results { display: none; padding: 48px 0; text-align: center; color: var(--muted); font-family: var(--serif); font-size: 16px; }
+  .no-results.show { display: block; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  thead th {
+    position: sticky; top: 116px; z-index: 10;
+    background: var(--panel-2); text-align: left; font-family: var(--mono);
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-dim);
+    padding: 9px 12px; border-bottom: 1px solid var(--border); box-shadow: var(--shadow);
+  }
+  tbody tr { border-bottom: 1px solid var(--border-soft); }
+  tbody tr:hover { background: var(--panel); }
+  td { padding: 13px 12px; vertical-align: top; }
+
+  .col-rxn { width: 250px; }
+  .col-comp { width: 240px; }
+
+  .rxn-name { font-family: var(--serif); font-size: 14.5px; line-height: 1.35; margin: 0 0 4px; text-wrap: balance; }
+  .rxn-id { font-family: var(--mono); font-size: 11px; color: var(--muted-dim); }
+
+  .comp-row { display: flex; flex-direction: column; gap: 5px; }
+  .comp {
+    font-size: 12px; color: var(--muted); line-height: 1.4;
+  }
+  .comp .accepts { font-family: var(--mono); color: var(--text); }
+  .comp .accepts .cls {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--border-soft);
+    border-radius: 4px; padding: 1px 5px; margin: 1px 2px 1px 0; font-size: 11px;
+  }
+
+  .smarts-box { max-width: 100%; overflow-x: auto; }
+  code.smarts {
+    font-family: var(--mono); font-size: 12px; white-space: pre; color: var(--text);
+    background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: 6px;
+    padding: 7px 10px; display: inline-block; min-width: 100%;
+  }
+  .arrow { color: var(--accent); }
+
+  footer {
+    margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--border-soft);
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted-dim); line-height: 1.7;
+  }
+  footer a { color: var(--muted); }
+
+  @media (max-width: 720px) {
+    .wrap { padding: 0 16px 48px; }
+    thead { display: none; }
+    table, tbody, tr, td { display: block; width: 100%; }
+    tbody tr { padding: 14px 0; }
+    td { padding: 3px 0; }
+    .col-comp, .col-rxn { width: auto; }
+    .smarts-box { margin-top: 6px; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="masthead">
+      <div>
+        <p class="kicker">asatro &middot; chemistry catalog</p>
+        <h1>Reaction <em>reference</em></h1>
+      </div>
+      <div class="count"><b id="countShown">54</b> of <b>54</b> reactions</div>
+    </div>
+    <div class="controls">
+      <input class="search" id="search" type="text" placeholder="Search by name, id, or SMARTS&hellip;" autocomplete="off">
+      <div class="role-toggle" id="roleToggle">
+        <button class="active" data-role="all">All &middot; 54</button>
+        <button data-role="start">Start &middot; 35</button>
+        <button data-role="extend">Extend &middot; 19</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="no-results" id="noResults">No reactions match &ldquo;<span id="noResultsQuery"></span>&rdquo;.</div>
+
+  <table id="table">
+    <thead>
+      <tr>
+        <th class="col-rxn">Reaction</th>
+        <th class="col-comp">Components &middot; accepted classes</th>
+        <th>Reaction SMARTS</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <footer>
+    <div>Start reactions seed a route (or anchor a bound fragment into one slot); extend reactions consume the running intermediate plus one new reagent.</div>
+    <div>Source: <code>asatro/data/reactions.json</code> &middot; 28 functional-group classes in <code>asatro/data/functional_groups.json</code>.</div>
+  </footer>
+</div>
+
+<script>
+const REACTIONS = [{"id": "amide", "name": "Amide coupling (amine + acid)", "role": "start", "takes_intermediate": false, "smarts": "[NH2:2][#6:1].[#6:4][C:3]([OH])=O>>[NH:2]([#6:1])[C:3]([#6:4])=O", "components": [{"label": "Primary amine", "accepts": ["primary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}, {"label": "Carboxylic acid", "accepts": ["carboxylic_acid"], "sets": ["carboxylic_acids_100", "carboxylic_acids_500", "carboxylic_acids_ok"]}]}, {"id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", "components": [{"label": "Aryl halide", "accepts": ["aryl_halide"], "sets": ["aryl_halides_100"]}, {"label": "Boronic acid", "accepts": ["boronic"], "sets": ["boronic_acids_100"]}]}, {"id": "snar", "name": "Nucleophilic aromatic substitution (SNAr)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][F,Cl].[NX3;H1,H2:2]>>[c:1][N:2]", "components": [{"label": "Activated aryl halide", "accepts": ["activated_aryl_halide"], "sets": ["activated_aryl_halides_100"]}, {"label": "Primary amine", "accepts": ["primary_amine", "secondary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}]}, {"id": "reductive_amination", "name": "Reductive amination (aldehyde/ketone + amine)", "role": "start", "takes_intermediate": false, "smarts": "[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1].[NX3;H1,H2;!$([NX3]C=O):2]>>[C:1][N:2]", "components": [{"label": "Aldehyde/ketone", "accepts": ["aldehyde", "ketone"], "sets": ["aldehydes_ketones_100"]}, {"label": "Primary amine", "accepts": ["primary_amine", "secondary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}]}, {"id": "amide_ext_amine", "name": "Amide coupling (extend: amine on intermediate + acid)", "role": "extend", "takes_intermediate": true, "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[#6:4][C:3]([OH])=O>>[N:2][C:3]([#6:4])=O", "components": [{"label": "Carboxylic acid", "accepts": ["carboxylic_acid"], "sets": ["carboxylic_acids_100", "carboxylic_acids_500", "carboxylic_acids_ok"]}]}, {"id": "amide_ext_acid", "name": "Amide coupling (extend: acid on intermediate + amine)", "role": "extend", "takes_intermediate": true, "smarts": "[#6:1][C:3](=[OX1])[OX2H1].[NX3;H1,H2;!$([NX3]C=O):2]>>[#6:1][C:3](=O)[N:2]", "components": [{"label": "Primary amine", "accepts": ["primary_amine", "secondary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}]}, {"id": "suzuki_ext_halide", "name": "Suzuki coupling (extend: halide on intermediate + boronic acid)", "role": "extend", "takes_intermediate": true, "smarts": "[c:1][Cl,Br,I].[c:2][B]([OX2])[OX2]>>[c:1][c:2]", "components": [{"label": "Boronic acid", "accepts": ["boronic"], "sets": ["boronic_acids_100"]}]}, {"id": "suzuki_ext_boronic", "name": "Suzuki coupling (extend: boronic acid on intermediate + halide)", "role": "extend", "takes_intermediate": true, "smarts": "[c:2][B]([OX2])[OX2].[c:1][Cl,Br,I]>>[c:2][c:1]", "components": [{"label": "Aryl halide", "accepts": ["aryl_halide"], "sets": ["aryl_halides_100"]}]}, {"id": "snar_ext_halide", "name": "SNAr (extend: aryl halide on intermediate + amine)", "role": "extend", "takes_intermediate": true, "smarts": "[c:1][F,Cl].[NX3;H1,H2;!$([NX3]C=O):2]>>[c:1][N:2]", "components": [{"label": "Primary amine", "accepts": ["primary_amine", "secondary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}]}, {"id": "snar_ext_amine", "name": "SNAr (extend: amine on intermediate + aryl halide)", "role": "extend", "takes_intermediate": true, "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[c:1][F,Cl]>>[c:1][N:2]", "components": [{"label": "Activated aryl halide", "accepts": ["activated_aryl_halide"], "sets": ["activated_aryl_halides_100"]}]}, {"id": "redam_ext_carbonyl", "name": "Reductive amination (extend: carbonyl on intermediate + amine)", "role": "extend", "takes_intermediate": true, "smarts": "[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1].[NX3;H1,H2;!$([NX3]C=O):2]>>[C:1][N:2]", "components": [{"label": "Primary amine", "accepts": ["primary_amine", "secondary_amine"], "sets": ["primary_amines_100", "primary_amines_500", "primary_amines_ok"]}]}, {"id": "redam_ext_amine", "name": "Reductive amination (extend: amine on intermediate + aldehyde/ketone)", "role": "extend", "takes_intermediate": true, "smarts": "[NX3;H1,H2;!$([NX3]C=O):2].[$([CX3H1]=O),$([CX3]([#6])([#6])=O);!$([CX3](=O)[OX2]);!$([CX3](=O)[#7]):1]=[OX1]>>[C:1][N:2]", "components": [{"label": "Aldehyde/ketone", "accepts": ["aldehyde", "ketone"], "sets": ["aldehydes_ketones_100"]}]}, {"id": "buchwald", "name": "Buchwald-Hartwig (aryl Br/I + amine)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[NX3;H1,H2;!$([NX3]C=O);!$([NX3]=*);!$([NX3]S(=O)=O):2]>>[c:1][N:2]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Primary/secondary amine", "accepts": ["primary_amine", "secondary_amine"]}]}, {"id": "urea", "name": "Urea formation (amine + isocyanate)", "role": "start", "takes_intermediate": false, "smarts": "[NX3;H2:1].[#6][NX2:2]=[CX2:3]=[OX1:4]>>[N:1][C:3](=[O:4])[N:2]", "components": [{"label": "Primary amine", "accepts": ["primary_amine"]}, {"label": "Isocyanate", "accepts": ["isocyanate"]}]}, {"id": "sulfonamide", "name": "Sulfonamide coupling (amine + sulfonyl chloride)", "role": "start", "takes_intermediate": false, "smarts": "[NX3;H1,H2:1].[#6:2][SX4:3](=[OX1])(=[OX1])[Cl]>>[N:1][S:3](=[OX1])(=[OX1])[#6:2]", "components": [{"label": "Primary/secondary amine", "accepts": ["primary_amine", "secondary_amine"]}, {"label": "Sulfonyl chloride", "accepts": ["sulfonyl_chloride"]}]}, {"id": "mitsunobu", "name": "Mitsunobu (alcohol + carboxylic acid \u2192 ester)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][OH:2].[#6:3][CX3:4](=[OX1:5])[OX2H]>>[#6:1][O:2][CX3:4](=[OX1:5])[#6:3]", "components": [{"label": "Alcohol", "accepts": ["alcohol"]}, {"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}]}, {"id": "n_alkylation", "name": "N-alkylation (amine + alkyl Br/I)", "role": "start", "takes_intermediate": false, "smarts": "[NX3;H1,H2;!$([NX3]C=O);!$([NX3]=*);!$([NX3]S(=O)=O):1].[#6;!a:2][Br,I]>>[N:1][#6:2]", "components": [{"label": "Primary/secondary amine", "accepts": ["primary_amine", "secondary_amine"]}, {"label": "Alkyl halide", "accepts": ["alkyl_halide"]}]}, {"id": "sonogashira", "name": "Sonogashira (aryl Br/I + terminal alkyne)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[#6][C:2]#[CH:3]>>[c:1][C:3]#[C:2]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Terminal alkyne", "accepts": ["terminal_alkyne"]}]}, {"id": "cuaac", "name": "CuAAC (azide + terminal alkyne \u2192 1,4-triazole)", "role": "start", "takes_intermediate": false, "smarts": "[#6:6][N:1]=[N+:2]=[N-:3].[C:4]#[CH:5]>>[#6:6][N+0:1]1[N+0:2]=[N+0:3][C:4]=[C:5]1", "components": [{"label": "Azide", "accepts": ["azide"]}, {"label": "Terminal alkyne", "accepts": ["terminal_alkyne"]}]}, {"id": "williamson", "name": "Williamson ether synthesis (alcohol + alkyl halide)", "role": "start", "takes_intermediate": false, "smarts": "[OX2H:1][CX4:2].[CX4:3][Br,I]>>[O:1]([C:2])[C:3]", "components": [{"label": "Aliphatic alcohol", "accepts": ["alcohol"]}, {"label": "Alkyl bromide/iodide", "accepts": ["alkyl_halide"]}]}, {"id": "williamson_ext_oh", "name": "Williamson ether synthesis (extend: OH on intermediate + alkyl halide)", "role": "extend", "takes_intermediate": true, "smarts": "[OX2H:1][CX4:2].[CX4:3][Br,I]>>[O:1]([C:2])[C:3]", "components": [{"label": "Alkyl bromide/iodide", "accepts": ["alkyl_halide"]}]}, {"id": "williamson_ext_halide", "name": "Williamson ether synthesis (extend: alkyl halide on intermediate + alcohol)", "role": "extend", "takes_intermediate": true, "smarts": "[CX4:3][Br,I].[OX2H:1][CX4:2]>>[O:1]([C:2])[C:3]", "components": [{"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "snar_alcohol", "name": "SNAr O-arylation (activated aryl halide + alcohol)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][F,Cl].[OX2H:2][CX4:3]>>[c:1][O:2][C:3]", "components": [{"label": "Activated aryl halide", "accepts": ["activated_aryl_halide"]}, {"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "snar_alcohol_ext", "name": "SNAr O-arylation (extend: aryl halide on intermediate + alcohol)", "role": "extend", "takes_intermediate": true, "smarts": "[c:1][F,Cl].[OX2H:2][CX4:3]>>[c:1][O:2][C:3]", "components": [{"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "snar_thiol", "name": "SNAr thioether (aryl halide + thiol)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][F,Cl,Br,I].[SX2H:2][#6:3]>>[c:1][S:2][#6:3]", "components": [{"label": "Aryl halide", "accepts": ["aryl_halide"]}, {"label": "Thiol", "accepts": ["thiol"]}]}, {"id": "snar_thiol_ext", "name": "SNAr thioether (extend: aryl halide on intermediate + thiol)", "role": "extend", "takes_intermediate": true, "smarts": "[c:1][F,Cl,Br,I].[SX2H:2][#6:3]>>[c:1][S:2][#6:3]", "components": [{"label": "Thiol", "accepts": ["thiol"]}]}, {"id": "ullmann_phenol", "name": "Ullmann O-arylation (aryl halide + phenol)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[OX2H:2][c:3]>>[c:1][O:2][c:3]", "components": [{"label": "Aryl halide", "accepts": ["aryl_halide"]}, {"label": "Phenol", "accepts": ["phenol"]}]}, {"id": "ullmann_x", "name": "Ullmann biaryl coupling (aryl halide + aryl halide)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[c:2][Br,I]>>[c:1][c:2]", "components": [{"label": "Aryl halide", "accepts": ["aryl_halide"]}, {"label": "Aryl halide", "accepts": ["aryl_halide"]}]}, {"id": "chan_lam", "name": "Chan\u2013Lam N-arylation (amine + boronic acid)", "role": "start", "takes_intermediate": false, "smarts": "[NX3;H1,H2;!$([NX3]C=O):1].[#6:2][BX3]([OX2])[OX2]>>[N:1][#6:2]", "components": [{"label": "Primary/secondary amine", "accepts": ["primary_amine", "secondary_amine"]}, {"label": "Boronic acid/ester", "accepts": ["boronic"]}]}, {"id": "chan_lam_ext", "name": "Chan\u2013Lam N-arylation (extend: NH on intermediate + boronic acid)", "role": "extend", "takes_intermediate": true, "smarts": "[NX3;H1,H2;!$([NX3]C=O):1].[#6:2][BX3]([OX2])[OX2]>>[N:1][#6:2]", "components": [{"label": "Boronic acid/ester", "accepts": ["boronic"]}]}, {"id": "esterification", "name": "Esterification (carboxylic acid + alcohol)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]", "components": [{"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}, {"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "esterification_ext_acid", "name": "Esterification (extend: acid on intermediate + alcohol)", "role": "extend", "takes_intermediate": true, "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]", "components": [{"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "esterification_ext_oh", "name": "Esterification (extend: OH on intermediate + acid)", "role": "extend", "takes_intermediate": true, "smarts": "[OX2H:3][CX4:4].[#6:1][CX3:2](=[OX1])[OX2H]>>[#6:1][C:2](=[OX1])[O:3][C:4]", "components": [{"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}]}, {"id": "amine_acetylation", "name": "Acylation (amine + acyl halide \u2192 amide)", "role": "start", "takes_intermediate": false, "smarts": "[NX3;H1,H2:1].[#6:2][CX3:3](=[OX1])[Cl,Br]>>[N:1][C:3](=[OX1])[#6:2]", "components": [{"label": "Primary/secondary amine", "accepts": ["primary_amine", "secondary_amine"]}, {"label": "Acyl halide", "accepts": ["acyl_halide"]}]}, {"id": "amine_acetylation_ext", "name": "Acylation (extend: NH on intermediate + acyl halide)", "role": "extend", "takes_intermediate": true, "smarts": "[NX3;H1,H2:1].[#6:2][CX3:3](=[OX1])[Cl,Br]>>[N:1][C:3](=[OX1])[#6:2]", "components": [{"label": "Acyl halide", "accepts": ["acyl_halide"]}]}, {"id": "ester_schotten_baumann", "name": "Schotten\u2013Baumann esterification (acyl halide + alcohol)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][CX3:2](=[OX1])[Cl,Br].[OX2H:3][CX4:4]>>[#6:1][C:2](=[OX1])[O:3][C:4]", "components": [{"label": "Acyl halide", "accepts": ["acyl_halide"]}, {"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "ester_sulfonic_schotten_baumann", "name": "Sulfonate ester (sulfonyl chloride + alcohol)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][SX4:2](=[OX1])(=[OX1])[Cl].[OX2H:3][CX4:4]>>[#6:1][S:2](=[OX1])(=[OX1])[O:3][C:4]", "components": [{"label": "Sulfonyl chloride", "accepts": ["sulfonyl_chloride"]}, {"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "heck", "name": "Heck reaction (aryl halide + terminal alkene)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[CX3H1:2]=[CX3H2:3]>>[c:1][C:2]=[C:3]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Terminal alkene", "accepts": ["alkene"]}]}, {"id": "heck_ext", "name": "Heck reaction (extend: aryl halide on intermediate + alkene)", "role": "extend", "takes_intermediate": true, "smarts": "[c:1][Br,I].[CX3H1:2]=[CX3H2:3]>>[c:1][C:2]=[C:3]", "components": [{"label": "Terminal alkene", "accepts": ["alkene"]}]}, {"id": "oxadiazole_condensation", "name": "1,3,4-Oxadiazole (acid + acylhydrazide)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1", "components": [{"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}, {"label": "Acylhydrazide", "accepts": ["hydrazide"]}]}, {"id": "oxadiazole_ext_acid", "name": "1,3,4-Oxadiazole (extend: acid on intermediate + hydrazide)", "role": "extend", "takes_intermediate": true, "smarts": "[#6:1][CX3:2](=[OX1])[OX2H].[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1", "components": [{"label": "Acylhydrazide", "accepts": ["hydrazide"]}]}, {"id": "oxadiazole_ext_hydrazide", "name": "1,3,4-Oxadiazole (extend: hydrazide on intermediate + acid)", "role": "extend", "takes_intermediate": true, "smarts": "[#6:3][CX3:4](=[OX1])[NX3H:5][NH2:6].[#6:1][CX3:2](=[OX1])[OX2H]>>[#6:1][c:2]1[n:6][n:5][c:4]([#6:3])o1", "components": [{"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}]}, {"id": "tetrazole_synthesis", "name": "Tetrazole synthesis (nitrile + organic azide \u2192 1-substituted-5-R-tetrazole)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][C:2]#[N:7].[#6:3][NX2:4]=[N+:5]=[N-:6]>>[#6:1][c:2]1[n+0:7][n+0:6][n+0:5][n+0:4]([#6:3])1", "components": [{"label": "Nitrile", "accepts": ["nitrile"]}, {"label": "Organic azide", "accepts": ["azide"]}]}, {"id": "imidazole_condensation_acid", "name": "Benzimidazole synthesis (1,2-diaminoarene + carboxylic acid)", "role": "start", "takes_intermediate": false, "smarts": "[NH2:1][c:4][c:5][NH2:2].[#6:3][CX3:6](=[OX1])[OX2H]>>[#6:3][c:6]1[nH:1][c:4][c:5][n:2]1", "components": [{"label": "1,2-Diaminoarene", "accepts": ["diaminoarene"]}, {"label": "Carboxylic acid", "accepts": ["carboxylic_acid"]}]}, {"id": "imidazole_condensation_amine", "name": "Benzimidazole synthesis (1,2-diaminoarene + aldehyde)", "role": "start", "takes_intermediate": false, "smarts": "[NH2:1][c:4][c:5][NH2:2].[#6:3][CX3H1:6]=[OX1]>>[#6:3][c:6]1[nH:1][c:4][c:5][n:2]1", "components": [{"label": "1,2-Diaminoarene", "accepts": ["diaminoarene"]}, {"label": "Aldehyde", "accepts": ["aldehyde"]}]}, {"id": "triazole_synthesis_2", "name": "1,2,4-Triazole (acylhydrazide + nitrile, Pellizzari-type)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][CX3:2](=[OX1])[NX3H:3][NH2:4].[#6:5][CX2:6]#[NX1:7]>>[#6:1][c:2]1[n:4][n:3][c:6]([#6:5])[nH:7]1", "components": [{"label": "Acylhydrazide", "accepts": ["hydrazide"]}, {"label": "Nitrile", "accepts": ["nitrile"]}]}, {"id": "sn2_nheterocycle", "name": "N-Alkylation of NH-heterocycle (alkyl halide + pyrrole/indole/imidazole)", "role": "start", "takes_intermediate": false, "smarts": "[CX4:1][Br,I].[nH:2]>>[C:1][n:2]", "components": [{"label": "Alkyl bromide/iodide", "accepts": ["alkyl_halide"]}, {"label": "NH-heterocycle", "accepts": ["nheterocycle"]}]}, {"id": "cross_electrophile_coupling", "name": "Cross-electrophile coupling (two alkyl halides \u2192 C\u2013C)", "role": "start", "takes_intermediate": false, "smarts": "[#6;!a:1][Br,I].[#6;!a:2][Br,I]>>[#6:1][#6:2]", "components": [{"label": "Alkyl bromide/iodide", "accepts": ["alkyl_halide"]}, {"label": "Alkyl bromide/iodide", "accepts": ["alkyl_halide"]}]}, {"id": "deoxygenative_coupling", "name": "Deoxygenative C\u2013C coupling (aryl halide + alkyl alcohol)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[#6;!a:2][OX2H]>>[c:1][#6:2]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Aliphatic alcohol", "accepts": ["alcohol"]}]}, {"id": "negishi", "name": "Negishi coupling (aryl halide + organozinc)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[#6:2][Zn][Cl,Br,I]>>[c:1][#6:2]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Organozinc halide", "accepts": ["organozinc"]}]}, {"id": "horner_wadsworth_emmons", "name": "Horner\u2013Wadsworth\u2013Emmons (phosphonate ester + carbonyl \u2192 alkene)", "role": "start", "takes_intermediate": false, "smarts": "[PX4](=[OX1])([OX2][#6])([OX2][#6])[CH2:1].[#6:2][CX3:3]=[OX1]>>[#6:2][C:3]=[C:1]", "components": [{"label": "Phosphonate ester", "accepts": ["phosphonate_ester"]}, {"label": "Aldehyde/ketone", "accepts": ["aldehyde", "ketone"]}]}, {"id": "pinacolatoborylation", "name": "Anti-Markovnikov hydroboration (alkene + HBpin)", "role": "start", "takes_intermediate": false, "smarts": "[CX3H2:1]=[CX3H1:2].[BX3H1:3]1[O:4][C:5]([C:8])([C:9])[C:6]([C:10])([C:11])[O:7]1>>[C:1]([B:3]1[O:4][C:5]([C:8])([C:9])[C:6]([C:10])([C:11])[O:7]1)[C:2]", "components": [{"label": "Terminal alkene", "accepts": ["alkene"]}, {"label": "Pinacolborane (HBpin)", "accepts": ["pinacolborane"]}]}, {"id": "c_c_decarboxylation", "name": "Decarboxylative C\u2013C coupling (aryl halide + alpha-keto acid ester)", "role": "start", "takes_intermediate": false, "smarts": "[c:1][Br,I].[#6:2][CX3:3](=[OX1])[CX3:4](=[OX1])[OX2][CX4]>>[c:1][C:4]=[OX1]", "components": [{"label": "Aryl bromide/iodide", "accepts": ["aryl_halide"]}, {"label": "Alpha-keto acid ester", "accepts": ["alpha_ketoester"]}]}, {"id": "imidazole_Xketone_synthesis", "name": "Imidazole synthesis (alpha-fluoroketone + amidine)", "role": "start", "takes_intermediate": false, "smarts": "[#6:1][CX3:2](=[OX1])[CH2:3][F].[NH2:4][CX3:5](=[NH:6])[#6:7]>>[#6:1][c:2]1[c:3][n:6][c:5]([#6:7])[nH:4]1", "components": [{"label": "Alpha-fluoroketone", "accepts": ["alpha_fluoroketone"]}, {"label": "Amidine", "accepts": ["amidine"]}]}];
+
+const tbody = document.getElementById('tbody');
+const searchEl = document.getElementById('search');
+const roleToggle = document.getElementById('roleToggle');
+const countShown = document.getElementById('countShown');
+const noResults = document.getElementById('noResults');
+const noResultsQuery = document.getElementById('noResultsQuery');
+
+let roleFilter = 'all';
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function formatSmarts(smarts) {
+  const parts = smarts.split('>>');
+  if (parts.length === 2) {
+    return `${esc(parts[0])}<span class="arrow">&gt;&gt;</span>${esc(parts[1])}`;
+  }
+  return esc(smarts);
+}
+
+function componentsHtml(r) {
+  return `<div class="comp-row">` + r.components.map(c => `
+    <div class="comp">
+      ${esc(c.label)}<br>
+      <span class="accepts">${c.accepts.map(a => `<span class="cls">${esc(a)}</span>`).join('')}</span>
+    </div>`).join('') + `</div>`;
+}
+
+function rowHtml(r) {
+  return `
+    <tr data-id="${esc(r.id)}" data-role="${r.role}">
+      <td class="col-rxn">
+        <p class="rxn-name">${esc(r.name)}</p>
+        <div class="rxn-id">${esc(r.id)}</div>
+      </td>
+      <td class="col-comp">${componentsHtml(r)}</td>
+      <td><div class="smarts-box"><code class="smarts">${formatSmarts(r.smarts)}</code></div></td>
+    </tr>`;
+}
+
+function matchesSearch(r, q) {
+  if (!q) return true;
+  const hay = (r.id + ' ' + r.name + ' ' + r.smarts + ' ' +
+    r.components.map(c => c.label + ' ' + c.accepts.join(' ')).join(' ')).toLowerCase();
+  return hay.includes(q);
+}
+
+function render() {
+  const q = searchEl.value.trim().toLowerCase();
+  const filtered = REACTIONS.filter(r =>
+    (roleFilter === 'all' || r.role === roleFilter) && matchesSearch(r, q));
+
+  tbody.innerHTML = filtered.map(rowHtml).join('');
+  countShown.textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    noResults.classList.add('show');
+    noResultsQuery.textContent = searchEl.value.trim();
+  } else {
+    noResults.classList.remove('show');
+  }
+}
+
+searchEl.addEventListener('input', render);
+roleToggle.addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  roleFilter = btn.dataset.role;
+  [...roleToggle.children].forEach(b => b.classList.toggle('active', b === btn));
+  render();
+});
+
+render();
+</script>
