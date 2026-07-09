@@ -36,7 +36,7 @@ from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-TOP_N = 25  # hits kept per target in the persisted summary
+TOP_N = 48  # hits kept per target in the persisted summary (matches the UI's max "show N" option)
 
 
 def jobs_dir() -> Path:

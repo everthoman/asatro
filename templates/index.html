@@ -31,6 +31,8 @@
   @media (max-width:1000px){ .wrap{ grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
   .panel h2 { margin:0 0 12px; font-size:15px; color:var(--accent); letter-spacing:.3px; }
+  .panel h2 .h2btn { float:right; font-size:11px; font-weight:600; padding:2px 9px; background:var(--ghost-bg); color:var(--text); border-radius:6px; }
+  .panel h2 .h2select { float:right; width:auto; font-size:11px; padding:2px 6px; margin-right:8px; }
   label { display:block; font-size:13px; margin:10px 0 4px; color:var(--muted); }
   input[type=text], input[type=number], select { width:100%; padding:8px 10px; background:var(--field-bg); border:1px solid var(--border2); border-radius:7px; color:var(--text); font-size:13px; }
   input[type=file]{ width:100%; font-size:12px; color:var(--muted); }
@@ -334,7 +336,8 @@
   <!-- RIGHT: run -->
   <div>
     <div class="panel">
-      <h2>Run <span id="statusPill" class="pill status-queued" style="display:none">queued</span></h2>
+      <h2>Run <span id="statusPill" class="pill status-queued" style="display:none">queued</span>
+        <button class="h2btn" id="logToggle" type="button">hide console</button></h2>
       <div class="jobbar" style="margin-bottom:10px">
         <select id="history"><option value="">— job history —</option></select>
         <button class="btn ghost" id="refreshJobs" type="button">↻</button>
@@ -344,17 +347,25 @@
     </div>
 
     <div class="panel" id="livePanel" style="display:none">
-      <h2>Live progress <span class="muted" id="liveMeta" style="font-weight:400"></span></h2>
-      <div id="liveConv"></div>
-      <div id="liveGrid" class="topgrid"></div>
+      <h2>Live progress <span class="muted" id="liveMeta" style="font-weight:400"></span>
+        <button class="h2btn" id="liveToggle" type="button">hide</button>
+        <select class="h2select" id="liveTopN"><option>6</option><option selected>12</option><option>24</option><option>48</option></select></h2>
+      <div id="liveBody">
+        <div id="liveConv"></div>
+        <div id="liveGrid" class="topgrid"></div>
+      </div>
     </div>
 
     <div class="panel" id="hitsPanel" style="display:none">
-      <h2>Results</h2>
-      <div class="muted" style="margin-bottom:8px">Each hit's "Seed" buttons carve that reagent's real docked pose into a
-        growth-ready fragment (.sdf download). Reuse <b>this same receptor</b> for the follow-up growth run so the
-        coordinate frame lines up.</div>
-      <div id="hits"></div>
+      <h2>Results
+        <button class="h2btn" id="hitsToggle" type="button">hide</button>
+        <select class="h2select" id="hitsTopN"><option>6</option><option selected>12</option><option>24</option><option>48</option></select></h2>
+      <div id="hitsBody">
+        <div class="muted" style="margin-bottom:8px">Each hit's "Seed" buttons carve that reagent's real docked pose into a
+          growth-ready fragment (.sdf download). Reuse <b>this same receptor</b> for the follow-up growth run so the
+          coordinate frame lines up.</div>
+        <div id="hits"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -957,6 +968,19 @@ document.addEventListener('click', async (e)=>{
   btn.textContent = prevText;
 });
 
+// ---- collapsible right-hand panes ----
+function wireToggle(btnId, bodyId, label){
+  const btn = el(btnId), body = el(bodyId), suffix = label ? ` ${label}` : '';
+  btn.addEventListener('click', ()=>{
+    const hidden = body.style.display==='none';
+    body.style.display = hidden ? '' : 'none';
+    btn.textContent = (hidden ? 'hide' : 'show') + suffix;
+  });
+}
+wireToggle('logToggle', 'log', 'console');
+wireToggle('liveToggle', 'liveBody');
+wireToggle('hitsToggle', 'hitsBody');
+
 // ---- live progress (gallery + convergence) while a job is running ----
 let liveTopTimer = null, liveConvTimer = null;
 function stopLivePanels(){
@@ -966,7 +990,8 @@ function stopLivePanels(){
 }
 async function pollLiveTop(){
   if (!currentJob) return;
-  let d; try { d = await (await fetch(`/jobs/${currentJob}/top?n=12`)).json(); } catch(e){ return; }
+  const n = parseInt(el('liveTopN').value) || 12;
+  let d; try { d = await (await fetch(`/jobs/${currentJob}/top?n=${n}`)).json(); } catch(e){ return; }
   const grid = el('liveGrid');
   if (!d.ready || !d.items.length){
     if (!grid.querySelector('.card')) grid.innerHTML = '<span class="muted">No docks yet…</span>';
@@ -975,6 +1000,7 @@ async function pollLiveTop(){
   el('liveMeta').textContent = `${d.target||''} · live · ${d.total} scored`;
   grid.innerHTML = galleryCards(d.items);
 }
+el('liveTopN').addEventListener('change', pollLiveTop);
 async function pollLiveConvergence(){
   if (!currentJob) return;
   let d; try { d = await (await fetch(`/jobs/${currentJob}/convergence`)).json(); } catch(e){ return; }
@@ -990,10 +1016,13 @@ function startLivePanels(){
   liveConvTimer = setInterval(pollLiveConvergence, 8000);
 }
 
+let lastHitsResult = null;
 function renderHits(result){
   const panel = el('hitsPanel'), host = el('hits');
   if (!result || !result.runs){ panel.style.display='none'; return; }
+  lastHitsResult = result;
   panel.style.display = '';
+  const topN = parseInt(el('hitsTopN').value) || 12;
   // Growth jobs carry fg_classes/accessible_reactions (accessibility pre-pass)
   // and the chosen route's steps; combi jobs carry neither -- unanchored, no
   // pruning involved.
@@ -1001,8 +1030,9 @@ function renderHits(result){
     accessible reactions ${ (result.accessible_reactions||[]).join(', ') || '—'}</div>` : '';
   const chain = (result.steps || []).map(s => s.name).join(' &rarr; ');
   for (const run of result.runs){
+    const topRows = (run.top||[]).slice(0, topN);
     html += `<div class="target-block"><h3>${chain || 'Combi search'}</h3>`;
-    html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
+    html += `<div class="sub">${run.n_docked} products scored · showing ${topRows.length} of ${ (run.top||[]).length } saved`;
     if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
     html += `</div>`;
     if (run.rejections && Object.keys(run.rejections).length){
@@ -1014,11 +1044,12 @@ function renderHits(result){
     }
     const meta = componentRouteMeta(result.steps);
     html += `<div class="topgrid">` +
-      galleryCards((run.top||[]).map((h,i)=>({rank:i+1, ...h})), currentJob, meta) + `</div>`;
+      galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, meta) + `</div>`;
     html += `</div>`;
   }
   host.innerHTML = html;
 }
+el('hitsTopN').addEventListener('change', ()=> renderHits(lastHitsResult));
 
 // ---- history ----
 async function loadHistory(){
