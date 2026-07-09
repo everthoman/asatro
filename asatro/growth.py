@@ -1,35 +1,32 @@
 """TS-driven fragment growth.
 
-Fix the bound fragment in one slot of a start reaction, Thompson-sample the
-reactant library in the other slot(s), and for each sampled product
-constrained-place it onto the bound pose and score it with GNINA — via the
-lifted ``AnchoredFragmentEvaluator`` and ``RouteSampler``.
+Fix the bound fragment in one slot of a (possibly multi-step) route, Thompson-
+sample the reactant library in every other slot, and for each sampled final
+product constrained-place it onto the bound pose and score it with GNINA — via
+the lifted ``AnchoredFragmentEvaluator`` and ``RouteSampler``.
 
 The fragment is "fixed" the same way the TS app did it: written as a one-line
 reagent file, so the sampler always picks it for that component while the real
 search happens over the other component(s). The conserved core (from the handle
 analysis) anchors the placement; pick it with ``derive_core`` so the reacting
-handle is excluded.
+handle is excluded. A route is a user-chosen chain: step 0 is a "start"
+reaction with the fragment fixed into one slot; any further steps are "extend"
+reactions consuming the running intermediate plus their own new reagent(s) —
+same route shape as ``combi.build_combi_route``, just with the fragment
+occupying one of step 0's slots instead of every slot being a real library.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from rdkit import Chem
 
-from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
 from asatro.chemistry.catalog import REACTION_BY_ID
 from asatro.chemistry.handles import neutralize
-from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
-
-# A reactant resolver maps (reaction_id, component_index, accepts_classes) to a
-# .smi path for that non-fragment component, or None if it can't supply one.
-ReactantResolver = Callable[[str, int, List[str]], Optional[str]]
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -46,33 +43,58 @@ def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:
     return str(p)
 
 
-def build_growth_route(reaction_id: str, fragment_smiles: str, fragment_slot: int,
-                       reactant_files: Dict[int, str], work_dir: Path
-                       ) -> Tuple[List[str], List[Tuple[str, int]]]:
-    """Reagent-file list (component order) + the single-step route.
+def build_growth_route(steps: List[str], fragment_smiles: str, fragment_slot: int,
+                       reactant_files: List[Dict[int, str]], work_dir: Path
+                       ) -> Tuple[List[str], List[Tuple[str, int]], List[str]]:
+    """Reagent-file list (route order) + the multi-step route + a human-readable
+    summary, mirroring ``combi.build_combi_route`` — except step 0's fragment
+    slot is filled by the bound fragment (a one-entry reagent file) instead of a
+    real library, so it never varies.
 
-    The fragment fills ``fragment_slot``; every other component must have a path
-    in ``reactant_files`` (keyed by component index). All components are sampled
-    in step 0 — the fragment's is just a one-entry list, so it never varies."""
-    rxn = REACTION_BY_ID.get(reaction_id)
-    if rxn is None:
-        raise KeyError(f"unknown reaction: {reaction_id}")
-    if rxn.get("role") != "start":
-        raise ValueError(f"growth seeds on a 'start' reaction, got '{reaction_id}'")
-    ncomp = len(rxn["components"])
-    if not 0 <= fragment_slot < ncomp:
-        raise ValueError(f"fragment_slot {fragment_slot} out of range for {reaction_id} "
-                         f"({ncomp} components)")
+    ``steps`` is a list of reaction ids: the first must be a ``"start"``
+    reaction, every later one an ``"extend"`` reaction (consumes the running
+    intermediate plus its own new reagent(s)). ``reactant_files[i]`` maps
+    component index -> resolved ``.smi`` path for step ``i``'s non-fragment
+    components (step 0 excludes ``fragment_slot``; later steps have no fragment
+    slot to exclude)."""
+    if not steps:
+        raise ValueError("no reaction steps given")
+    if len(reactant_files) != len(steps):
+        raise ValueError(
+            f"reactant_files has {len(reactant_files)} step(s), steps has {len(steps)}")
     files: List[str] = []
-    for i in range(ncomp):
-        if i == fragment_slot:
-            files.append(write_fragment_smi(fragment_smiles, work_dir))
-        else:
-            f = reactant_files.get(i)
-            if not f:
-                raise ValueError(f"no reactant file for component {i} of '{reaction_id}'")
-            files.append(f)
-    return files, [(rxn["smarts"], ncomp)]
+    route: List[Tuple[str, int]] = []
+    summary: List[str] = []
+    for i, rid in enumerate(steps):
+        rxn = REACTION_BY_ID.get(rid)
+        if rxn is None:
+            raise KeyError(f"unknown reaction: {rid}")
+        role = rxn.get("role")
+        if i == 0 and role != "start":
+            raise ValueError(f"step 1 must be a 'start' reaction, got '{rid}' ({role})")
+        if i > 0 and role != "extend":
+            raise ValueError(f"step {i + 1} must be an 'extend' reaction, got '{rid}' ({role})")
+        comps = rxn["components"]
+        if i == 0 and not 0 <= fragment_slot < len(comps):
+            raise ValueError(f"fragment_slot {fragment_slot} out of range for '{rid}' "
+                             f"({len(comps)} components)")
+        step_files: List[str] = []
+        labels: List[str] = []
+        for ci, comp in enumerate(comps):
+            if i == 0 and ci == fragment_slot:
+                f = write_fragment_smi(fragment_smiles, work_dir)
+                labels.append(f"{comp['label']} = bound fragment")
+            else:
+                f = reactant_files[i].get(ci)
+                if not f:
+                    raise ValueError(
+                        f"no reactant file for component {ci} of '{rid}' (step {i + 1})")
+                labels.append(f"{comp['label']} [{Path(f).name}]")
+            step_files.append(f)
+        files.extend(step_files)
+        route.append((rxn["smarts"], len(comps)))
+        summary.append(f"Step {i + 1}: {rxn['name']} [{', '.join(labels)}]")
+    return files, route, summary
 
 
 def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Optional[str],
@@ -91,32 +113,40 @@ def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Option
     return AnchoredFragmentEvaluator(d)
 
 
-def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
+def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[str],
                fragment_slot: int, core_smarts: Optional[str],
-               reactant_files: Dict[int, str], work_dir: str,
+               reactant_files: List[Dict[int, str]], work_dir: str,
                num_warmup: int = 3, num_cycles: int = 25,
                num_to_select: Optional[int] = None, seed: Optional[int] = None,
                mode: str = "minimize", concurrency: int = 1,
                hide_progress: bool = True,
                search_method: str = "ts", min_cpds_per_core: int = 50, stop: int = 6000,
+               max_core_rmsd: float = 1.5,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
-    """Run the full growth search. Returns ``(results, evaluator)`` where results
-    is the list of ``[score, smiles, name]`` rows the sampler collected.
+    """Run the full growth search over a user-chosen (possibly multi-step)
+    route. Returns ``(results, evaluator)`` where results is the list of
+    ``[score, smiles, name]`` rows the sampler collected.
 
-    If at most one reagent component actually varies (true of every current
-    start-reaction route: the fragment fixes one slot, one reagent library
-    fills the other), ``search_method``/``num_warmup``/``num_cycles`` are
-    moot -- the whole library is small enough to just dock exhaustively, and
-    there's no unseen combination left for a bandit search to find once
-    warm-up alone would have touched every reagent. Otherwise (2+ variable
-    slots), ``search_method`` picks the sampler: ``"ts"`` (default) is argmax
-    Thompson Sampling; ``"rws"`` is Roulette Wheel Selection with thermal
-    cycling (Zhao et al. 2025), which trades some greediness for better
-    coverage of 3+-component routes on ultralarge libraries. ``num_cycles`` is
-    the shared search budget (search iterations for TS, unique products to
-    dock for RWS) so a TS vs RWS run on the same budget is comparable;
-    ``min_cpds_per_core``/``stop`` only apply to RWS.
+    ``max_core_rmsd`` (A) is the placement guard: ``AnchoredFragmentEvaluator``
+    rejects any docked pose whose conserved-core atoms drift more than this
+    from the bound reference -- the fragment's known binding mode has to
+    survive the grow, however many steps it took, or the product doesn't count.
+
+    If at most one reagent component actually varies across the whole route
+    (true of a single-step start reaction: the fragment fixes one slot, one
+    reagent library fills the other), ``search_method``/``num_warmup``/
+    ``num_cycles`` are moot -- the whole library is small enough to just dock
+    exhaustively, and there's no unseen combination left for a bandit search to
+    find once warm-up alone would have touched every reagent. Otherwise (2+
+    variable slots -- the common case once an extend step is chained on),
+    ``search_method`` picks the sampler: ``"ts"`` (default) is argmax Thompson
+    Sampling; ``"rws"`` is Roulette Wheel Selection with thermal cycling (Zhao
+    et al. 2025), which trades some greediness for better coverage of
+    3+-component routes on ultralarge libraries. ``num_cycles`` is the shared
+    search budget (search iterations for TS, unique products to dock for RWS)
+    so a TS vs RWS run on the same budget is comparable; ``min_cpds_per_core``/
+    ``stop`` only apply to RWS.
 
     ``on_evaluator``, if given, is called with the evaluator as soon as it's built
     (before the search runs) so a caller can stash a live reference — e.g. for a
@@ -124,15 +154,18 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
     progress."""
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    files, route = build_growth_route(
-        reaction_id, fragment_smiles_from_sdf(fragment_sdf), fragment_slot,
+    files, route, summary = build_growth_route(
+        steps, fragment_smiles_from_sdf(fragment_sdf), fragment_slot,
         reactant_files, work)
 
     evaluator = make_evaluator(fragment_sdf=fragment_sdf, receptor_path=receptor_path,
                                core_smarts=core_smarts, work_dir=str(work / "dock"),
-                               **gnina_opts)
+                               max_core_rmsd=max_core_rmsd, **gnina_opts)
     if on_evaluator is not None:
         on_evaluator(evaluator)
+    if evaluator.progress_callback is not None:
+        for line in summary:
+            evaluator.progress_callback(line)
     sampler = RouteSampler(mode=mode)
     if seed is not None:
         sampler.set_seed(seed)
@@ -166,100 +199,14 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, reaction_id: str,
                 num_targets=num_cycles, min_cpds_per_core=min_cpds_per_core, stop=stop)
             results = warmup_results + search_results
     else:
-        sampler.warm_up(num_warmup_trials=num_warmup)
-        results = sampler.search(num_cycles=num_cycles)
+        warmup_results = sampler.warm_up(num_warmup_trials=num_warmup)
+        if not warmup_results:
+            # search() draws from per-reagent priors warm_up() seeds; nothing
+            # scored means those were never initialized (every reagent is still
+            # in its uninitialized "warmup" phase), so searching further would
+            # sample meaningless all-zero priors. Bail out cleanly, mirroring
+            # the RWS branch's guard above.
+            results = []
+        else:
+            results = sampler.search(num_cycles=num_cycles)
     return results, evaluator
-
-
-# ---------------------------------------------------------------------------
-# Accessibility-gated growth: only grow vectors that survived the pre-pass.
-# ---------------------------------------------------------------------------
-@dataclass
-class GrowthTarget:
-    reaction_id: str
-    fragment_slot: int
-    fg_class: str
-    core_smarts: str
-
-
-def plan_targets(assessment: dict) -> List[GrowthTarget]:
-    """Turn an accessibility assessment into the list of growth targets to run:
-    one per accessible slot of each accessible reaction (a reaction with two
-    accessible slots — e.g. an amino-acid fragment in amide coupling — yields two
-    targets, the fragment growing as either partner). The auto-derived conserved
-    core is carried through as the placement anchor."""
-    targets: List[GrowthTarget] = []
-    for rid, info in assessment["reactions"].items():
-        if not info.get("accessible"):
-            continue
-        for slot in info["slots"]:
-            if not slot.get("accessible", True):
-                continue
-            targets.append(GrowthTarget(rid, slot["index"], slot["fg_class"],
-                                        slot["core_smarts"]))
-    return targets
-
-
-def grow_accessible(*, fragment_sdf: str, receptor_pdb: str,
-                    reactant_resolver: ReactantResolver, work_dir: str,
-                    refine: bool = False, probe_params: Optional[ProbeParams] = None,
-                    stub_params: Optional[StubParams] = None,
-                    runner: Callable = run_growth,
-                    log: Optional[Callable[[str], None]] = None,
-                    **growth_opts) -> dict:
-    """Run the accessibility pre-pass, then grow only the surviving reaction/slots.
-
-    For each accessible target, the non-fragment components are resolved to
-    reactant files via ``reactant_resolver``; targets missing a reactant are
-    recorded as skipped (not grown). ``runner`` defaults to :func:`run_growth`
-    and is injectable so the pipeline can be exercised without docking.
-
-    Returns ``{assessment, targets, runs}`` — ``runs`` carries each target's
-    resolved reactant files and the runner's result (or a skip reason)."""
-    _log = log or (lambda _m: None)
-    mol = Chem.MolFromMolFile(fragment_sdf, removeHs=True)
-    if mol is None:
-        raise ValueError(f"could not read fragment SDF: {fragment_sdf}")
-    if mol.GetNumConformers() == 0:
-        raise ValueError("fragment SDF has no 3D conformer (need the bound pose)")
-    receptor = load_receptor_atoms(receptor_pdb)
-    _log(f"Accessibility pre-pass ({'geometric+stub' if refine else 'geometric'}) "
-         f"on {receptor.shape[0]} receptor atoms…")
-
-    if refine:
-        assessment = assess_with_stubs(mol, receptor, probe_params or ProbeParams(),
-                                       stub_params or StubParams())
-    else:
-        assessment = assess_fragment(mol, receptor, probe_params or ProbeParams())
-
-    targets = plan_targets(assessment)
-    _log(f"Handles {assessment['fg_classes']}; accessible reactions "
-         f"{assessment['accessible_reactions']} → {len(targets)} growth target(s)")
-    runs: List[dict] = []
-    for t in targets:
-        rxn = REACTION_BY_ID[t.reaction_id]
-        reactant_files: Dict[int, str] = {}
-        missing = None
-        for ci, comp in enumerate(rxn["components"]):
-            if ci == t.fragment_slot:
-                continue
-            path = reactant_resolver(t.reaction_id, ci, comp.get("accepts", []))
-            if not path:
-                missing = ci
-                break
-            reactant_files[ci] = path
-        entry = {"target": t.__dict__, "reactant_files": reactant_files}
-        if missing is not None:
-            entry["skipped"] = f"no reactant library for component {missing}"
-            _log(f"Skip {t.reaction_id} slot {t.fragment_slot}: {entry['skipped']}")
-            runs.append(entry)
-            continue
-        _log(f"Growing {t.reaction_id} (slot {t.fragment_slot}, core {t.core_smarts})…")
-        target_dir = Path(work_dir) / f"{t.reaction_id}_slot{t.fragment_slot}"
-        entry["result"] = runner(
-            fragment_sdf=fragment_sdf, receptor_path=receptor_pdb,
-            reaction_id=t.reaction_id, fragment_slot=t.fragment_slot,
-            core_smarts=t.core_smarts, reactant_files=reactant_files,
-            work_dir=str(target_dir), **growth_opts)
-        runs.append(entry)
-    return {"assessment": assessment, "targets": [t.__dict__ for t in targets], "runs": runs}

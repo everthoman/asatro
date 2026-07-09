@@ -114,13 +114,26 @@
     </div>
 
     <div class="panel" id="resultsPanel" style="display:none">
-      <h2>2 &middot; Handles &amp; accessible reactions</h2>
+      <h2>2 &middot; Handles &amp; accessible reactions <span class="muted" style="font-weight:400">(pick step 1)</span></h2>
       <div id="fgClasses" style="margin-bottom:8px"></div>
       <div id="reactionList"></div>
     </div>
 
+    <div class="panel" id="growthRoutePanel" style="display:none">
+      <h2>3 &middot; Route</h2>
+      <div class="muted">Step 1 is the accessible reaction/slot picked above &mdash; the fragment is
+        coupled to every candidate step-1 reagent before the adaptive search starts. Add further
+        steps to extend the running intermediate before it's scored.</div>
+      <div id="growthStep1Summary" class="step"></div>
+      <div id="growthExtendSteps"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn ghost" id="growthAddStepBtn" type="button">+ Add extend step</button>
+        <button class="btn ghost" id="growthRemoveStepBtn" type="button" disabled>&minus; Remove last step</button>
+      </div>
+    </div>
+
     <div class="panel" id="reactantPanel" style="display:none">
-      <h2>3 &middot; Reactant libraries</h2>
+      <h2>4 &middot; Reactant libraries</h2>
       <div class="checkline">
         <label style="margin:0">Source</label>
         <select id="reagentSource" style="width:auto">
@@ -147,7 +160,7 @@
     </div>
 
     <div class="panel" id="filtersPanel" style="display:none">
-      <h2>4 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
+      <h2>5 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
       <div class="checkline"><input type="checkbox" id="pains" checked><label style="margin:0">PAINS structural alerts</label></div>
       <div class="checkline"><input type="checkbox" id="reos" checked><label style="margin:0">REOS functional-group filter</label></div>
       <div class="row">
@@ -158,11 +171,18 @@
         <div><label>logP min</label><input type="number" id="logpLo" step="0.1" placeholder="-2"></div>
         <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5"></div>
       </div>
-      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
+      <div class="row">
+        <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span></label>
+          <input type="number" id="maxCoreRmsd" step="0.1" value="1.5" min="0"></div>
+        <div></div>
+      </div>
+      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to
+        disable. Core RMSD guard: reject any docked pose whose placed fragment core drifts more than this from the
+        bound reference (MCS match to the conserved core).</div>
     </div>
 
     <div class="panel" id="growPanel" style="display:none">
-      <h2>5 &middot; Growth run</h2>
+      <h2>6 &middot; Growth run</h2>
       <div class="grid3">
         <div><label>Search method</label>
           <select id="searchMethod">
@@ -326,6 +346,10 @@ const CATALOG = __CATALOG_JSON__;
 const RXN = Object.fromEntries(CATALOG.reactions.map(r => [r.id, r]));
 const groupLabel = c => CATALOG.groups[c] || c;
 let analysis = null;       // last /prune response
+// Step 1 of the growth route: {reactionId, slotIndex, coreSmarts, fgClass}, or
+// null until the user picks an accessible reaction/slot from panel 2.
+let growthStep1 = null;
+let growthExtendStepDivs = [];  // .step elements for steps 2+ (extend reactions)
 let currentJob = null;
 let evtSource = null;
 
@@ -346,6 +370,17 @@ function numOrNull(input){ const v = (input.value||'').trim(); return v===''? nu
 function logLine(s){ const L = el('log'); L.classList.remove('muted');
   L.textContent += (L.textContent && !L.textContent.endsWith('\n') ? '\n' : '') + s; L.scrollTop = L.scrollHeight; }
 function setStatus(s){ const p = el('statusPill'); p.style.display=''; p.className = 'pill status-' + s; p.textContent = s; }
+
+// Reactions that continue the same chemistry as ``startRid`` -- matched on the
+// name's family prefix (e.g. "Suzuki coupling") since reaction ids don't share
+// a prefix convention (suzuki -> suzuki_ext_*, but reductive_amination ->
+// redam_ext_*). Shared by both the growth route builder (step 1 is picked from
+// the accessible reactions) and the combi route builder (step 1 is user-chosen).
+function reactionFamily(rid){ const rx = RXN[rid]; return rx ? rx.name.split(' (')[0] : null; }
+function extendOptionsFor(startRid){
+  const fam = startRid ? reactionFamily(startRid) : null;
+  return CATALOG.reactions.filter(r => r.role==='extend' && (!fam || reactionFamily(r.id)===fam));
+}
 
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
@@ -380,6 +415,11 @@ el('analyzeBtn').addEventListener('click', async ()=>{
 
 function renderAnalysis(){
   el('resultsPanel').style.display = '';
+  growthStep1 = null;
+  growthExtendStepDivs.forEach(d => d.remove());
+  growthExtendStepDivs = [];
+  el('growthRoutePanel').style.display = 'none';
+  el('growthRemoveStepBtn').disabled = true;
   el('fgClasses').innerHTML = '<span class="muted">Handles:</span> ' +
     (analysis.fg_classes.length ? analysis.fg_classes.map(c=>`<span class="chip">${groupLabel(c)}</span>`).join('')
       : '<span class="bad">none detected — this scaffold has no reactive handle</span>');
@@ -395,31 +435,88 @@ function renderAnalysis(){
       const v = (s.vectors||[])[0];
       const reach = v ? ` · reach ${('max_free' in v)? v.max_free+'Å':''}${v.fits?(' · fits '+v.fits.join('/')):''}` : '';
       const ok = s.accessible !== false;
-      return `<div class="sub">slot ${s.index} = ${groupLabel(s.fg_class)} ·
+      const radioId = `step1_${rid}_${s.index}`;
+      const pick = ok ? `<input type="radio" name="step1choice" id="${radioId}"
+        data-reaction="${rid}" data-slot="${s.index}" data-core="${esc(s.core_smarts)}"
+        data-fgclass="${s.fg_class}" style="width:auto;margin-right:6px">
+        <label for="${radioId}" style="display:inline;margin:0;cursor:pointer">pick as step 1</label> &middot; ` : '';
+      return `<div class="sub">${pick}slot ${s.index} = ${groupLabel(s.fg_class)} ·
         core <code>${s.core_smarts}</code> <span class="${ok?'ok':'bad'}">${ok?'accessible':'blocked'}</span>${reach}</div>`;
     }).join('');
     div.innerHTML = `<div class="head"><b>${rx.name}</b>
       <span class="${acc?'ok':'bad'}">${acc?'✓ accessible':'✗ pruned'}</span></div>${slots}`;
     list.appendChild(div);
   }
+  list.querySelectorAll('input[name="step1choice"]').forEach(r => r.addEventListener('change', onPickStep1));
   renderReactantSlots();
 }
 
-// Which building-block libraries the accessible reactions need (non-fragment slots).
+function onPickStep1(e){
+  const t = e.target;
+  growthStep1 = { reactionId: t.dataset.reaction, slotIndex: parseInt(t.dataset.slot),
+                  coreSmarts: t.dataset.core, fgClass: t.dataset.fgclass };
+  growthExtendStepDivs.forEach(d => d.remove());
+  growthExtendStepDivs = [];
+  el('growthRemoveStepBtn').disabled = true;
+  renderGrowthStep1Summary();
+  el('growthRoutePanel').style.display = '';
+  renderReactantSlots();
+}
+
+function renderGrowthStep1Summary(){
+  const box = el('growthStep1Summary');
+  if (!growthStep1){ box.innerHTML = ''; return; }
+  const rx = RXN[growthStep1.reactionId] || {name: growthStep1.reactionId};
+  box.innerHTML = `<div class="head"><b>Step 1 (start)</b></div>
+    <div class="sub">${rx.name} &middot; fragment fills slot ${growthStep1.slotIndex}
+    (${groupLabel(growthStep1.fgClass)}) &middot; core <code>${growthStep1.coreSmarts}</code></div>`;
+}
+
+function addGrowthStep(){
+  const opts = extendOptionsFor(growthStep1 ? growthStep1.reactionId : null)
+    .map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+  if (!opts){ alert('No compatible extend reaction for this chemistry.'); return; }
+  const idx = growthExtendStepDivs.length + 1;   // step 1 is the picked start reaction/slot
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.innerHTML = `<div class="head"><b>Step ${idx + 1} (extend)</b></div>
+    <label>Reaction</label><select class="growthStepRxn">${opts}</select>`;
+  el('growthExtendSteps').appendChild(div);
+  div.querySelector('.growthStepRxn').addEventListener('change', renderReactantSlots);
+  growthExtendStepDivs.push(div);
+  el('growthRemoveStepBtn').disabled = false;
+  renderReactantSlots();
+}
+function removeGrowthStep(){
+  if (!growthExtendStepDivs.length) return;
+  growthExtendStepDivs.pop().remove();
+  el('growthRemoveStepBtn').disabled = growthExtendStepDivs.length === 0;
+  renderReactantSlots();
+}
+el('growthAddStepBtn').addEventListener('click', addGrowthStep);
+el('growthRemoveStepBtn').addEventListener('click', removeGrowthStep);
+
+// Which building-block libraries the chosen route needs (every non-fragment
+// component across step 1 and any extend steps) -- not every accessible
+// reaction, since only one route actually runs.
 function neededClasses(){
   const need = {};   // representative class -> {label, accepts}
-  for (const [rid, info] of Object.entries(analysis.reactions)){
-    if (!info.accessible) continue;
-    const rx = RXN[rid]; if (!rx) continue;
-    for (const slot of info.slots){
-      if (slot.accessible === false) continue;
-      rx.components.forEach((c, ci)=>{
-        if (ci === slot.index) return;            // the fragment's slot
-        const cls = (c.accepts||[])[0]; if (!cls) return;
-        need[cls] = { label: c.label, accepts: c.accepts };
-      });
-    }
+  if (!growthStep1) return need;
+  const rx1 = RXN[growthStep1.reactionId];
+  if (rx1){
+    rx1.components.forEach((c, ci)=>{
+      if (ci === growthStep1.slotIndex) return;    // the fragment's slot
+      const cls = (c.accepts||[])[0]; if (!cls) return;
+      need[cls] = { label: c.label, accepts: c.accepts };
+    });
   }
+  growthExtendStepDivs.forEach(d=>{
+    const rx = RXN[d.querySelector('.growthStepRxn').value]; if (!rx) return;
+    rx.components.forEach(c=>{
+      const cls = (c.accepts||[])[0]; if (!cls) return;
+      need[cls] = { label: c.label, accepts: c.accepts };
+    });
+  });
   return need;
 }
 
@@ -429,15 +526,15 @@ function renderReactantSlots(){
   const panel = el('reactantPanel'), host = el('reactantSlots');
   if (!keys.length){
     panel.style.display='none';
-    el('filtersPanel').style.display = analysis ? '' : 'none';
-    el('growPanel').style.display = analysis ? '' : 'none';
+    el('filtersPanel').style.display = growthStep1 ? '' : 'none';
+    el('growPanel').style.display = growthStep1 ? '' : 'none';
     return;
   }
   panel.style.display = '';
   host.innerHTML = keys.map(cls =>
     `<label>${need[cls].label} <span class="chip">${need[cls].accepts.map(groupLabel).join(' / ')}</span></label>
      <input type="file" class="reactantFile" data-class="${cls}" accept=".smi">`).join('');
-  // The pool box lists which classes the chosen reactions will draw from.
+  // The pool box lists which classes the chosen route will draw from.
   el('poolBox').dataset.need = JSON.stringify(keys);
   el('filtersPanel').style.display = '';
   el('growPanel').style.display = '';
@@ -477,15 +574,9 @@ el('searchMethod').addEventListener('change', e=>{
 // ---- combi route builder (no fragment: every slot is a real reagent library) ----
 let combiStepDivs = [];
 
-// Reactions that continue the same chemistry as ``rid`` -- matched on the
-// name's family prefix (e.g. "Suzuki coupling") since reaction ids don't
-// share a prefix convention (suzuki -> suzuki_ext_*, but
-// reductive_amination -> redam_ext_*).
-function combiFamily(rid){ const rx = RXN[rid]; return rx ? rx.name.split(' (')[0] : null; }
 function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
 function combiExtendReactions(){
-  const fam = combiStepDivs.length ? combiFamily(combiStepDivs[0].querySelector('.combiStepRxn').value) : null;
-  return CATALOG.reactions.filter(r => r.role==='extend' && (!fam || combiFamily(r.id)===fam));
+  return extendOptionsFor(combiStepDivs.length ? combiStepDivs[0].querySelector('.combiStepRxn').value : null);
 }
 function renderCombiStepFiles(div){
   const rid = div.querySelector('.combiStepRxn').value;
@@ -587,19 +678,21 @@ el('combiRunBtn').addEventListener('click', async ()=>{
 
 // ---- launch growth (/grow) ----
 el('growBtn').addEventListener('click', async ()=>{
-  if (!analysis){ return; }
+  if (!growthStep1){ alert('Pick step 1 from the accessible reactions above.'); return; }
   const fd = new FormData();
   if (poolMode()){
     if (el('poolFile').files.length) fd.append('pool', el('poolFile').files[0], 'pool.smi');
   } else {
     const reactantInputs = [...document.querySelectorAll('.reactantFile')];
-    if (!reactantInputs.length){ alert('No accessible reactions to grow.'); return; }
+    if (!reactantInputs.length){ alert('No reactant slots for this route.'); return; }
     if (reactantInputs.some(i => !i.files.length)){ alert('Upload a .smi library for every reactant slot.'); return; }
     reactantInputs.forEach(i => fd.append('reactants', i.files[0], i.dataset.class + '.smi'));
   }
 
   const cfg = {
     refine: el('refine').checked,
+    steps: [growthStep1.reactionId, ...growthExtendStepDivs.map(d => d.querySelector('.growthStepRxn').value)],
+    fragment_slot: growthStep1.slotIndex,
     search_method: el('searchMethod').value,
     num_cycles: parseInt(el('numCycles').value)||50,
     num_warmup: parseInt(el('numWarmup').value)||3,
@@ -609,6 +702,7 @@ el('growBtn').addEventListener('click', async ()=>{
     score_field: el('scoreField').value,
     cnn_scoring: el('cnnScoring').value,
     seed: el('seed').value ? parseInt(el('seed').value) : null,
+    max_core_rmsd: parseFloat(el('maxCoreRmsd').value) || 1.5,
     filters: {
       pains: el('pains').checked, reos: el('reos').checked,
       mw: [numOrNull(el('mwLo')), numOrNull(el('mwHi'))],
@@ -751,20 +845,14 @@ function renderHits(result){
   const panel = el('hitsPanel'), host = el('hits');
   if (!result || !result.runs){ panel.style.display='none'; return; }
   panel.style.display = '';
-  // Growth jobs carry fg_classes/accessible_reactions (accessibility pre-pass);
-  // combi jobs don't -- they're a single explicit route, no pruning involved.
+  // Growth jobs carry fg_classes/accessible_reactions (accessibility pre-pass)
+  // and the chosen route's steps; combi jobs carry neither -- unanchored, no
+  // pruning involved.
   let html = ('fg_classes' in result) ? `<div class="muted">Handles ${ (result.fg_classes||[]).map(groupLabel).join(', ') || '—'} ·
     accessible reactions ${ (result.accessible_reactions||[]).join(', ') || '—'}</div>` : '';
+  const chain = (result.steps || []).map(s => s.name).join(' &rarr; ');
   for (const run of result.runs){
-    const t = run.target;
-    if (t){
-      const rx = RXN[t.reaction_id] || {name:t.reaction_id};
-      html += `<div class="target-block"><h3>${rx.name}
-        <span class="sub">slot ${t.fragment_slot} · core <code>${t.core_smarts}</code></span></h3>`;
-    } else {
-      html += `<div class="target-block"><h3>Combi search</h3>`;
-    }
-    if (run.skipped){ html += `<div class="warn">skipped — ${run.skipped}</div></div>`; continue; }
+    html += `<div class="target-block"><h3>${chain || 'Combi search'}</h3>`;
     html += `<div class="sub">${run.n_docked} products scored · top ${ (run.top||[]).length }`;
     if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
     html += `</div>`;

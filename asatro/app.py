@@ -1,7 +1,8 @@
 """Asatro web app.
 
 FastAPI surface for fragment growing: handle analysis (``/analyze``), the
-accessibility pre-pass (``/prune``), and accessibility-gated growth runs as
+accessibility pre-pass (``/prune``), and fragment-anchored growth runs -- one
+user-chosen, possibly multi-step route, validated against the pre-pass -- as
 background jobs (``/grow`` + ``/jobs`` + log streaming) -- plus the plain,
 unanchored ts-gnina combinatorial search (``/combi``), sharing the same job
 layer and endpoints.
@@ -119,20 +120,39 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
                reactants: List[UploadFile] = File(default=[]),
                pool: UploadFile = File(default=None),
                config: str = Form("{}"), session_name: str = Form("")) -> dict:
-    """Start an accessibility-gated growth run as a background job.
+    """Start a fragment-anchored growth run (one user-chosen, possibly
+    multi-step route) as a background job.
 
     Uploads: the bound fragment (SDF, in pose), the receptor (PDB), and the
-    building blocks for the non-fragment slots — EITHER a single tagged master
-    ``pool`` (.smi, pruned per reaction component by FG class) OR one ``reactants``
-    library per slot (each file's name stem = its FG class, e.g. ``boronic.smi``).
-    Neither given falls back to the bundled default pool (Enamine Rush-Delivery EU).
-    ``config`` is JSON (refine, num_warmup, num_cycles, num_to_select, seed,
-    score_field, cnn_scoring, search_method [``"ts"``|``"rws"``], min_cpds_per_core,
-    stop). Returns the job id."""
+    building blocks for every non-fragment slot across the whole route — EITHER
+    a single tagged master ``pool`` (.smi, pruned per reaction component by FG
+    class) OR one ``reactants`` library per slot (each file's name stem = its
+    FG class, e.g. ``boronic.smi``). The same pool/class-tagged files serve
+    every step, since a component is resolved by the FG class(es) it accepts,
+    not by position. Neither upload given falls back to the bundled default
+    pool (Enamine Rush-Delivery EU).
+
+    ``config`` is JSON: ``steps`` (list of reaction ids — the first must be an
+    accessible "start" reaction for this fragment, later ones "extend"),
+    ``fragment_slot`` (int, which component of ``steps[0]`` the fragment
+    fills), plus the same run knobs as ``/combi`` (refine, num_warmup,
+    num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
+    [``"ts"``|``"rws"``], min_cpds_per_core, stop, max_core_rmsd — the core-
+    drift placement guard, in Å). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:
         raise HTTPException(400, f"bad config JSON: {e}")
+
+    steps = cfg.get("steps") or []
+    if not steps:
+        raise HTTPException(400, "config.steps: at least one reaction id required")
+    if cfg.get("fragment_slot") is None:
+        raise HTTPException(400, "config.fragment_slot: which component of step 1 the fragment fills")
+    fragment_slot = int(cfg["fragment_slot"])
+    for rid in steps:
+        if REACTION_BY_ID.get(rid) is None:
+            raise HTTPException(400, f"unknown reaction: {rid}")
 
     stage = jobs_dir() / "_uploads" / f"{int(time.time()*1000)}"
     stage.mkdir(parents=True, exist_ok=True)
@@ -159,6 +179,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
         pool_path = DEFAULT_POOL_PATH  # bundled Enamine Rush-Delivery EU pool
 
     job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
+                           steps=steps, fragment_slot=fragment_slot,
                            reactant_by_class=reactant_by_class, pool_path=pool_path,
                            cfg=cfg, session_name=session_name)
     return {"job_id": job.id, "status": job.status}

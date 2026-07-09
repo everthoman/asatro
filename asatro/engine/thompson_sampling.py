@@ -320,6 +320,15 @@ class ThompsonSampler:
                     for comp_i, reagent_j in enumerate(choice_list):
                         realfail_counts[(comp_i, reagent_j)] = realfail_counts.get((comp_i, reagent_j), 0) + 1
 
+        if not warmup_results:
+            # Every warm-up dock failed to produce a finite score (reaction never
+            # fired, prep/dock failed, or a fragment/receptor pairing gnina simply
+            # can't place) -- np.min/np.max/max() on an empty array/sequence would
+            # raise here. Nothing to seed a prior from, so bail out the same way
+            # warm_up_rws() does and let the caller treat this as no results.
+            self.logger.info("warmup score stats: cnt=0 -- nothing scored, skipping search")
+            return warmup_results
+
         warmup_scores = [ws[0] for ws in warmup_results]
         self.logger.info(
             f"warmup score stats: "

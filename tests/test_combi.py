@@ -107,6 +107,29 @@ def test_route_sampler_searches_with_all_slots_variable(tmp_path):
     assert all(len(row) == 3 for row in search)
 
 
+class _AlwaysFailEvaluator:
+    """Every dock scores NaN, as if gnina couldn't place/dock anything for this
+    fragment/receptor pairing -- regression coverage for warm_up() crashing
+    (``np.min``/``np.max`` of an empty array) when nothing scores during
+    warm-up instead of returning cleanly like warm_up_rws() already does."""
+    def evaluate(self, mol):
+        return float("nan")
+
+
+def test_route_sampler_warm_up_returns_empty_when_every_dock_fails(tmp_path):
+    halide = _write(tmp_path, "halide.smi", ["Brc1ccccc1 phBr", "Brc1ccc(C)cc1 tolBr"])
+    boronic = _write(tmp_path, "boronic.smi", ["OB(O)c1ccccc1 phB", "OB(O)c1ccncc1 pyB"])
+    files, route, _summary = build_combi_route(["suzuki"], [[halide, boronic]], tmp_path)
+
+    s = RouteSampler(mode="maximize")
+    s.set_hide_progress(True)
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route(route)
+    s.set_evaluator(_AlwaysFailEvaluator())
+    warmup = s.warm_up(num_warmup_trials=2)
+    assert warmup == []
+
+
 def test_make_evaluator_reference_ligand_mode(tmp_path):
     rec = tmp_path / "receptor.pdb"
     rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")

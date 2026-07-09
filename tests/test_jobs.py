@@ -80,19 +80,20 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
     sdf = _bound_sdf(tmp_path)
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",        # open pocket
+        steps=["suzuki"], fragment_slot=0,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1}, runner=_fake_runner)
     _await(job)
     assert job.status == "done"
     assert job.result["accessible_reactions"] == ["suzuki"]
+    assert job.result["steps"] == [{"reaction_id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)"}]
     run = job.result["runs"][0]
-    assert run["target"]["reaction_id"] == "suzuki"
     assert run["n_docked"] == 2
     # ranked best-first (minimize: lowest score first)
     assert run["top"][0]["score"] == -7.5
     # persisted to disk
     assert (job.dir / "results.json").is_file()
-    assert any("Growing suzuki" in ln for ln in job.lines)
+    assert any("route suzuki" in ln for ln in job.lines)
 
 
 def test_growth_job_summarizes_from_evaluator_not_search_rows(tmp_path, monkeypatch):
@@ -111,6 +112,7 @@ def test_growth_job_summarizes_from_evaluator_not_search_rows(tmp_path, monkeypa
 
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=0,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
     _await(job)
@@ -122,10 +124,15 @@ def test_growth_job_summarizes_from_evaluator_not_search_rows(tmp_path, monkeypa
     assert (job.dir / "poses_0.sdf").is_file()
 
 
-def test_growth_job_skips_when_pruned(tmp_path, monkeypatch):
+def test_growth_job_errors_when_chosen_slot_is_pruned(tmp_path, monkeypatch):
+    """The user picks step 1 from what /prune showed as accessible, but a job
+    re-runs the pre-pass itself (the source of truth at run time) and must
+    refuse -- as a job error, not a silent skip -- if that slot turns out
+    pruned (e.g. stale UI state, or refine=true tightening the geometric
+    pass's verdict)."""
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     sdf = _bound_sdf(tmp_path)
-    # Build a wall PDB across the C-Br exit so suzuki is pruned.
+    # Build a wall PDB across the C-Br exit so suzuki's slot is pruned.
     from asatro.chemistry.accessibility import growth_vectors
     import numpy as np
     mol = Chem.MolFromMolFile(sdf, removeHs=True)
@@ -143,11 +150,12 @@ def test_growth_job_skips_when_pruned(tmp_path, monkeypatch):
     called = []
     job = start_growth_job(
         fragment_path=sdf, receptor_path=str(wall),
+        steps=["suzuki"], fragment_slot=0,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={}, runner=lambda **k: called.append(k) or ([], None))
     _await(job)
-    assert job.status == "done"
-    assert job.result["accessible_reactions"] == []
+    assert job.status == "error"
+    assert "pruned" in job.error
     assert called == []  # nothing grown
 
 
@@ -156,6 +164,7 @@ def test_growth_job_error_is_captured(tmp_path, monkeypatch):
     bad = tmp_path / "bad.sdf"; bad.write_text("not an sdf")
     job = start_growth_job(
         fragment_path=str(bad), receptor_path="",
+        steps=["suzuki"], fragment_slot=0,
         reactant_by_class={"boronic": _boronic(tmp_path)}, runner=_fake_runner)
     _await(job)
     assert job.status == "error" and job.error
@@ -175,6 +184,7 @@ def test_growth_job_passes_filters_to_runner(tmp_path, monkeypatch):
 
     job = start_growth_job(
         fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=0,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1,
              "filters": {"mw": [100, 400], "logp": [None, 5]}},
@@ -204,7 +214,9 @@ def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
                 "receptor": ("receptor.pdb", b"", "chemical/x-pdb"),
                 "reactants": ("boronic.smi", b"OB(O)c1ccccc1 phB\n", "text/plain"),
             },
-            data={"config": json.dumps({"num_cycles": 1, "num_warmup": 1})},
+            data={"config": json.dumps({
+                "steps": ["suzuki"], "fragment_slot": 0,
+                "num_cycles": 1, "num_warmup": 1})},
         )
         assert r.status_code == 200, r.text
         job_id = r.json()["job_id"]
@@ -219,6 +231,25 @@ def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
 
 
+def test_grow_endpoint_rejects_missing_steps(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    sdf_bytes = open(_bound_sdf(tmp_path), "rb").read()
+    with TestClient(app) as client:
+        r = client.post(
+            "/grow",
+            files={
+                "fragment": ("frag.sdf", sdf_bytes, "chemical/x-mdl-sdfile"),
+                "receptor": ("receptor.pdb", b"", "chemical/x-pdb"),
+            },
+            data={"config": json.dumps({})},
+        )
+        assert r.status_code == 400
+        assert "steps" in r.text
+
+
 def test_growth_job_with_master_pool(tmp_path, monkeypatch):
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     sdf = _bound_sdf(tmp_path)                     # bromobenzene -> suzuki (boronic)
@@ -231,13 +262,14 @@ def test_growth_job_with_master_pool(tmp_path, monkeypatch):
         return ([[-7.0, "X", "x"]], None)
 
     job = start_growth_job(
-        fragment_path=sdf, receptor_path="", pool_path=str(pool),
-        cfg={"num_cycles": 1}, runner=runner)
+        fragment_path=sdf, receptor_path="", steps=["suzuki"], fragment_slot=0,
+        pool_path=str(pool), cfg={"num_cycles": 1}, runner=runner)
     _await(job)
     assert job.status == "done"
     assert len(calls) == 1
     # the pool was pruned to the boronic component (2 boronics, not the acid)
-    boronic_smi = calls[0]["reactant_files"][1]
+    # -- reactant_files is one dict per step; step 0's boronic slot is index 1
+    boronic_smi = calls[0]["reactant_files"][0][1]
     names = [l.split()[1] for l in open(boronic_smi).read().splitlines() if l.strip()]
     assert sorted(names) == ["phB", "tolB"]
 

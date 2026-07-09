@@ -78,27 +78,36 @@ Net effect: the main search only ever explores growable directions.
   library through the full `/grow` job path, hitting the actual `gnina.1.3.2`
   binary (both plain Vina `cnn_scoring=none` and GPU CNN `rescore`) — sane
   affinities, low core RMSD (constrained placement holding), real poses written.
-- **Pre-pass → growth connection** (`grow_accessible` / `plan_targets`): the
-  accessibility assessment gates the search — only accessible reaction/slots become
-  growth targets, each carrying its auto-derived conserved core; non-fragment
-  components are resolved to reactant files via an injectable resolver. So pruned
-  vectors never cost a docking call.
+- **Pre-pass → growth connection**: the UI picks *one* accessible reaction/slot
+  from the pre-pass result as step 1 (the fragment fills that slot — its
+  auto-derived conserved core is the placement anchor) and may chain further
+  "extend" steps onto it, same route shape as `combi.build_combi_route`. A job
+  re-runs the pre-pass itself and refuses (job error, not a silent skip) if the
+  chosen slot turns out pruned. Non-fragment components — across *every* step —
+  are resolved to reactant files via an injectable, reaction/component-agnostic
+  resolver (a class-tagged pool or per-class files serve the whole route for
+  free, since resolution is by FG class, not position); "pruning combined
+  reagents for both steps" is just calling that resolver once per component,
+  route-wide. `max_core_rmsd` (the placement guard on `AnchoredFragmentEvaluator`
+  — reject any docked pose whose conserved core drifts too far from the bound
+  reference) is exposed as an adjustable config/UI knob rather than hardcoded.
 - **Job/endpoint layer** (`jobs.py`, `app.py`): a growth run is a background thread
-  (`start_growth_job`) that runs the pre-pass then grows the survivors, streaming
-  console lines and persisting a per-target results summary + metadata under the
+  (`start_growth_job`) that validates the chosen route against the pre-pass, then
+  runs the whole route (start step + any extend steps) as a single TS/RWS search
+  — streaming console lines and persisting a results summary + metadata under the
   job dir. Endpoints: `POST /grow` (fragment SDF + receptor PDB + reactant .smi
-  files named by FG class + JSON config), `GET /jobs`, `GET /jobs/{id}`,
-  `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream` (SSE), `GET
-  /jobs/{id}/poses/{file}` (download the docked SDF for a target). The docking
+  files named by FG class + JSON config carrying `steps`/`fragment_slot`), `GET
+  /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/cancel`, `GET /jobs/{id}/stream`
+  (SSE), `GET /jobs/{id}/poses/{file}` (download the docked SDF). The docking
   runner is injectable, so the whole flow is tested without gnina.
-  Fixed while validating against real gnina: `_summarize` was ranking only
-  `sampler.search()`'s return value, but warm-up docks (one per reagent, always
-  real docking work) never reappear there — so any run small enough for
+  Fixed while validating against real gnina: the results summary was ranking
+  only `sampler.search()`'s return value, but warm-up docks (one per reagent,
+  always real docking work) never reappear there — so any run small enough for
   warm-up alone to cover the library (the common case) reported `n_docked: 0`
   and an empty top list despite real, successful docking. Now sourced from the
   evaluator's own score cache (`top_scored`/`stats`) when one is given, which
-  also lets it persist the actual top poses (`write_top_poses`) per target —
-  previously discarded the moment the per-dock work dir was cleaned up.
+  also lets it persist the actual top poses (`write_top_poses`) — previously
+  discarded the moment the per-dock work dir was cleaned up.
 - **Master reagent pool** (`pool.py`): instead of a curated library per slot, one
   tagged `.smi` pool — each block desalted + neutralized and tagged with every
   vocabulary class it bears; a reaction component is served the union of blocks

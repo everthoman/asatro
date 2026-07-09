@@ -140,6 +140,12 @@ def run_combi(*, receptor_path: str, steps: List[str], reagent_files: List[List[
                 num_targets=num_cycles, min_cpds_per_core=min_cpds_per_core, stop=stop)
             results = warmup_results + search_results
     else:
-        sampler.warm_up(num_warmup_trials=num_warmup)
-        results = sampler.search(num_cycles=num_cycles)
+        warmup_results = sampler.warm_up(num_warmup_trials=num_warmup)
+        if not warmup_results:
+            # Same bail-out as the RWS branch above: nothing scored means
+            # every reagent is still uninitialized, so search() would sample
+            # meaningless all-zero priors instead of finding anything real.
+            results = []
+        else:
+            results = sampler.search(num_cycles=num_cycles)
     return results, evaluator

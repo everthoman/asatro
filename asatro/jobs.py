@@ -2,11 +2,13 @@
 
 Both run as a background thread and share the same ``GrowthJob`` bookkeeping
 (status, live log lines, evaluator handle for live polling, persisted results):
-a growth run does the accessibility pre-pass, then grows the surviving
-reaction/slots (one run per target); a combi run is always exactly one
-explicit, unanchored multi-step route (no pre-pass, no skips). Console lines
-stream live; metadata + a results summary persist under the job dir so
-finished runs stay viewable after a restart.
+a growth run is one user-chosen, fragment-anchored route (the accessibility
+pre-pass validates the chosen start slot and supplies its conserved core, then
+the whole route -- start step plus any chained extend steps -- runs as a
+single TS/RWS search); a combi run is the same shape but unanchored (no
+fragment, no pre-pass). Console lines stream live; metadata + a results
+summary persist under the job dir so finished runs stay viewable after a
+restart.
 
 Mirrors the TS app's Job pattern, slimmed for growth (no CNN re-dock sub-run).
 """
@@ -22,9 +24,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from rdkit import Chem
+
+from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
+from asatro.chemistry.catalog import REACTION_BY_ID
+from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
 from asatro.engine.gnina_evaluator import MolFilters
-from asatro.growth import grow_accessible, run_growth
+from asatro.growth import run_growth
 from asatro.svg import mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -129,63 +136,14 @@ def make_class_resolver(reactant_by_class: Dict[str, str]):
     return resolve
 
 
-def _summarize(out: dict, higher_is_better: Optional[bool], job_dir: Optional[Path] = None) -> dict:
-    """JSON-safe summary of a grow_accessible result: per target, the top hits.
-
-    ``sampler.search()`` only returns products docked during the *search*
-    phase — warm-up docks (one per reagent, always real docking work) are
-    never re-visited by search and so never appear in its return value. The
-    evaluator's score cache (``top_scored`` / ``stats``) covers warm-up *and*
-    search, so it — not the raw search rows — is the source of truth whenever
-    a real evaluator is available. Without one (the fake runners used in
-    tests) we fall back to ranking the rows we were handed directly."""
-    runs = []
-    for i, r in enumerate(out["runs"]):
-        entry = {"target": r["target"]}
-        if "skipped" in r:
-            entry["skipped"] = r["skipped"]
-            runs.append(entry)
-            continue
-        res = r["result"]
-        rows, ev = res if isinstance(res, tuple) else (res, None)
-        if ev is not None:
-            ranked = ev.top_scored(TOP_N)
-            n_docked = ev.stats()["unique_scored"]
-        else:
-            hib = bool(higher_is_better)
-            ranked = sorted(rows, key=lambda x: x[0], reverse=hib)[:TOP_N]
-            n_docked = len(rows)
-        entry["n_docked"] = n_docked
-        entry["top"] = [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm)}
-                        for s, sm, nm in ranked]
-        if ev is not None:
-            pts = ev.convergence()
-            st = ev.stats()
-            entry["convergence"] = {
-                "points": [{"dock": d, "best": b} for d, b in pts],
-                "score_field": ev.score_field, "higher_better": bool(ev.higher_is_better),
-                "docked": st["docked"], "best": st["best_score"],
-            }
-            if st.get("rejections"):
-                entry["rejections"] = st["rejections"]
-            if job_dir is not None:
-                fname = f"poses_{i}.sdf"
-                if ev.write_top_poses(str(job_dir / fname), n=TOP_N) > 0:
-                    entry["poses"] = fname
-        runs.append(entry)
-    return {
-        "fg_classes": out["assessment"]["fg_classes"],
-        "accessible_reactions": out["assessment"]["accessible_reactions"],
-        "runs": runs,
-    }
-
-
 def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
                      job_dir: Optional[Path] = None) -> dict:
-    """JSON-safe summary of a run_combi result, in the same ``{runs: [...]}``
-    shape ``_summarize`` produces for a growth job -- a combi job is just
-    always exactly one run (no accessibility pre-pass, no per-target skips),
-    so it carries a single-element ``runs`` list."""
+    """JSON-safe summary of a search run (combi or growth): both are always
+    exactly one route -- combi has no accessibility pre-pass, growth's pre-pass
+    only validates/anchors the chosen route rather than fanning out into
+    multiple targets -- so both carry a single-element ``runs`` list. A growth
+    job layers ``fg_classes``/``accessible_reactions``/``steps`` on top of
+    this (see ``_run``)."""
     if evaluator is not None:
         ranked = evaluator.top_scored(TOP_N)
         n_docked = evaluator.stats()["unique_scored"]
@@ -213,17 +171,41 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
 
 def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
          reactant_by_class: Dict[str, str], pool_path: Optional[str],
-         cfg: dict, runner: Callable) -> None:
+         steps: List[str], fragment_slot: int, cfg: dict, runner: Callable) -> None:
+    """Fragment-anchored growth: validate the user-chosen (steps[0], fragment_slot)
+    against the accessibility pre-pass, resolve every step's reagent components
+    (steps[1:] are extend reactions -- no fragment slot to skip), then run the
+    whole route as a single TS/RWS search -- contrast with ``_run_combi``'s
+    unanchored, pre-pass-free route."""
     job.status = "running"
     _persist_meta(job)
-    job.log(f"Growth job {job.id} started")
+    job.log(f"Growth job {job.id} started — route {' -> '.join(steps)} "
+            f"(fragment in slot {fragment_slot} of step 1)")
     try:
-        def _runner(**kw):
-            def _on_evaluator(ev):
-                job.evaluator = ev
-                job.current_target = f"{kw.get('reaction_id')} (slot {kw.get('fragment_slot')})"
-            return runner(progress_callback=job.log, cancel_event=job.cancel_event,
-                          on_evaluator=_on_evaluator, **kw)
+        mol = Chem.MolFromMolFile(fragment_path, removeHs=True)
+        if mol is None:
+            raise ValueError(f"could not read fragment SDF: {fragment_path}")
+        if mol.GetNumConformers() == 0:
+            raise ValueError("fragment SDF has no 3D conformer (need the bound pose)")
+        receptor = load_receptor_atoms(receptor_path)
+        refine = bool(cfg.get("refine", False))
+        job.log(f"Accessibility pre-pass ({'geometric+stub' if refine else 'geometric'}) "
+                f"on {receptor.shape[0]} receptor atoms…")
+        assessment = (assess_with_stubs(mol, receptor, ProbeParams(), StubParams()) if refine
+                     else assess_fragment(mol, receptor, ProbeParams()))
+        job.log(f"Handles {assessment['fg_classes']}; accessible reactions "
+                f"{assessment['accessible_reactions']}")
+
+        info = assessment["reactions"].get(steps[0])
+        if not info or not info.get("compatible"):
+            raise ValueError(f"'{steps[0]}' is not a compatible start reaction for this fragment")
+        slot = next((s for s in info["slots"] if s["index"] == fragment_slot), None)
+        if slot is None:
+            raise ValueError(f"fragment_slot {fragment_slot} is not a valid slot for '{steps[0]}'")
+        if not slot.get("accessible", True):
+            raise ValueError(
+                f"slot {fragment_slot} of '{steps[0]}' was pruned by the accessibility pre-pass")
+        core_smarts = slot["core_smarts"]
 
         if pool_path:
             from asatro.pool import Pool, pool_resolver
@@ -233,6 +215,26 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             resolver = pool_resolver(pool, str(job.dir / "pool"))
         else:
             resolver = make_class_resolver(reactant_by_class)
+
+        # Resolve every step's non-fragment components against the same
+        # source (pool or class-tagged files) -- "prune combined reagents for
+        # both steps" is just calling the reaction/component-agnostic
+        # resolver once per component, across the whole route.
+        reactant_files: List[Dict[int, str]] = []
+        for i, rid in enumerate(steps):
+            rxn = REACTION_BY_ID.get(rid)
+            if rxn is None:
+                raise ValueError(f"unknown reaction: {rid}")
+            step_map: Dict[int, str] = {}
+            for ci, comp in enumerate(rxn["components"]):
+                if i == 0 and ci == fragment_slot:
+                    continue
+                path = resolver(rid, ci, comp.get("accepts", []))
+                if not path:
+                    raise ValueError(
+                        f"no reactant library for component {ci} of '{rid}' (step {i + 1})")
+                step_map[ci] = path
+            reactant_files.append(step_map)
 
         mol_filters = make_filters(cfg)
         if mol_filters.active:
@@ -244,11 +246,14 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
 
-        out = grow_accessible(
-            fragment_sdf=fragment_path, receptor_pdb=receptor_path,
-            reactant_resolver=resolver,
-            work_dir=str(job.dir / "runs"), runner=_runner, log=job.log,
-            refine=bool(cfg.get("refine", False)),
+        def _on_evaluator(ev):
+            job.evaluator = ev
+            job.current_target = " -> ".join(steps)
+
+        rows, evaluator = runner(
+            fragment_sdf=fragment_path, receptor_path=receptor_path,
+            steps=steps, fragment_slot=fragment_slot, core_smarts=core_smarts,
+            reactant_files=reactant_files, work_dir=str(job.dir / "run"),
             num_warmup=int(cfg.get("num_warmup", 3)),
             num_cycles=int(cfg.get("num_cycles", 25)),
             num_to_select=cfg.get("num_to_select"),
@@ -259,11 +264,18 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             search_method=search_method,
             min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
             stop=int(cfg.get("stop", 6000)),
+            max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
+            progress_callback=job.log, cancel_event=job.cancel_event,
+            on_evaluator=_on_evaluator,
         )
-        job.result = _summarize(out, higher_is_better=False, job_dir=job.dir)
+        job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
+        job.result["fg_classes"] = assessment["fg_classes"]
+        job.result["accessible_reactions"] = assessment["accessible_reactions"]
+        job.result["steps"] = [{"reaction_id": rid, "name": REACTION_BY_ID[rid]["name"]}
+                               for rid in steps]
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if job.cancel_event.is_set() else "done"
-        job.log(f"Job {job.status} — {len(job.result['runs'])} target(s)")
+        job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
         job.error = str(e)
@@ -339,16 +351,19 @@ def _persist_meta(job: GrowthJob) -> None:
         pass
 
 
-def start_growth_job(*, fragment_path: str, receptor_path: str,
-                     reactant_by_class: Optional[Dict[str, str]] = None,
+def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List[str],
+                     fragment_slot: int, reactant_by_class: Optional[Dict[str, str]] = None,
                      pool_path: Optional[str] = None, cfg: Optional[dict] = None,
                      session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
-    """Create a job dir, register the job, and run it in a background thread.
+    """Create a job dir, register the job, and run one user-chosen growth route
+    (fragment fixed into ``fragment_slot`` of ``steps[0]``, any further steps
+    extending the intermediate) in a background thread.
 
     Reactants come from either per-class files (``reactant_by_class``) or a single
-    tagged master pool (``pool_path``), pruned per reaction component. ``runner``
-    defaults to :func:`asatro.growth.run_growth` (resolved at call time so it stays
-    patchable) and is injectable so the job layer can be driven without docking."""
+    tagged master pool (``pool_path``), pruned per reaction component across every
+    step. ``runner`` defaults to :func:`asatro.growth.run_growth` (resolved at
+    call time so it stays patchable) and is injectable so the job layer can be
+    driven without docking."""
     runner = runner or run_growth
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
     job_dir = jobs_dir() / job_id
@@ -358,7 +373,7 @@ def start_growth_job(*, fragment_path: str, receptor_path: str,
     job.thread = threading.Thread(
         target=_run,
         args=(job, fragment_path, receptor_path, reactant_by_class or {}, pool_path,
-              cfg or {}, runner),
+              steps, fragment_slot, cfg or {}, runner),
         daemon=True,
     )
     job.thread.start()
