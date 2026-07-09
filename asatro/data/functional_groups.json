@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "_comment": "Functional-group vocabulary for Asatro handle detection. Each group has a 'smarts' (what marks the handle on a fragment) and an optional 'leaving_smarts' (the atoms that do NOT survive into the product when this group reacts). The conserved-core for grow-from-fragment = the fragment minus the leaving atoms (largest connected remnant). Absent/null leaving_smarts means nothing leaves (e.g. an amine N stays; the whole fragment is conserved). 'refinement' classes are subsets of 'parent'.",
   "groups": {
     "primary_amine": {
@@ -49,6 +49,112 @@
       "label": "Ketone",
       "family": "carbonyl",
       "leaving_smarts": "[OX1;$([OX1]=[CX3]([#6])[#6])]"
+    },
+    "sulfonyl_chloride": {
+      "smarts": "[SX4](=[OX1])(=[OX1])Cl",
+      "label": "Sulfonyl chloride",
+      "family": "sulfonyl_chloride",
+      "leaving_smarts": "[Cl;$([Cl][SX4](=O)(=O))]"
+    },
+    "terminal_alkyne": {
+      "smarts": "[C;H1]#[C]",
+      "label": "Terminal alkyne",
+      "family": "alkyne"
+    },
+    "azide": {
+      "smarts": "[#6][NX2]=[N+X2]=[N-X1]",
+      "label": "Organic azide",
+      "family": "azide"
+    },
+    "alkyl_halide": {
+      "smarts": "[CX4][Br,I]",
+      "label": "Alkyl bromide/iodide",
+      "family": "alkyl_halide",
+      "leaving_smarts": "[Br,I;$([Br,I][CX4])]"
+    },
+    "isocyanate": {
+      "smarts": "[#6][NX2]=[CX2]=[OX1]",
+      "label": "Isocyanate",
+      "family": "isocyanate"
+    },
+    "alcohol": {
+      "smarts": "[OX2H][CX4]",
+      "label": "Aliphatic alcohol",
+      "family": "alcohol"
+    },
+    "phenol": {
+      "smarts": "[OX2H][c]",
+      "label": "Phenol",
+      "family": "phenol"
+    },
+    "thiol": {
+      "smarts": "[SX2H][#6]",
+      "label": "Thiol",
+      "family": "thiol"
+    },
+    "acyl_halide": {
+      "smarts": "[CX3](=[OX1])[Cl,Br]",
+      "label": "Acyl chloride/bromide",
+      "family": "acyl_halide",
+      "leaving_smarts": "[Cl,Br;$([Cl,Br][CX3]=O)]"
+    },
+    "hydrazide": {
+      "smarts": "[CX3](=[OX1])[NX3H][NH2]",
+      "label": "Acylhydrazide",
+      "family": "hydrazide",
+      "leaving_smarts": "[OX1;$([OX1]=[CX3][NX3H][NH2])]"
+    },
+    "nitrile": {
+      "smarts": "[CX2]#[NX1]",
+      "label": "Nitrile",
+      "family": "nitrile"
+    },
+    "alkene": {
+      "smarts": "[CX3H1]=[CX3H2]",
+      "label": "Terminal alkene (monosubstituted)",
+      "family": "alkene"
+    },
+    "nheterocycle": {
+      "smarts": "[nH]",
+      "label": "NH-heterocycle (pyrrole/indole/imidazole type)",
+      "family": "nheterocycle"
+    },
+    "diaminoarene": {
+      "smarts": "[NH2][c]:[c][NH2]",
+      "label": "1,2-Diaminoarene",
+      "family": "diaminoarene"
+    },
+    "organozinc": {
+      "smarts": "[#6][Zn][Cl,Br,I]",
+      "label": "Organozinc halide",
+      "family": "organozinc",
+      "leaving_smarts": "[Zn][Cl,Br,I]"
+    },
+    "phosphonate_ester": {
+      "smarts": "[PX4](=[OX1])([OX2][CX4])[OX2][CX4]",
+      "label": "Phosphonate ester",
+      "family": "phosphonate",
+      "leaving_smarts": "[PX4](=[OX1])([OX2][CX4])[OX2][CX4]"
+    },
+    "alpha_fluoroketone": {
+      "smarts": "[CX3](=[OX1])[CH2][F]",
+      "label": "Alpha-fluoroketone",
+      "family": "alpha_fluoroketone"
+    },
+    "amidine": {
+      "smarts": "[CX3](=[NH])[NH2]",
+      "label": "Amidine",
+      "family": "amidine"
+    },
+    "alpha_ketoester": {
+      "smarts": "[#6][CX3](=[OX1])[CX3](=[OX1])[OX2][CX4]",
+      "label": "Alpha-keto acid ester",
+      "family": "alpha_ketoester"
+    },
+    "pinacolborane": {
+      "smarts": "[BX3H1]1[OX2][CX4]([CX4])([CX4])[CX4]([CX4])([CX4])[OX2]1",
+      "label": "Pinacolborane (HBpin)",
+      "family": "boronic"
     }
   }
 }

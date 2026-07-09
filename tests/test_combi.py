@@ -8,9 +8,27 @@ and is not run here.
 import pytest
 from rdkit import Chem
 
+from asatro.chemistry.catalog import START_REACTIONS
 from asatro.combi import build_combi_route, make_evaluator
 from asatro.engine.evaluators import MWEvaluator
 from asatro.engine.route_sampler import RouteSampler
+
+# One hand-picked, class-matching example reagent per functional-group class --
+# covers every start reaction's components (each accepts[0] is looked up here).
+# Every entry validated to actually match its own class's detection SMARTS.
+_CLASS_EXAMPLES = {
+    "primary_amine": "CCN", "secondary_amine": "CCNCC", "carboxylic_acid": "CCC(=O)O",
+    "aryl_halide": "Brc1ccccc1", "activated_aryl_halide": "O=[N+]([O-])c1ccc(F)cc1",
+    "boronic": "OB(O)c1ccccc1", "aldehyde": "CCC=O", "ketone": "CC(=O)C",
+    "sulfonyl_chloride": "CS(=O)(=O)Cl", "terminal_alkyne": "C#Cc1ccccc1",
+    "azide": "CCN=[N+]=[N-]", "alkyl_halide": "CCBr", "isocyanate": "CCN=C=O",
+    "alcohol": "CCO", "phenol": "Oc1ccccc1", "thiol": "CCS", "acyl_halide": "CC(=O)Cl",
+    "hydrazide": "CC(=O)NN", "nitrile": "CC#N", "alkene": "C=Cc1ccccc1",
+    "nheterocycle": "c1cc[nH]c1", "diaminoarene": "Nc1ccccc1N", "organozinc": "CC[Zn]Br",
+    "phosphonate_ester": "CCOP(=O)(OCC)CC(=O)OCC", "alpha_fluoroketone": "CCC(=O)CF",
+    "amidine": "CC(=N)N", "alpha_ketoester": "CC(=O)C(=O)OCC",
+    "pinacolborane": "B1OC(C)(C)C(C)(C)O1",
+}
 
 
 def _write(tmp_path, name, lines):
@@ -128,6 +146,24 @@ def test_route_sampler_warm_up_returns_empty_when_every_dock_fails(tmp_path):
     s.set_evaluator(_AlwaysFailEvaluator())
     warmup = s.warm_up(num_warmup_trials=2)
     assert warmup == []
+
+
+@pytest.mark.parametrize("rxn", START_REACTIONS, ids=[r["id"] for r in START_REACTIONS])
+def test_every_start_reaction_builds_a_real_product(tmp_path, rxn):
+    """Combi-path coverage of the full ts-gnina-ported catalog: one hand-picked,
+    class-matching reagent per component actually fires the reaction SMARTS and
+    sanitizes -- catches SMARTS typos/bugs independent of the growth path's
+    leaving_smarts (which this doesn't exercise at all)."""
+    files = []
+    for i, comp in enumerate(rxn["components"]):
+        smi = _CLASS_EXAMPLES[comp["accepts"][0]]
+        files.append(_write(tmp_path, f"r{i}.smi", [f"{smi} R{i}"]))
+    s = RouteSampler(mode="minimize")
+    s.set_hide_progress(True)
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route([(rxn["smarts"], len(rxn["components"]))])
+    mol, smi, _name, _sel = s._build_product([0] * len(rxn["components"]))
+    assert mol is not None, f"{rxn['id']} failed to build a product: {smi}"
 
 
 def test_make_evaluator_reference_ligand_mode(tmp_path):

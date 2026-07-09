@@ -148,6 +148,39 @@ def test_anchored_evaluator_max_core_rmsd_is_adjustable(tmp_path):
     assert ev.max_core_rmsd == 0.25
 
 
+def test_anchored_evaluator_organozinc_clean_removal(tmp_path):
+    """negishi: organozinc's leaving_smarts (the whole ZnX group) removes cleanly
+    -- a single, unambiguous case among the classes ported from ts-gnina."""
+    sdf = _write_bound_fragment(tmp_path, "CC[Zn]Br")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    core = derive_core("CC[Zn]Br", "organozinc")
+    assert core == "CC"  # Zn + Br both leave
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=str(rec), core_smarts=core,
+                        work_dir=str(tmp_path / "dock"))
+    block, err = ev._prepare_pose("CCc1ccccc1")  # negishi product (ethylbenzene)
+    assert err is None and block is not None
+    placed = Chem.MolFromMolBlock(block)
+    assert placed is not None and placed.HasSubstructMatch(Chem.MolFromSmiles(core))
+
+
+def test_anchored_evaluator_alcohol_nothing_leaves(tmp_path):
+    """williamson: alcohol's leaving_smarts is None (the O survives as an ether
+    O, only its H is displaced) -- the "nothing leaves" default, same
+    convention already used for amines."""
+    sdf = _write_bound_fragment(tmp_path, "CCO")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    core = derive_core("CCO", "alcohol")
+    assert core == "CCO"  # nothing leaves
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=str(rec), core_smarts=core,
+                        work_dir=str(tmp_path / "dock"))
+    block, err = ev._prepare_pose("CCOCC")  # williamson product (diethyl ether)
+    assert err is None and block is not None
+    placed = Chem.MolFromMolBlock(block)
+    assert placed is not None and placed.HasSubstructMatch(Chem.MolFromSmiles(core))
+
+
 def test_fragment_smiles_from_sdf_roundtrip(tmp_path):
     sdf = _write_bound_fragment(tmp_path, "OC(=O)c1ccncc1")
     assert fragment_smiles_from_sdf(sdf) == Chem.CanonSmiles("OC(=O)c1ccncc1")

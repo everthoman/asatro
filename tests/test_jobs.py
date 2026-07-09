@@ -85,7 +85,10 @@ def test_growth_job_runs_and_summarizes(tmp_path, monkeypatch):
         cfg={"num_cycles": 1, "num_warmup": 1}, runner=_fake_runner)
     _await(job)
     assert job.status == "done"
-    assert job.result["accessible_reactions"] == ["suzuki"]
+    # bromobenzene's aryl-halide handle is accepted by several start reactions
+    # now (buchwald, sonogashira, ullmann, ...) -- just check suzuki survived
+    # the pre-pass, not that it's the only accessible reaction.
+    assert "suzuki" in job.result["accessible_reactions"]
     assert job.result["steps"] == [{"reaction_id": "suzuki", "name": "Suzuki coupling (aryl halide + boronic acid)"}]
     run = job.result["runs"][0]
     assert run["n_docked"] == 2
@@ -227,7 +230,7 @@ def test_grow_endpoint_and_jobs_listing(tmp_path, monkeypatch):
                 break
             time.sleep(0.02)
         assert d["status"] == "done", d
-        assert d["result"]["accessible_reactions"] == ["suzuki"]
+        assert "suzuki" in d["result"]["accessible_reactions"]
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
 
 
