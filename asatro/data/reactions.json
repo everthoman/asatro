@@ -364,7 +364,7 @@
       "name": "Urea formation (amine + isocyanate)",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[NX3;H2:1].[#6][NX2:2]=[CX2:3]=[OX1:4]>>[N:1][C:3](=[O:4])[N:2]",
+      "smarts": "[NX3;H2:1].[#6:5][NX2:2]=[CX2:3]=[OX1:4]>>[N:1][C:3](=[O:4])[N:2][#6:5]",
       "components": [
         {
           "label": "Primary amine",
@@ -450,7 +450,7 @@
       "name": "Sonogashira (aryl Br/I + terminal alkyne)",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6][C:2]#[CH:3]>>[c:1][C:3]#[C:2]",
+      "smarts": "[c:1][Br,I].[#6:4][C:2]#[CH:3]>>[c:1][C:3]#[C:2][#6:4]",
       "components": [
         {
           "label": "Aryl bromide/iodide",
@@ -1122,7 +1122,7 @@
       "name": "Decarboxylative C\u2013C coupling (aryl halide + alpha-keto acid ester)",
       "role": "start",
       "takes_intermediate": false,
-      "smarts": "[c:1][Br,I].[#6:2][CX3:3](=[OX1])[CX3:4](=[OX1])[OX2][CX4]>>[c:1][C:4]=[OX1]",
+      "smarts": "[c:1][Br,I].[#6:2][CX3:3](=[OX1:5])[CX3](=[OX1])[OX2][CX4]>>[c:1][C:3](=[O:5])[#6:2]",
       "components": [
         {
           "label": "Aryl bromide/iodide",
