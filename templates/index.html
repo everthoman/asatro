@@ -402,12 +402,19 @@ function allExtendReactions(){ return CATALOG.reactions.filter(r => r.role === '
 // intermediate atom more reliably, the generalized ones just reuse a
 // reaction's own un-modified SMARTS with the intermediate placed at the
 // chosen slot.
-function extendStepOptionsHtml(){
+//
+// Displayed slot numbers are route position, not the reaction's own raw
+// component index: the fragment/intermediate is always slot 1, and every
+// step contributes exactly one new reagent (whichever raw index it happens
+// to fill in that reaction's own SMARTS), so that reagent's slot number is
+// fully determined by which step this is -- identical for every option in
+// this dropdown, regardless of which reaction/component gets picked.
+function extendStepOptionsHtml(slotNumber){
   const legacy = allExtendReactions()
-    .map(r => `<option value="${r.id}|0">${esc(r.name)}</option>`).join('');
+    .map(r => `<option value="${r.id}|0">${esc(r.name)} — slot ${slotNumber}</option>`).join('');
   const reused = CATALOG.reactions.filter(r => r.role === 'start').flatMap(r =>
     r.components.map((c, ci) =>
-      `<option value="${r.id}|${ci}">${esc(r.name)} — slot ${ci + 1} (${esc(c.label)})</option>`)
+      `<option value="${r.id}|${ci}">${esc(r.name)} (${esc(c.label)}) — slot ${slotNumber}</option>`)
   ).join('');
   return `<optgroup label="Extend reactions">${legacy}</optgroup>`
        + `<optgroup label="Any reaction (choose the intermediate's slot)">${reused}</optgroup>`;
@@ -489,7 +496,12 @@ function renderAnalysis(){
       if (s.accessible === false) return;
       const key = `${rid}|${s.index}`;
       step1Choices[key] = { reactionId: rid, slotIndex: s.index, coreSmarts: s.core_smarts, fgClass: s.fg_class };
-      options.push(`<option value="${key}">${esc(rx.name)} — slot ${s.index + 1} (${esc(groupLabel(s.fg_class))})</option>`);
+      // The bound fragment is always route-position slot 1 here, regardless
+      // of which raw component index it happens to fill in this particular
+      // reaction's own SMARTS -- that raw index (s.index) stays purely
+      // internal (still needed to place the fragment correctly for the
+      // reaction), never shown to the user.
+      options.push(`<option value="${key}">${esc(rx.name)} (${esc(groupLabel(s.fg_class))}) — slot 1</option>`);
     });
   }
   el('step1Select').innerHTML = options.join('');
@@ -518,13 +530,18 @@ function renderGrowthStep1Summary(){
   if (!growthStep1){ box.innerHTML = ''; return; }
   const rx = RXN[growthStep1.reactionId] || {name: growthStep1.reactionId};
   box.innerHTML = `<div class="head"><b>Step 1 (start)</b></div>
-    <div class="sub">${rx.name} &middot; fragment fills slot ${growthStep1.slotIndex + 1}
-    (${groupLabel(growthStep1.fgClass)}) &middot; core <code>${growthStep1.coreSmarts}</code></div>`;
+    <div class="sub">${rx.name} &middot; fragment fills slot 1
+    (${groupLabel(growthStep1.fgClass)}) &middot; new reagent fills slot 2
+    &middot; core <code>${growthStep1.coreSmarts}</code></div>`;
 }
 
 function addGrowthStep(){
-  const opts = extendStepOptionsHtml();
   const idx = growthExtendStepDivs.length + 1;   // step 1 is the picked start reaction/slot
+  // Fragment = slot 1, step 1's reagent = slot 2, so this step's (the
+  // (idx+1)-th step's) one new reagent is always slot idx+2 -- fixed by
+  // which step this is, independent of which reaction/slot gets chosen.
+  const slotNumber = idx + 2;
+  const opts = extendStepOptionsHtml(slotNumber);
   const div = document.createElement('div');
   div.className = 'step';
   div.innerHTML = `<div class="head"><b>Step ${idx + 1} (extend)</b></div>
@@ -643,9 +660,13 @@ function renderCombiStepFiles(div){
 function addCombiStep(){
   const isFirst = combiStepDivs.length === 0;
   const idx = combiStepDivs.length;
+  // Step 1 fills slots 1+2 (both real reagents, natural component order);
+  // every step after that contributes exactly one new reagent, so its slot
+  // number is fixed by which step this is (idx+2), same formula as growth's
+  // extend steps -- independent of which reaction/slot gets chosen.
   const opts = isFirst
     ? combiStartReactions().map(r=>`<option value="${r.id}">${r.name}</option>`).join('')
-    : extendStepOptionsHtml();
+    : extendStepOptionsHtml(idx + 2);
   const div = document.createElement('div');
   div.className = 'step';
   div.innerHTML = `<div class="head"><b>Step ${idx+1}${isFirst?' (start)':' (extend)'}</b></div>

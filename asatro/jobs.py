@@ -200,8 +200,11 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
     _persist_meta(job)
     step0_id = resolve_step(steps[0], 0)["reaction_id"]
     step_ids = [step0_id] + [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps[1:], 1)]
+    # Displayed slot numbers are route position, not fragment_slot's raw
+    # component index: the fragment is always shown as slot 1, matching the
+    # UI's convention (see templates/index.html's renderGrowthStep1Summary).
     job.log(f"Growth job {job.id} started — route {' -> '.join(step_ids)} "
-            f"(fragment in slot {fragment_slot + 1} of step 1)")
+            f"(fragment fills slot 1 of step 1)")
     try:
         mol = Chem.MolFromMolFile(fragment_path, removeHs=True)
         if mol is None:
