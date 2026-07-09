@@ -13,6 +13,7 @@ import json
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 
@@ -25,7 +26,7 @@ from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
-from asatro.jobs import JOBS, jobs_dir, list_jobs, start_combi_job, start_growth_job
+from asatro.jobs import JOBS, jobs_dir, list_jobs, reap_orphaned_jobs, start_combi_job, start_growth_job
 from asatro.seed import carve_fragment, component_route_meta
 from asatro.svg import mol_svg
 
@@ -50,7 +51,13 @@ CATALOG = {
     "groups": {k: g.get("label", k) for k, g in VOCAB.groups.items()},
 }
 
-app = FastAPI(title="Asatro", version=__version__)
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    reap_orphaned_jobs()
+    yield
+
+
+app = FastAPI(title="Asatro", version=__version__, lifespan=_lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

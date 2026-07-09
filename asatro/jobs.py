@@ -97,6 +97,43 @@ class GrowthJob:
 JOBS: Dict[str, GrowthJob] = {}
 
 
+def reap_orphaned_jobs() -> List[str]:
+    """Fix up any job whose persisted ``job.json`` says ``running``/``queued``
+    from *before this process started* -- ``JOBS`` is freshly empty at import
+    time, so no thread can possibly still be attached to it; the docking
+    process that owned it is gone (most commonly: the service restarted while
+    a job was mid-run, e.g. between a cancel request being logged and the
+    job actually reaching a checkpoint to honor it). Left alone, ``list_jobs``
+    would report it as ``running`` forever, since nothing else ever rewrites
+    a stale ``job.json``. Call once at startup, before serving requests."""
+    fixed = []
+    for d in jobs_dir().iterdir():
+        if not d.is_dir() or d.name == "_uploads":
+            continue
+        f = d / "job.json"
+        if not f.is_file():
+            continue
+        try:
+            meta = json.loads(f.read_text())
+        except Exception:
+            continue
+        if meta.get("status") not in ("running", "queued"):
+            continue
+        meta["status"] = "error"
+        meta["error"] = "orphaned: server restarted while this job was running"
+        meta["finished"] = time.time()
+        f.write_text(json.dumps(meta, indent=2))
+        log = d / "run.log"
+        try:
+            with open(log, "a") as fh:
+                fh.write(f"[{time.strftime('%H:%M:%S')}] ERROR: orphaned — "
+                         f"server restarted while this job was running\n")
+        except Exception:
+            pass
+        fixed.append(d.name)
+    return fixed
+
+
 def _slugify(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", (name or "").strip()).strip("._-")[:64]
 
