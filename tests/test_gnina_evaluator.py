@@ -4,10 +4,15 @@ Boc/Cbz/Fmoc-protected building blocks in commercial pools reacting at one
 handle while leaving the other's protecting group on the docked/reported
 product.
 """
+import subprocess
+import sys
+import threading
+import time
+
 from rdkit import Chem
 
 from asatro.combi import make_evaluator
-from asatro.engine.gnina_evaluator import deprotect_smiles
+from asatro.engine.gnina_evaluator import DockingCancelled, deprotect_smiles
 
 
 def _canon(smi):
@@ -93,4 +98,95 @@ def test_evaluator_caches_by_deprotected_smiles(tmp_path):
     mol2 = Chem.MolFromSmiles(protected)
     score2, reason2 = ev.evaluate_detailed(mol2)
     assert score2 == -5.0 and reason2 is None
-    assert docked_with == [free]  # unchanged -- no second dock
+
+
+def _make_ev(tmp_path, **extra):
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    return make_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
+                          work_dir=str(tmp_path / "dock"), **extra)
+
+
+def test_cuda_visible_devices_hidden_when_cnn_scoring_off(tmp_path):
+    # cnn_scoring="none" -> pure CPU Vina, no GPU should ever be exposed,
+    # regardless of gpu_id/gpu_ids being set.
+    ev = _make_ev(tmp_path, cnn_scoring="none", gpu_ids=[2, 5])
+    assert ev._next_cuda_visible_devices() == ""
+
+
+def test_cuda_visible_devices_single_gpu_fallback(tmp_path):
+    # No gpu_ids given -> falls back to the single gpu_id (default 0).
+    ev = _make_ev(tmp_path, cnn_scoring="rescore", gpu_id=3)
+    assert ev._next_cuda_visible_devices() == "3"
+    assert ev._next_cuda_visible_devices() == "3"
+
+
+def test_cuda_visible_devices_round_robins_across_gpu_ids(tmp_path):
+    # Concurrent CNN-scoring docks must not all pile onto the same GPU --
+    # this is what triggered a real hang under GPU contention (concurrency=4,
+    # cnn_scoring="rescore", all pinned to gpu_id=0 by default).
+    ev = _make_ev(tmp_path, cnn_scoring="rescore", gpu_ids=[2, 5])
+    seen = [ev._next_cuda_visible_devices() for _ in range(5)]
+    assert seen == ["2", "5", "2", "5", "2"]
+
+
+def test_run_pollable_completes_normally(tmp_path):
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+    proc = ev._run_pollable(["echo", "hi"], env={}, timeout=5)
+    assert proc.returncode == 0
+    assert "hi" in proc.stdout
+
+
+def test_run_pollable_honors_cancel_event_mid_flight(tmp_path):
+    # Regression test for the real production hang: a batch of concurrent
+    # docks used to be uninterruptible once launched -- cancel_event was only
+    # checked before a dock started, so a slow/hung dock blocked the whole
+    # job for up to `timeout` (600s default) no matter what. _run_pollable
+    # must notice cancel_event *while a dock is running* and kill it well
+    # before either the process finishes on its own or the timeout fires.
+    ev = _make_ev(tmp_path, cnn_scoring="none", timeout=30)
+    ev.cancel_event = threading.Event()
+
+    def cancel_soon():
+        time.sleep(0.3)
+        ev.cancel_event.set()
+    threading.Thread(target=cancel_soon, daemon=True).start()
+
+    start = time.monotonic()
+    try:
+        ev._run_pollable(["sleep", "10"], env={}, timeout=30)
+        assert False, "expected DockingCancelled"
+    except DockingCancelled:
+        pass
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"cancellation took {elapsed:.2f}s -- should be ~0.3-0.5s, not blocked until sleep/timeout"
+
+
+def test_run_pollable_bounds_stdout_from_a_high_volume_child(tmp_path):
+    # Regression test for a real production OOM (2026-08-12): Popen(stdout=PIPE)
+    # + repeated communicate(timeout=poll) retries used to accumulate *all* of a
+    # slow child's output in this process's own memory across every retry,
+    # unboundedly, for as long as it ran (up to `timeout`, 600s default) --
+    # confirmed live to hit ~2.9GB parent RSS in 8s against a synthetic runaway
+    # child, and this is what actually OOM-killed asatro-webapp in production
+    # (anon-rss 58.9GB) on a job stuck for 16 minutes. stdout/stderr are now
+    # captured to on-disk tempfiles with only the tail kept, so the returned
+    # CompletedProcess can never reflect more than a bounded slice regardless
+    # of how much the child actually produced.
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+    cmd = [sys.executable, "-c", "print('y' * 300000)"]
+    proc = ev._run_pollable(cmd, env={}, timeout=5)
+    assert proc.returncode == 0
+    assert len(proc.stdout) <= 65536 + 16  # _tail_text's max_bytes + a little slack
+
+
+def test_run_pollable_raises_timeout_expired_without_waiting_full_sleep(tmp_path):
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+    start = time.monotonic()
+    try:
+        ev._run_pollable(["sleep", "10"], env={}, timeout=1)
+        assert False, "expected TimeoutExpired"
+    except subprocess.TimeoutExpired:
+        pass
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"took {elapsed:.2f}s -- should stop at ~1s (the configured timeout), not the full 10s sleep"

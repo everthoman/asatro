@@ -49,6 +49,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -366,6 +367,15 @@ class MolFilters:
         return None
 
 
+def _tail_text(f, max_bytes: int = 65536) -> str:
+    """Last ``max_bytes`` of a binary file object, decoded -- used to bound
+    how much of a subprocess's captured output ever lands in memory,
+    regardless of how much it actually produced (see ``_run_pollable``)."""
+    size = f.seek(0, os.SEEK_END)
+    f.seek(max(0, size - max_bytes))
+    return f.read().decode("utf-8", errors="replace")
+
+
 # ---------------------------------------------------------------------------
 # GNINA docking evaluator
 # ---------------------------------------------------------------------------
@@ -409,6 +419,12 @@ class GninaEvaluator(Evaluator):
         self.autobox_add = float(input_dict.get("autobox_add", 4.0))
         self.ph = float(input_dict.get("ph", 7.4))
         self.gpu_id = int(input_dict.get("gpu_id", os.environ.get("TS_DOCK_GPU", 0)))
+        # Optional list of GPU indices to round-robin CNN-scoring docks across
+        # (e.g. both cards on a multi-GPU box) instead of pinning every
+        # concurrent dock to the same one. None/empty -> single `gpu_id` above.
+        gpu_ids = input_dict.get("gpu_ids")
+        self.gpu_ids = [int(g) for g in gpu_ids] if gpu_ids else None
+        self._gpu_round_robin = 0
         self.gnina_path = input_dict.get("gnina_path", GNINA_PATH)
         self.seed = int(input_dict.get("seed", 666))
         self.timeout = int(input_dict.get("timeout", 600))
@@ -554,6 +570,74 @@ class GninaEvaluator(Evaluator):
         ]
 
     # -- Docking ------------------------------------------------------------
+    def _next_cuda_visible_devices(self) -> str:
+        """Which GPU (if any) the next dock should see.
+
+        CNN scoring is the GPU-bound step. With ``cnn_scoring="none"`` gnina
+        does pure (CPU) Vina docking, which is much faster here and needs no
+        GPU -- so hide the GPUs entirely to avoid contention. Only expose a
+        GPU when a CNN mode is actually requested, round-robining across
+        ``gpu_ids`` (if given) so concurrent docks don't all pile onto the
+        same card."""
+        if self.cnn_scoring == "none":
+            return ""
+        if self.gpu_ids:
+            with self._lock:
+                gpu = self.gpu_ids[self._gpu_round_robin % len(self.gpu_ids)]
+                self._gpu_round_robin += 1
+            return str(gpu)
+        return str(self.gpu_id)
+
+    def _run_pollable(self, cmd: List[str], env: dict, timeout: int) -> subprocess.CompletedProcess:
+        """Like ``subprocess.run(..., timeout=timeout)`` but polls in short
+        slices so ``cancel_event`` can kill an in-flight dock immediately
+        instead of only blocking new ones from starting.
+
+        Without this, a single hung/slow dock (e.g. several concurrent CNN
+        rescoring calls contending for the same GPU) blocks a whole
+        concurrent batch for up to ``timeout`` regardless of a cancel
+        request, since ``evaluate_detailed``'s cancel check only runs before
+        a dock starts, not while one is already blocked inside
+        ``subprocess.run``. Retrying ``proc.wait()`` after a ``TimeoutExpired``
+        is the documented-safe way to poll a ``Popen`` without killing it
+        early.
+
+        stdout/stderr are captured to on-disk tempfiles, *not*
+        ``subprocess.PIPE``: ``Popen(stdout=PIPE)`` + repeated
+        ``communicate(timeout=poll)`` retries accumulates *all* of a slow
+        child's output in this process's own memory across every retry,
+        unboundedly, for as long as it keeps running (up to ``timeout`` --
+        600s by default). A single pathological/runaway dock producing
+        sustained output can balloon this process by tens of GB before the
+        timeout even fires -- confirmed live: a synthetic runaway child hit
+        ~2.9GB parent RSS in 8 seconds under this exact polling pattern, and
+        this is what actually OOM-killed asatro-webapp in production
+        (anon-rss 58.9GB) on a job that had been silently stuck for 16
+        minutes. Tempfiles are OS page cache (evictable under memory
+        pressure), not unreclaimable Python heap -- and ``proc.wait()``
+        against file-redirected output doesn't buffer anything in Python at
+        all. Only the tail is kept once the process ends, so a runaway
+        child's output can't bloat the return value either."""
+        with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
+            proc = subprocess.Popen(cmd, stdout=out_f, stderr=err_f, env=env)
+            start = time.monotonic()
+            poll = 0.5
+            while True:
+                try:
+                    proc.wait(timeout=poll)
+                    break
+                except subprocess.TimeoutExpired:
+                    if self.cancel_event is not None and self.cancel_event.is_set():
+                        proc.kill()
+                        proc.wait()
+                        raise DockingCancelled()
+                    if time.monotonic() - start > timeout:
+                        proc.kill()
+                        proc.wait()
+                        raise subprocess.TimeoutExpired(cmd, timeout)
+            return subprocess.CompletedProcess(
+                cmd, proc.returncode, _tail_text(out_f), _tail_text(err_f))
+
     def _dock(self, smiles: str) -> float:
         sdf_block, err = self._prepare_pose(smiles)
         if sdf_block is None:
@@ -583,19 +667,10 @@ class GninaEvaluator(Evaluator):
         cmd += self._extra_flags()
 
         env = os.environ.copy()
-        # CNN scoring is the GPU-bound step. With cnn_scoring="none" gnina does
-        # pure (CPU) Vina docking, which is much faster here and needs no GPU —
-        # so hide the GPUs entirely to avoid contention. Only expose a GPU when
-        # a CNN mode is actually requested.
-        if self.cnn_scoring == "none":
-            env["CUDA_VISIBLE_DEVICES"] = ""
-        else:
-            env["CUDA_VISIBLE_DEVICES"] = str(self.gpu_id)
+        env["CUDA_VISIBLE_DEVICES"] = self._next_cuda_visible_devices()
 
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, env=env, timeout=self.timeout
-            )
+            proc = self._run_pollable(cmd, env, self.timeout)
         except subprocess.TimeoutExpired:
             with self._lock:
                 self.dock_failures += 1
