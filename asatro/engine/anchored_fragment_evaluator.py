@@ -51,6 +51,7 @@ This module assumes those two hooks exist.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 from typing import List, Optional, Tuple
 
@@ -152,8 +153,84 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
             f"atom/group), and keep whole aromatic rings intact.") from e
 
 
+_EMBED_TIMEOUT_DEFAULT = 60  # seconds
+
+# ``forkserver``, not the platform default ``fork`` or ``spawn``:
+# - ``fork`` from a process that has other live threads (the concurrent-dock
+#   ThreadPoolExecutor workers calling this) is fragile -- only the forking
+#   thread survives in the child, and any lock held by a non-forking thread
+#   at the moment of fork stays permanently "held" in the child, a classic
+#   source of child-side deadlocks.
+# - ``spawn`` re-imports/re-executes the *calling program's* __main__ module
+#   in every child (that's how it reconstructs enough state to unpickle the
+#   target) -- fine for a script that guards its top level with
+#   ``if __name__ == "__main__":``, but this is library code with no control
+#   over the caller. Confirmed the hard way: an unguarded test script's
+#   top-level `start_growth_job(...)` call got re-executed inside every
+#   single spawned embed worker, each of which then spawned its own
+#   recursive embed workers, each re-executing the script again.
+# ``forkserver`` starts one single-threaded helper process (safe to fork
+# from) a single time, up front -- new workers are forked from *that*, not
+# from this multi-threaded caller and not by re-running __main__ per call.
+_MP_CTX = multiprocessing.get_context("forkserver")
+
+
+def _embed_worker(mol_bytes: bytes, core_bytes: bytes, seed: int, out_q) -> None:
+    """Runs in an isolated child process (see ``_run_constrained_embed``)."""
+    try:
+        mol = Chem.Mol(mol_bytes)
+        core = Chem.Mol(core_bytes)
+        AllChem.ConstrainedEmbed(mol, core, randomseed=seed)
+        out_q.put(("ok", mol.ToBinary()))
+    except Exception as e:  # noqa: BLE001 -- report back, don't crash the child silently
+        out_q.put(("error", str(e)))
+
+
+def _run_constrained_embed(mol: Chem.Mol, core: Chem.Mol, seed: int, timeout: float) -> Chem.Mol:
+    """``AllChem.ConstrainedEmbed``, isolated in its own process and bounded by
+    a wall-clock timeout.
+
+    RDKit's embedding has no native timeout and, for a strained or very
+    flexible growth, can occasionally take pathologically long or never
+    converge -- with no way to interrupt the C++ call mid-flight from Python.
+    An earlier version of this ran the embed in a worker *thread* and simply
+    stopped waiting on timeout, but that doesn't free anything: Python
+    threads can't be force-killed, so the abandoned computation kept running
+    (and, on the one real production case that triggered this, kept
+    allocating memory without bound -- ~48GB RSS and climbing, one stuck
+    candidate after another, no docking subprocess ever even started). A
+    *process* can actually be killed and its memory reclaimed by the OS, so
+    that's what a timeout does here."""
+    q = _MP_CTX.Queue()
+    p = _MP_CTX.Process(target=_embed_worker, args=(mol.ToBinary(), core.ToBinary(), seed, q))
+    p.start()
+    p.join(timeout)
+    if p.is_alive():
+        p.terminate()
+        p.join(5)
+        if p.is_alive():
+            p.kill()
+            p.join()
+        raise TimeoutError(
+            f"constrained embed exceeded {timeout}s (likely a strained/pathological "
+            f"conformer) -- worker process killed")
+    try:
+        # A short blocking get, not get_nowait(): multiprocessing.Queue hands
+        # data to the parent via a background feeder thread over a pipe, so
+        # even after a normal (non-timeout) exit there's a brief window where
+        # p.join() has returned but the item hasn't landed in the queue yet.
+        status, payload = q.get(timeout=5)
+    except Exception:
+        raise RuntimeError("constrained embed worker exited without a result "
+                           "(likely crashed/OOM in the child process)")
+    if status == "error":
+        raise RuntimeError(payload)
+    return Chem.Mol(payload)
+
+
 def _constrained_pose_block(
-    smiles: str, ph: float, core: Chem.Mol, seed: int = 0xF00D
+    smiles: str, ph: float, core: Chem.Mol, seed: int = 0xF00D,
+    embed_timeout: float = _EMBED_TIMEOUT_DEFAULT,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Protonate ``smiles`` (reusing GninaEvaluator's obabel step), then build a 3D
@@ -174,8 +251,10 @@ def _constrained_pose_block(
     try:
         # ConstrainedEmbed: matches core in mol, fixes those atoms at the core
         # coordinates, embeds the rest, and runs a restrained MMFF minimisation.
-        AllChem.ConstrainedEmbed(mol, core, randomseed=seed)
-    except Exception as e:  # embedding can fail for very strained grows
+        # Runs isolated in a child process (see _run_constrained_embed) -- the
+        # embedded conformer comes back on `mol`, not mutated in place.
+        mol = _run_constrained_embed(mol, core, seed, embed_timeout)
+    except Exception as e:  # embedding can fail (or time out) for very strained grows
         return None, f"constrained embed failed: {e}"
     block = Chem.MolToMolBlock(mol) + "$$$$\n"
     lines = block.split("\n")
@@ -198,6 +277,15 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      leaving handle). Strongly recommended.
         max_core_rmsd: float (1.5)- reject if core drifts more than this (A).
         local_only   : bool (True)- pass --local_only to gnina (no global search).
+        embed_timeout: float (60) - give up on one candidate's ConstrainedEmbed
+                                     after this many seconds (see
+                                     ``_run_constrained_embed`` -- RDKit's
+                                     embedding has no native timeout and can,
+                                     for a strained/flexible growth, run for a
+                                     very long time or effectively never
+                                     converge, blocking -- and in one observed
+                                     production case, consuming unbounded
+                                     memory in -- a whole concurrent batch).
     """
 
     def __init__(self, input_dict: dict):
@@ -208,6 +296,7 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.core = _load_core(self.fragment_sdf, input_dict.get("core_smarts"))
         self.max_core_rmsd = float(input_dict.get("max_core_rmsd", 1.5))
         self.local_only = bool(input_dict.get("local_only", True))
+        self.embed_timeout = float(input_dict.get("embed_timeout", _EMBED_TIMEOUT_DEFAULT))
         # Precompute reference core coordinates (receptor frame) for the guard.
         conf = self.core.GetConformer()
         self._core_ref_xyz = np.array(
@@ -216,7 +305,7 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     # --- override hook 1: constrained 3D build --------------------------------
     def _prepare_pose(self, smiles: str) -> Tuple[Optional[str], Optional[str]]:
-        return _constrained_pose_block(smiles, self.ph, self.core, self.seed)
+        return _constrained_pose_block(smiles, self.ph, self.core, self.seed, self.embed_timeout)
 
     # --- override hook 2: docking flags ---------------------------------------
     def _extra_flags(self) -> List[str]:

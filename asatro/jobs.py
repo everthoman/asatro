@@ -14,9 +14,11 @@ Mirrors the TS app's Job pattern, slimmed for growth (no CNN re-dock sub-run).
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -209,8 +211,33 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
     return {"runs": [entry]}
 
 
+_GPU_IDS_CACHE: Optional[List[int]] = None
+
+
+def _detect_gpu_ids(min_memory_mib: int = 8000) -> List[int]:
+    """Compute-worthy GPU indices (skips small/display cards, e.g. this box's
+    2GB Quadro P620, that aren't meant for CNN-scoring docks). Cached after
+    the first call -- the machine's GPUs don't change mid-process."""
+    global _GPU_IDS_CACHE
+    if _GPU_IDS_CACHE is not None:
+        return _GPU_IDS_CACHE
+    ids: List[int] = []
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10)
+        for line in out.stdout.strip().splitlines():
+            idx, mem = line.split(",")
+            if int(mem.strip()) >= min_memory_mib:
+                ids.append(int(idx.strip()))
+    except Exception:
+        ids = []
+    _GPU_IDS_CACHE = ids
+    return ids
+
+
 def _dock_resources(cfg: dict, job: GrowthJob) -> tuple:
-    """Resolve ``concurrency``/``cpu`` from the job config.
+    """Resolve ``concurrency``/``cpu``/``gpu_ids`` from the job config.
 
     Docking is CPU-bound (``cnn_scoring="none"`` by default, see
     ``gnina_evaluator.py``), and each individual dock otherwise defaults to
@@ -219,15 +246,30 @@ def _dock_resources(cfg: dict, job: GrowthJob) -> tuple:
     parallel oversubscribes the box. If the caller sets ``concurrency`` without
     an explicit ``cpu``, split ``DOCK_CPU`` evenly across the parallel docks
     instead of leaving every one of them asking for all of it.
+
+    When CNN scoring is active (GPU-bound, unlike the CPU-only Vina path),
+    multiple concurrent docks otherwise all pin the same GPU (``gpu_id``
+    defaults to 0) -- real contention, and on this box the trigger for a
+    genuine hang (see ``GninaEvaluator._run_pollable``). If the caller sets
+    ``concurrency`` with CNN scoring on and doesn't give explicit
+    ``gpu_ids``, auto-detect the real (non-display) GPUs and round-robin
+    docks across all of them instead of piling onto one.
     """
     concurrency = max(1, int(cfg.get("concurrency", 1)))
     cpu = cfg.get("cpu")
     if cpu is None and concurrency > 1:
         cpu = max(1, DOCK_CPU // concurrency)
+    gpu_ids = cfg.get("gpu_ids")
+    cnn_scoring = str(cfg.get("cnn_scoring", "none")).lower()
+    if not gpu_ids and concurrency > 1 and cnn_scoring != "none":
+        detected = _detect_gpu_ids()
+        if len(detected) > 1:
+            gpu_ids = detected
     if concurrency > 1:
         job.log(f"Parallel docking: concurrency={concurrency}, {cpu or DOCK_CPU} cpu/dock "
-                f"(of {DOCK_CPU} available)")
-    return concurrency, cpu
+                f"(of {DOCK_CPU} available)"
+                + (f", GPUs round-robin {gpu_ids}" if gpu_ids else ""))
+    return concurrency, cpu, gpu_ids
 
 
 def _persist_steps(steps: List) -> List[dict]:
@@ -327,7 +369,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
-        concurrency, cpu = _dock_resources(cfg, job)
+        concurrency, cpu, gpu_ids = _dock_resources(cfg, job)
 
         def _on_evaluator(ev):
             job.evaluator = ev
@@ -348,7 +390,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
             stop=int(cfg.get("stop", 6000)),
             max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
-            concurrency=concurrency, cpu=cpu,
+            concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
             progress_callback=job.log, cancel_event=job.cancel_event,
             on_evaluator=_on_evaluator,
         )
@@ -395,7 +437,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
-        concurrency, cpu = _dock_resources(cfg, job)
+        concurrency, cpu, gpu_ids = _dock_resources(cfg, job)
 
         rows, evaluator = runner(
             receptor_path=receptor_path, steps=steps, reagent_files=reagent_files,
@@ -411,7 +453,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
             search_method=search_method,
             min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
             stop=int(cfg.get("stop", 6000)),
-            concurrency=concurrency, cpu=cpu,
+            concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
             progress_callback=job.log, cancel_event=job.cancel_event,
             on_evaluator=_on_evaluator,
         )
@@ -438,6 +480,77 @@ def _persist_meta(job: GrowthJob) -> None:
         pass
 
 
+# -- Memory watchdog -----------------------------------------------------
+# A real, still-unexplained leak OOM-killed the whole asatro-webapp process
+# (anon-rss 58.9GB, then again within 5 minutes on a live relaunch) on
+# 2026-08-12, on this shared ~130-user box -- despite extensive isolated
+# testing (bookkeeping, reaction firing, ConstrainedEmbed, the full real
+# docking pipeline, concurrent status polling, 11+ full passes) finding no
+# reproducible cause. Rather than block all growth/combi jobs on root-causing
+# an intermittent leak that may only manifest in long-running production
+# process state, this bounds the worst-case blast radius regardless of *why*
+# a job's docking pipeline leaks -- current or future, root-caused or not.
+_WATCHDOG_SOFT_MB = float(os.environ.get("ASATRO_WATCHDOG_SOFT_MB", 4096))
+_WATCHDOG_HARD_MB = float(os.environ.get("ASATRO_WATCHDOG_HARD_MB", 8192))
+_WATCHDOG_POLL_S = 2.0
+# Longer than the 60s ConstrainedEmbed timeout: a single legitimately slow
+# candidate shouldn't trip the hard exit just because it hasn't hit its own
+# timeout yet.
+_WATCHDOG_GRACE_S = 90.0
+
+
+def _process_rss_mb() -> float:
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return -1.0
+
+
+def _watchdog(job: GrowthJob, stop_event: threading.Event) -> None:
+    """Polls this process's own RSS while ``job`` runs. Past a soft threshold,
+    cancels the job the normal way (``cancel_event`` -- the same mechanism the
+    UI's Cancel button uses) and gives it a grace period to actually bring
+    memory back down. If RSS is still elevated after that -- i.e. cancellation
+    didn't stop whatever's allocating, which is exactly what happened live in
+    the 2026-08-12 incident -- exits the whole process immediately rather than
+    let the kernel OOM-killer pick an arbitrary victim on a box shared with
+    other users' work."""
+    tripped_at: Optional[float] = None
+    while not stop_event.wait(_WATCHDOG_POLL_S):
+        rss = _process_rss_mb()
+        if rss < 0:
+            continue
+        if tripped_at is None:
+            if rss >= _WATCHDOG_SOFT_MB:
+                tripped_at = time.monotonic()
+                job.log(f"WATCHDOG: RSS {rss:.0f}MB exceeded soft limit "
+                        f"{_WATCHDOG_SOFT_MB:.0f}MB -- cancelling job")
+                job.cancel_event.set()
+            continue
+        elapsed = time.monotonic() - tripped_at
+        if rss >= _WATCHDOG_HARD_MB or (elapsed > _WATCHDOG_GRACE_S and rss >= _WATCHDOG_SOFT_MB):
+            job.log(f"WATCHDOG: RSS {rss:.0f}MB, {elapsed:.0f}s after cancelling and still not "
+                    f"reclaimed -- forcing process exit to protect the shared host")
+            os._exit(1)
+
+
+def _run_with_watchdog(job: GrowthJob, fn: Callable[[], None]) -> None:
+    """Runs ``fn`` (a zero-arg closure over the real job runner) with the
+    memory watchdog above active for its whole duration."""
+    stop_event = threading.Event()
+    watchdog = threading.Thread(target=_watchdog, args=(job, stop_event), daemon=True)
+    watchdog.start()
+    try:
+        fn()
+    finally:
+        stop_event.set()
+        watchdog.join(timeout=5)
+
+
 def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
                      fragment_slot: int, reactant_by_class: Optional[Dict[str, str]] = None,
                      pool_path: Optional[str] = None, cfg: Optional[dict] = None,
@@ -458,9 +571,10 @@ def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
     job = GrowthJob(id=job_id, dir=job_dir)
     JOBS[job_id] = job
     job.thread = threading.Thread(
-        target=_run,
-        args=(job, fragment_path, receptor_path, reactant_by_class or {}, pool_path,
-              steps, fragment_slot, cfg or {}, runner),
+        target=_run_with_watchdog,
+        args=(job, functools.partial(_run, job, fragment_path, receptor_path,
+                                     reactant_by_class or {}, pool_path,
+                                     steps, fragment_slot, cfg or {}, runner)),
         daemon=True,
     )
     job.thread.start()
@@ -482,9 +596,9 @@ def start_combi_job(*, receptor_path: str, steps: List, reagent_files: List[List
     job = GrowthJob(id=job_id, dir=job_dir)
     JOBS[job_id] = job
     job.thread = threading.Thread(
-        target=_run_combi,
-        args=(job, receptor_path, steps, reagent_files, reference_path, center, size,
-              cfg or {}, runner),
+        target=_run_with_watchdog,
+        args=(job, functools.partial(_run_combi, job, receptor_path, steps, reagent_files,
+                                     reference_path, center, size, cfg or {}, runner)),
         daemon=True,
     )
     job.thread.start()

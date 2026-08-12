@@ -191,6 +191,42 @@ def test_anchored_evaluator_box_scales_with_the_actual_candidate(tmp_path):
     assert max(grown_size) > max(ev.size)
 
 
+def test_anchored_evaluator_embed_timeout_kills_a_stuck_candidate(tmp_path):
+    """Regression: AllChem.ConstrainedEmbed has no native timeout -- a real
+    production job hung indefinitely (and grew to ~48GB RSS, one runaway
+    candidate after another) when it got stuck, with no way to interrupt it
+    and no way for cancel_event to help (it's only checked before a
+    candidate starts, not while RDKit is mid-call). A first fix ran the embed
+    in a worker *thread* and gave up waiting on timeout -- but that doesn't
+    free anything, since Python threads can't be force-killed, so the
+    abandoned computation (and its memory) kept running regardless. The
+    fix must isolate the embed in a real, killable *process*.
+
+    Exercised here with an absurdly small timeout (10ms -- shorter than
+    process spawn itself takes) against an otherwise perfectly normal,
+    fast-to-embed molecule: this can't rely on constructing a genuinely
+    pathological molecule (slow/nondeterministic), but deterministically
+    forces the same code path -- the worker is still starting up when the
+    deadline passes, so _run_constrained_embed must terminate/kill it rather
+    than block waiting, and _prepare_pose must return the failure quickly."""
+    import time as _time
+
+    sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    core = derive_core("Brc1ccccc1", "aryl_halide")
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=str(rec), core_smarts=core,
+                        work_dir=str(tmp_path / "dock"), embed_timeout=0.01)
+
+    start = _time.monotonic()
+    block, err = ev._prepare_pose("c1ccc(-c2ccccc2)cc1")
+    elapsed = _time.monotonic() - start
+
+    assert block is None
+    assert "constrained embed failed" in err and "exceeded" in err
+    assert elapsed < 10.0, f"took {elapsed:.2f}s -- kill+join should be fast, not block indefinitely"
+
+
 def test_anchored_evaluator_max_core_rmsd_is_adjustable(tmp_path):
     sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
     rec = tmp_path / "receptor.pdb"

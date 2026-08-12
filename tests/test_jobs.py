@@ -1,7 +1,9 @@
 """Growth job layer + endpoints, driven with a fake docking runner (no gnina)."""
 import json
+import threading
 import time
 
+import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -552,6 +554,236 @@ def test_combi_endpoint_requires_binding_site(tmp_path, monkeypatch):
             data={"config": json.dumps({"steps": ["suzuki"]})})
         assert r.status_code == 400
         assert "reference ligand" in r.text
+
+
+def _job(tmp_path, job_id="j1"):
+    d = tmp_path / job_id
+    d.mkdir(parents=True, exist_ok=True)
+    return jobs.GrowthJob(id=job_id, dir=d)
+
+
+def test_dock_resources_defaults_to_serial_no_gpu(tmp_path):
+    concurrency, cpu, gpu_ids = jobs._dock_resources({}, _job(tmp_path))
+    assert concurrency == 1 and cpu is None and gpu_ids is None
+
+
+def test_dock_resources_splits_cpu_across_concurrency(tmp_path):
+    concurrency, cpu, gpu_ids = jobs._dock_resources({"concurrency": 4}, _job(tmp_path))
+    assert concurrency == 4
+    assert cpu == max(1, jobs.DOCK_CPU // 4)
+
+
+def test_dock_resources_explicit_cpu_not_overridden(tmp_path):
+    concurrency, cpu, gpu_ids = jobs._dock_resources(
+        {"concurrency": 4, "cpu": 6}, _job(tmp_path))
+    assert cpu == 6
+
+
+def test_dock_resources_no_gpu_ids_when_cnn_scoring_off(tmp_path, monkeypatch):
+    # cnn_scoring="none" is pure CPU Vina -- must never auto-populate GPU ids,
+    # even with concurrency>1 and multiple real GPUs on the box.
+    monkeypatch.setattr(jobs, "_detect_gpu_ids", lambda: [0, 1])
+    _, _, gpu_ids = jobs._dock_resources(
+        {"concurrency": 4, "cnn_scoring": "none"}, _job(tmp_path))
+    assert gpu_ids is None
+
+
+def test_dock_resources_no_gpu_ids_when_concurrency_1(tmp_path, monkeypatch):
+    # No contention risk at concurrency=1 -- don't bother.
+    monkeypatch.setattr(jobs, "_detect_gpu_ids", lambda: [0, 1])
+    _, _, gpu_ids = jobs._dock_resources(
+        {"concurrency": 1, "cnn_scoring": "rescore"}, _job(tmp_path))
+    assert gpu_ids is None
+
+
+def test_dock_resources_auto_detects_gpu_ids_for_concurrent_cnn_scoring(tmp_path, monkeypatch):
+    # This is the real bug fix: concurrency>1 + CNN rescoring used to pin
+    # every concurrent dock to the same GPU (gpu_id defaults to 0), which
+    # caused a genuine production hang under contention. Multiple real GPUs
+    # should now be spread across concurrent docks automatically.
+    monkeypatch.setattr(jobs, "_detect_gpu_ids", lambda: [0, 1])
+    _, _, gpu_ids = jobs._dock_resources(
+        {"concurrency": 4, "cnn_scoring": "rescore"}, _job(tmp_path))
+    assert gpu_ids == [0, 1]
+
+
+def test_dock_resources_explicit_gpu_ids_not_overridden(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs, "_detect_gpu_ids", lambda: [0, 1])
+    _, _, gpu_ids = jobs._dock_resources(
+        {"concurrency": 4, "cnn_scoring": "rescore", "gpu_ids": [2]}, _job(tmp_path))
+    assert gpu_ids == [2]
+
+
+def test_dock_resources_single_gpu_detected_stays_none(tmp_path, monkeypatch):
+    # Only one real GPU on the box -- nothing to round-robin, so leave it to
+    # the evaluator's plain gpu_id default rather than a pointless [0] list.
+    monkeypatch.setattr(jobs, "_detect_gpu_ids", lambda: [0])
+    _, _, gpu_ids = jobs._dock_resources(
+        {"concurrency": 4, "cnn_scoring": "rescore"}, _job(tmp_path))
+    assert gpu_ids is None
+
+
+def test_reap_orphaned_jobs_marks_stale_running_as_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    d = tmp_path / "jobs" / "stuck_job"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text(json.dumps({
+        "id": "stuck_job", "status": "running", "error": None,
+        "started": 123.0, "finished": None, "n_targets": 0}))
+    (d / "run.log").write_text("[00:00:00] started\n")
+
+    fixed = jobs.reap_orphaned_jobs()
+
+    assert fixed == ["stuck_job"]
+    meta = json.loads((d / "job.json").read_text())
+    assert meta["status"] == "error"
+    assert "orphaned" in meta["error"]
+    assert meta["finished"] is not None
+    assert "orphaned" in (d / "run.log").read_text()
+
+
+def test_reap_orphaned_jobs_leaves_finished_jobs_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    d = tmp_path / "jobs" / "done_job"
+    d.mkdir(parents=True)
+    original = {"id": "done_job", "status": "done", "error": None,
+               "started": 1.0, "finished": 2.0, "n_targets": 1}
+    (d / "job.json").write_text(json.dumps(original))
+
+    fixed = jobs.reap_orphaned_jobs()
+
+    assert fixed == []
+    assert json.loads((d / "job.json").read_text()) == original
+
+
+def test_watchdog_stays_quiet_when_rss_is_healthy(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs, "_WATCHDOG_SOFT_MB", 4096.0)
+    monkeypatch.setattr(jobs, "_WATCHDOG_POLL_S", 0.0)
+    monkeypatch.setattr(jobs, "_process_rss_mb", lambda: 200.0)
+
+    job = jobs.GrowthJob(id="wd-healthy", dir=tmp_path)
+    stop_event = threading.Event()
+    poll_count = {"n": 0}
+    real_wait = stop_event.wait
+
+    def counting_wait(timeout):
+        poll_count["n"] += 1
+        if poll_count["n"] >= 5:
+            stop_event.set()
+        return real_wait(timeout)
+    monkeypatch.setattr(stop_event, "wait", counting_wait)
+
+    jobs._watchdog(job, stop_event)  # returns normally once stop_event is set
+
+    assert not job.cancel_event.is_set()
+    assert job.lines == []
+
+
+def test_watchdog_cancels_job_past_soft_limit(tmp_path, monkeypatch):
+    # Regression test: a real, still-unexplained leak OOM-killed asatro-webapp
+    # twice on 2026-08-12 on a shared ~130-user box. This bounds the blast
+    # radius regardless of root cause -- past a soft RSS threshold, cancel the
+    # job the normal way (same cancel_event the UI's Cancel button uses).
+    monkeypatch.setattr(jobs, "_WATCHDOG_SOFT_MB", 100.0)
+    monkeypatch.setattr(jobs, "_WATCHDOG_HARD_MB", 10_000.0)  # unreachable here
+    monkeypatch.setattr(jobs, "_WATCHDOG_GRACE_S", 10_000.0)  # unreachable here
+    monkeypatch.setattr(jobs, "_WATCHDOG_POLL_S", 0.0)
+
+    rss_values = iter([50.0, 150.0, 150.0])
+    monkeypatch.setattr(jobs, "_process_rss_mb", lambda: next(rss_values, 150.0))
+
+    job = jobs.GrowthJob(id="wd-soft", dir=tmp_path)
+    stop_event = threading.Event()
+    real_wait = stop_event.wait
+
+    def stop_after_third_poll(timeout):
+        if stop_after_third_poll.n >= 3:
+            stop_event.set()
+        stop_after_third_poll.n += 1
+        return real_wait(timeout)
+    stop_after_third_poll.n = 0
+    monkeypatch.setattr(stop_event, "wait", stop_after_third_poll)
+
+    jobs._watchdog(job, stop_event)
+
+    assert job.cancel_event.is_set()
+    assert any("soft limit" in ln for ln in job.lines)
+
+
+def test_watchdog_force_exits_when_cancellation_does_not_reclaim_memory(tmp_path, monkeypatch):
+    # The live 2026-08-12 recurrence: cancellation was requested but RSS kept
+    # climbing for minutes afterward -- something was leaking in a path that
+    # never checks cancel_event. Simulate that: RSS crosses the soft limit,
+    # cancellation fires, but RSS keeps climbing straight past the hard
+    # ceiling. The watchdog must force-exit rather than trust cancellation.
+    monkeypatch.setattr(jobs, "_WATCHDOG_SOFT_MB", 100.0)
+    monkeypatch.setattr(jobs, "_WATCHDOG_HARD_MB", 200.0)
+    monkeypatch.setattr(jobs, "_WATCHDOG_GRACE_S", 10_000.0)  # hard ceiling trips first
+    monkeypatch.setattr(jobs, "_WATCHDOG_POLL_S", 0.0)
+
+    rss_values = iter([50.0, 150.0, 250.0])
+    monkeypatch.setattr(jobs, "_process_rss_mb", lambda: next(rss_values, 250.0))
+
+    exited = {}
+
+    def fake_exit(code):
+        exited["code"] = code
+        raise SystemExit(code)  # stand in for a real, unrecoverable process exit
+    monkeypatch.setattr(jobs.os, "_exit", fake_exit)
+
+    job = jobs.GrowthJob(id="wd-hard", dir=tmp_path)
+    stop_event = threading.Event()
+
+    with pytest.raises(SystemExit):
+        jobs._watchdog(job, stop_event)
+
+    assert job.cancel_event.is_set()
+    assert exited["code"] == 1
+    assert any("soft limit" in ln for ln in job.lines)
+    assert any("forcing process exit" in ln for ln in job.lines)
+
+
+def test_watchdog_force_exits_after_grace_period_even_below_hard_ceiling(tmp_path, monkeypatch):
+    # RSS plateaus just above the soft limit -- never reaching the hard
+    # ceiling -- but cancellation still isn't bringing it down. The grace-
+    # period check must catch this "stuck, not climbing" case too, not just
+    # a fast runaway.
+    monkeypatch.setattr(jobs, "_WATCHDOG_SOFT_MB", 100.0)
+    monkeypatch.setattr(jobs, "_WATCHDOG_HARD_MB", 10_000.0)  # unreachable here
+    monkeypatch.setattr(jobs, "_WATCHDOG_GRACE_S", 0.0)  # trips immediately after soft
+    monkeypatch.setattr(jobs, "_WATCHDOG_POLL_S", 0.0)
+    monkeypatch.setattr(jobs, "_process_rss_mb", lambda: 150.0)
+
+    exited = {}
+
+    def fake_exit(code):
+        exited["code"] = code
+        raise SystemExit(code)
+    monkeypatch.setattr(jobs.os, "_exit", fake_exit)
+
+    job = jobs.GrowthJob(id="wd-grace", dir=tmp_path)
+    stop_event = threading.Event()
+
+    with pytest.raises(SystemExit):
+        jobs._watchdog(job, stop_event)
+
+    assert job.cancel_event.is_set()
+    assert exited["code"] == 1
+
+
+def test_growth_job_runs_normally_with_watchdog_wired_in(tmp_path, monkeypatch):
+    # The watchdog wraps every real job thread now (start_growth_job/
+    # start_combi_job) -- a healthy, fast job must still complete normally.
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=_fake_runner)
+    _await(job)
+    assert job.status == "done"
+    assert not job.cancel_event.is_set()
 
 
 def test_pool_preview_endpoint(tmp_path, monkeypatch):
