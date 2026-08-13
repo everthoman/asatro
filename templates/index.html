@@ -161,6 +161,7 @@
           <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
         </div>
         <div id="poolPreview" class="muted" style="margin-top:8px"></div>
+        <div id="paramSuggest" style="margin-top:6px"></div>
       </div>
       <div id="perClassBox" style="display:none">
         <div class="muted">One <code>.smi</code> library per building-block slot the
@@ -382,6 +383,7 @@ let analysis = null;       // last /prune response
 // Step 1 of the growth route: {reactionId, slotIndex, coreSmarts, fgClass}, or
 // null until the user picks an accessible reaction/slot from panel 2.
 let growthStep1 = null;
+let poolAnnotated = false;  // set once "Annotate pool" runs; gates auto param refresh
 let growthExtendStepDivs = [];  // .step elements for steps 2+ (extend reactions)
 let currentJob = null;
 let evtSource = null;
@@ -488,6 +490,8 @@ let step1Choices = {};
 function renderAnalysis(){
   el('resultsPanel').style.display = '';
   growthStep1 = null;
+  poolAnnotated = false;              // new fragment: require a fresh annotate
+  if (el('paramSuggest')) el('paramSuggest').innerHTML = '';
   growthExtendStepDivs.forEach(d => d.remove());
   growthExtendStepDivs = [];
   el('growthRoutePanel').style.display = 'none';
@@ -618,6 +622,7 @@ function renderReactantSlots(){
     panel.style.display='none';
     el('filtersPanel').style.display = growthStep1 ? '' : 'none';
     el('growPanel').style.display = growthStep1 ? '' : 'none';
+    maybeRefreshParams();
     return;
   }
   panel.style.display = '';
@@ -629,6 +634,7 @@ function renderReactantSlots(){
   el('filtersPanel').style.display = '';
   el('growPanel').style.display = '';
   togglePoolMode();
+  maybeRefreshParams();
 }
 
 function poolMode(){ return el('reagentSource').value === 'pool'; }
@@ -654,39 +660,58 @@ el('poolPreviewBtn').addEventListener('click', async ()=>{
     }).join('');
     out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged (${d.n_untagged} no handle)</div>${rows}` +
       (need.some(c=>!(c in d.counts)) ? `<div class="bad">⚠ pool has nothing for: ${need.filter(c=>!(c in d.counts)).map(groupLabel).join(', ')}</div>` : '');
-    // Best-effort: dry-run the route (resolve + prune, no docking) to suggest a
-    // TS budget from the *buildable* pools and fill num_warmup / num_cycles.
-    if (el('fragment').files.length && typeof growthStep1 !== 'undefined' && growthStep1) {
-      const sfd = new FormData();
-      sfd.append('fragment', el('fragment').files[0]);
-      if (poolMode()){
-        if (el('poolFile').files.length) sfd.append('pool', el('poolFile').files[0], 'pool.smi');
-      } else {
-        [...document.querySelectorAll('.reactantFile')].forEach(i => {
-          if (i.files.length) sfd.append('reactants', i.files[0], i.dataset.class + '.smi'); });
-      }
-      const steps = [growthStep1.reactionId, ...growthExtendStepDivs.map(dv => {
-        const { reactionId, slot } = parseExtendChoice(dv.querySelector('.growthStepRxn').value);
-        return { reaction_id: reactionId, slot };
-      })];
-      sfd.append('config', JSON.stringify({ steps, fragment_slot: growthStep1.slotIndex }));
-      out.innerHTML += `<div class="muted" style="margin-top:6px">Computing suggested parameters…</div>`;
-      try {
-        const s = await (await fetch('/suggest-params', {method:'POST', body:sfd})).json();
-        if (s.ok && s.mode === 'search') {
-          el('numCycles').value = s.num_cycles;
-          el('numWarmup').value = s.num_warmup;
-          out.innerHTML += `<div class="ok" style="margin-top:2px">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
-            + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</div>`;
-        } else if (s.ok && s.mode === 'exhaustive') {
-          out.innerHTML += `<div class="muted" style="margin-top:2px">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed.</div>`;
-        } else if (!s.ok) {
-          out.innerHTML += `<div class="muted" style="margin-top:2px">Parameter suggestion skipped: ${esc(s.error||'route not ready')}.</div>`;
-        }
-      } catch(e){ /* best-effort; leave the annotation as-is */ }
-    }
+    // Suggest a TS budget from the *buildable* pools and fill num_warmup /
+    // num_cycles. Also re-runs automatically whenever the route changes after
+    // this (see maybeRefreshParams), so adding the next reaction step updates it.
+    poolAnnotated = true;
+    refreshSuggestedParams();
   } catch(e){ out.textContent = 'Preview failed: ' + e.message; }
 });
+
+// Dry-run the current route (resolve + prune, no docking) and fill the
+// num_warmup / num_cycles fields from the buildable pool sizes. Writes its
+// status into #paramSuggest (separate from the pool-annotation counts).
+async function refreshSuggestedParams(){
+  const box = el('paramSuggest');
+  if (!box) return;
+  if (!el('fragment').files.length || !growthStep1){ box.innerHTML = ''; return; }
+  const sfd = new FormData();
+  sfd.append('fragment', el('fragment').files[0]);
+  if (poolMode()){
+    if (el('poolFile').files.length) sfd.append('pool', el('poolFile').files[0], 'pool.smi');
+  } else {
+    [...document.querySelectorAll('.reactantFile')].forEach(i => {
+      if (i.files.length) sfd.append('reactants', i.files[0], i.dataset.class + '.smi'); });
+  }
+  const steps = [growthStep1.reactionId, ...growthExtendStepDivs.map(dv => {
+    const { reactionId, slot } = parseExtendChoice(dv.querySelector('.growthStepRxn').value);
+    return { reaction_id: reactionId, slot };
+  })];
+  sfd.append('config', JSON.stringify({ steps, fragment_slot: growthStep1.slotIndex }));
+  box.innerHTML = '<span class="muted">Computing suggested parameters…</span>';
+  try {
+    const s = await (await fetch('/suggest-params', {method:'POST', body:sfd})).json();
+    if (s.ok && s.mode === 'search'){
+      el('numCycles').value = s.num_cycles;
+      el('numWarmup').value = s.num_warmup;
+      box.innerHTML = `<span class="ok">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
+        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</span>`;
+    } else if (s.ok && s.mode === 'exhaustive'){
+      box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed (add the next reaction step for a TS search).</span>`;
+    } else {
+      box.innerHTML = `<span class="muted">Parameter suggestion unavailable: ${esc((s && s.error) || 'route not ready')}.</span>`;
+    }
+  } catch(e){ box.innerHTML = ''; }
+}
+
+// Once the pool's been annotated, keep the suggested budget in sync with route
+// edits (add/remove extend step, change a step's reaction), debounced.
+let _paramTimer = null;
+function maybeRefreshParams(){
+  if (!poolAnnotated) return;
+  clearTimeout(_paramTimer);
+  _paramTimer = setTimeout(refreshSuggestedParams, 400);
+}
 
 el('searchMethod').addEventListener('change', e=>{
   el('rwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
