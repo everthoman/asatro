@@ -25,6 +25,12 @@ class DisallowTracker:
 
         # this is where we keep track of the disallowed combinations
         self._disallow_mask: DefaultDict[Tuple[int | None], Set] = defaultdict(set)
+        # Synthons retired outright (see retire_one_synthon): per cycle, the set
+        # of synthon indices that must never be selected again. Kept separate
+        # from _disallow_mask -- which tracks *specific combinations* already
+        # sampled -- because a retirement is a statement about a single synthon,
+        # not about its exponentially-many pairings with the other cycles.
+        self._retired: DefaultDict[int, Set[int]] = defaultdict(set)
         self._n_sampled = 0 ## number of products sampled
         self._total_product_size = np.prod(reagent_counts)
 
@@ -51,36 +57,35 @@ class DisallowTracker:
         if len([v for v in current_selection if v == DisallowTracker.To_Fill]) != 1:
             raise ValueError(f"current_selection must have exactly one To_Fill slot.")
 
-        return self._disallow_mask[tuple(current_selection)]
+        base = self._disallow_mask[tuple(current_selection)]
+        # Fold in any synthons retired outright for the cycle being filled. When
+        # nothing is retired for that cycle (the common case, and always so
+        # during warm-up, before any retirement happens) this returns the stored
+        # set unchanged -- no copy, no behavioural change.
+        to_fill_cycle = current_selection.index(DisallowTracker.To_Fill)
+        retired = self._retired.get(to_fill_cycle)
+        if retired:
+            return base | retired
+        return base
 
     def retire_one_synthon(self, cycle_id: int, synthon_index: int):
-        retire_mask = [self.Empty] * self.n_cycles
-        retire_mask[cycle_id] = synthon_index
-        self._retire_synthon_mask(retire_mask=retire_mask)
+        """Permanently remove one synthon from cycle ``cycle_id`` -- it will
+        never be selected again.
 
-    def _retire_synthon_mask(self, retire_mask: list[int]):
-        # get the list of cycles that we need to search for retiring
-        if retire_mask.count(self.Empty) == 0:
-            # if n_to_fill is one - then we have a completed mask (all spot filled)
-            # so say that we sampled this synthon by updating the counts
-            self._n_sampled += 1
-            # and then update the disallow tracker
-            self._update(retire_mask)
-        else:
-            for cycle_id in [i for i in range(self.n_cycles) if retire_mask[i] == self.Empty]:
-                # mark which cycle we are going to search for synthons that can be paired with the synthon we are retiring
-                retire_mask[cycle_id] = self.To_Fill
-                ts_locations = np.ones(shape=self._initial_reagent_counts[cycle_id])
-                # update ts_locations
-                disallowed_selections = self.get_disallowed_selection_mask(retire_mask)
-                # added this to catch cases where a reaction fails or a reagent doesn't score - PW
-                if len(disallowed_selections):
-                    ts_locations[np.array(list(disallowed_selections))] = np.nan
-                # anything that is not nan is still in play so we need to denote
-                # that pairing it with the synthon we will retire is not allowed
-                for synthon_idx in np.argwhere(~np.isnan(ts_locations)).flatten():
-                    retire_mask[cycle_id] = synthon_idx
-                    self._retire_synthon_mask(retire_mask=retire_mask)
+        This just records the synthon in a per-cycle set (see ``_retired``),
+        which :meth:`get_disallowed_selection_mask` unions in at query time. An
+        earlier implementation instead *enumerated* the retirement into
+        ``_disallow_mask`` by recursing over every pairing of this synthon with
+        the other cycles' synthons -- O(product of the other cycles' sizes)
+        dict entries per retirement. On a real two-large-slot route where most
+        of one slot's synthons get retired during warm-up (e.g. a
+        Schotten-Baumann -> Suzuki growth where only the rare acid that also
+        bears a boronic handle yields a buildable product, retiring ~10k of
+        ~10.5k acids, each paired against ~11.8k halides), that reached ~10^8
+        entries and tens of GB of RSS -- the confirmed cause of a production
+        OOM. Retirement is a property of the single synthon, so it is tracked
+        as such, in O(1) space per retirement."""
+        self._retired[cycle_id].add(synthon_index)
 
     def update(self, selected: list[int | None]) -> None:
         """
@@ -121,7 +126,9 @@ class DisallowTracker:
         for cycle_id in selection_order:
             selection_mask[cycle_id] = DisallowTracker.To_Fill
             selection_candidate_scores = np.random.uniform(size=self._initial_reagent_counts[cycle_id])
-            selection_candidate_scores[list(self._disallow_mask[tuple(selection_mask)])] = np.NaN
+            # get_disallowed_selection_mask (not _disallow_mask directly) so
+            # retired synthons are honoured here too.
+            selection_candidate_scores[list(self.get_disallowed_selection_mask(selection_mask))] = np.nan
             selection_mask[cycle_id] = np.nanargmax(selection_candidate_scores).item(0)
         self.update(selection_mask)
         self._n_sampled += 1
