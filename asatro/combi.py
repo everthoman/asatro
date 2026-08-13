@@ -21,6 +21,7 @@ from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.gnina_evaluator import GninaEvaluator, MolFilters
 from asatro.engine.route_sampler import RouteSampler
+from asatro.engine.ts_autoparams import resolve_ts_budget
 
 
 def build_combi_route(steps: List[StepSpec], reagent_files: List[List[str]], work_dir: Path
@@ -91,7 +92,7 @@ def run_combi(*, receptor_path: str, steps: List[StepSpec], reagent_files: List[
              work_dir: str, reference_path: Optional[str] = None,
              center: Optional[Tuple[float, float, float]] = None,
              size: Optional[Tuple[float, float, float]] = None,
-             num_warmup: int = 3, num_cycles: int = 25,
+             num_warmup: Optional[int] = None, num_cycles: Optional[int] = None,
              num_to_select: Optional[int] = None, seed: Optional[int] = None,
              mode: str = "minimize", concurrency: int = 1, hide_progress: bool = True,
              search_method: str = "ts", min_cpds_per_core: int = 50, stop: int = 6000,
@@ -134,6 +135,10 @@ def run_combi(*, receptor_path: str, steps: List[StepSpec], reagent_files: List[
     sampler.read_reagents(reagent_file_list=files, num_to_select=num_to_select)
     sampler.set_route(route)
     sampler.set_evaluator(evaluator)
+    # Fill in an auto TS budget from the (pruned) pool sizes for any of
+    # num_warmup/num_cycles the caller left unset.
+    num_warmup, num_cycles = resolve_ts_budget(
+        num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
 
     if search_method == "rws":
         warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)

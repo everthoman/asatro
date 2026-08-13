@@ -28,6 +28,7 @@ from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
+from asatro.engine.ts_autoparams import resolve_ts_budget
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -114,7 +115,7 @@ def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Option
 def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                fragment_slot: int, core_smarts: Optional[str],
                reactant_files: List[Dict[int, str]], work_dir: str,
-               num_warmup: int = 3, num_cycles: int = 25,
+               num_warmup: Optional[int] = None, num_cycles: Optional[int] = None,
                num_to_select: Optional[int] = None, seed: Optional[int] = None,
                mode: str = "minimize", concurrency: int = 1,
                hide_progress: bool = True,
@@ -190,7 +191,12 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                 f"Single variable slot ({sampler.num_prods} candidates) — "
                 f"exhaustive dock, no warm-up/search split")
         results = sampler.dock_all()
-    elif search_method == "rws":
+        return results, evaluator
+    # Two or more variable slots: fill in an auto TS budget from the (pruned)
+    # pool sizes for any of num_warmup/num_cycles the caller left unset.
+    num_warmup, num_cycles = resolve_ts_budget(
+        num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
+    if search_method == "rws":
         warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)
         if not warmup_results:
             # search_rws needs the per-reagent posteriors warm_up_rws seeds;
