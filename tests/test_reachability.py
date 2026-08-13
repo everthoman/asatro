@@ -63,10 +63,13 @@ def test_empty_pool_raises_a_clear_error(tmp_path):
                                    work_dir=str(tmp_path / "r"))
 
 
-def test_two_varying_pools_left_unpruned(tmp_path):
+def test_multi_pool_step_prunes_each_varying_pool(tmp_path):
     # combi-style step 0: amide with BOTH acid and amine as real libraries (no
-    # fixed fragment). Two varying pools -> the exact single-degree-of-freedom
-    # prune doesn't apply, so nothing is dropped (safe: no false negatives).
+    # fixed fragment) -> two varying pools. Each is pruned against the other:
+    # an acid survives only if *some* amine yields an aryl-halide amide, and
+    # here the aryl halide can only come from the acid (the amines carry none),
+    # so the acid pool is narrowed while both amines survive (each pairs fine
+    # with the surviving bromo-acid).
     acids = _write(tmp_path, "acids.smi",
                    [("OC(=O)c1ccc(Br)cc1", "br"), ("CC(=O)O", "ac")])
     amines = _write(tmp_path, "amines.smi",
@@ -77,7 +80,27 @@ def test_two_varying_pools_left_unpruned(tmp_path):
 
     out = prune_unreachable_reagents(route, files, work_dir=str(tmp_path / "r"))
 
-    assert out == files  # unchanged
+    assert _names(out[0]) == {"br"}          # acid pool pruned
+    assert out[1] == amines                  # both amines still viable -> untouched
+    assert out[2] == boronic                 # last step untouched
+
+
+def test_partner_space_over_cap_is_left_unpruned(tmp_path, monkeypatch):
+    # When a pool's partner space exceeds the cap it is left unpruned rather
+    # than sampled -- safe (no false negatives), just a missed opportunity.
+    import asatro.chemistry.reachability as R
+    monkeypatch.setattr(R, "_PARTNER_CAP", 1)  # any 2-pool step now exceeds it
+    acids = _write(tmp_path, "acids.smi",
+                   [("OC(=O)c1ccc(Br)cc1", "br"), ("CC(=O)O", "ac")])
+    amines = _write(tmp_path, "amines.smi",
+                    [("NCc1ccccc1", "bn"), ("NCCc1ccccc1", "pe")])
+    boronic = _write(tmp_path, "boronic.smi", [("OB(O)c1ccccc1", "phB")])
+    route = [(AMIDE, 2, None), (SUZUKI, 1, 1)]
+    files = [acids, amines, boronic]
+
+    out = R.prune_unreachable_reagents(route, files, work_dir=str(tmp_path / "r"))
+
+    assert out == files  # nothing pruned (partner space over cap), unchanged
 
 
 def test_single_step_route_is_a_noop(tmp_path):

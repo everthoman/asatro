@@ -16,16 +16,22 @@ product cannot serve as the next step's intermediate-slot reactant. It is an
 reactant matches its template, so a reagent whose product fails the next step's
 intermediate template could never have completed the route.
 
-Scope (v1): only prunes a step that has exactly one *varying* fresh pool (a
-reagent file with >1 entry) given the fixed inputs so far -- which covers the
-whole common growth family (a 2-component start reaction with the fragment
-fixing one slot, plus single-reagent extend steps). Steps with two varying
-pools, and downstream steps once the reachable-intermediate set grows past a
-cap, are left untouched (warm-up still handles them). Everything here only ever
-*removes* provably-dead reagents, so leaving a step unpruned is always safe.
+Handles every step of a linear route (not just the first) and steps with more
+than one varying fresh pool (e.g. an unanchored combi start reaction with two
+libraries): each varying pool is pruned independently, keeping a reagent iff
+*some* combination of the other pools' reagents and reachable input
+intermediates lets the step fire into something the next step can consume. The
+only concession to cost is bounding: a pool is pruned exactly when the space it
+must be checked against (reachable inputs x the other varying pools) is within
+``_PARTNER_CAP``, and the whole pass is capped at ``_FIRING_BUDGET`` reaction
+firings; beyond either bound a pool/step is simply left unpruned (warm-up still
+handles it) -- never a false negative, only occasionally a missed opportunity
+on a very large deep step. All three caps are env-overridable.
 """
 from __future__ import annotations
 
+import itertools
+import os
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -36,12 +42,16 @@ from asatro.engine.ts_utils import create_reagents
 
 Route = List[Tuple[str, int, Optional[int]]]
 
-# Max distinct intermediates carried forward between steps (bounds memory/time).
-_REACHABLE_CAP = 5000
-# A step k>0 is only pruned when the set of reachable input intermediates is at
-# most this large, so the per-reagent cross-check stays cheap. Step 0 has a
-# single (or no) fixed input, so it is always pruned regardless.
-_CROSS_CAP = 500
+# Max distinct intermediates carried forward to the next step (bounds memory);
+# once exceeded, downstream steps are left unpruned rather than checked.
+_REACHABLE_CAP = int(os.environ.get("ASATRO_REACHABLE_CAP", 20000))
+# A pool is only pruned when the partner space it must be checked against
+# (reachable inputs x the other varying pools of the same step) is at most this.
+_PARTNER_CAP = int(os.environ.get("ASATRO_REACHABLE_PARTNER_CAP", 5000))
+# Hard ceiling on total RunReactants calls across the whole pass, so a large
+# deep route can't turn the pre-pass into a multi-minute stall. ~0.3ms/firing
+# here, so the default is a few minutes of worst case.
+_FIRING_BUDGET = int(os.environ.get("ASATRO_REACHABLE_FIRING_BUDGET", 1_500_000))
 
 
 class UnreachableRouteError(ValueError):
@@ -80,12 +90,20 @@ def _run_step(rxn, intermediate_slot: Optional[int], intermediate, fresh_mols):
         return None
 
 
+def _fresh_mols(current, chosen):
+    """Assemble one step's fresh reagent mols in component (file) order:
+    ``chosen`` maps a varying position to the picked reagent; every other
+    position takes its single fixed reagent."""
+    return [(chosen[p] if p in chosen else current[p][0]).mol
+            for p in range(len(current))]
+
+
 def prune_unreachable_reagents(
     route: Route, files: List[str], *, work_dir: str,
     log: Optional[Callable[[str], None]] = None,
 ) -> List[str]:
-    """Return a copy of ``files`` with each prunable non-final step's varying
-    reagent pool narrowed to reagents that can complete the next step.
+    """Return a copy of ``files`` with each non-final step's fresh reagent
+    pool(s) narrowed to reagents that can complete the next step.
 
     ``route`` and ``files`` are exactly what ``build_growth_route`` /
     ``build_combi_route`` return: ``route`` is ``[(smarts, n_fresh,
@@ -101,7 +119,6 @@ def prune_unreachable_reagents(
         return files  # single-step route: nothing downstream to satisfy
 
     compiled = [AllChem.ReactionFromSmarts(smarts) for smarts, _, _ in route]
-    # Flat files -> the index range belonging to each step's fresh components.
     step_ranges: List[List[int]] = []
     cursor = 0
     for _smarts, n_fresh, _slot in route:
@@ -114,75 +131,113 @@ def prune_unreachable_reagents(
 
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
+    fired = [0]
 
     reachable = None  # intermediate mols entering the current step; None at step 0
     for k in range(n):
         _smarts_k, _n_fresh_k, slot_k = route[k]
         rxn_k = compiled[k]
         idxs = step_ranges[k]
-        per_file = [create_reagents(files[i]) for i in idxs]
-        varying = [p for p, rl in enumerate(per_file) if len(rl) > 1]
+        # Mutable per-position reagent lists (varying pools get pruned in place).
+        current = [create_reagents(files[i]) for i in idxs]
+        varying = [p for p, rl in enumerate(current) if len(rl) > 1]
         is_last = (k == n - 1)
 
-        if k == 0:
-            inputs = [None]
-            can_cross = True
-        else:
-            can_cross = reachable is not None and len(reachable) <= _CROSS_CAP
-            inputs = reachable if reachable is not None else []
-
-        if is_last or len(varying) != 1 or not can_cross:
-            # Not prunable (last step, ambiguous, or reachable set too large/lost).
-            # Drop the reachable set so no *downstream* step is pruned unsafely.
+        # The last step has nothing downstream to satisfy; and a step k>0 can't
+        # be reasoned about if we lost track of its input intermediates.
+        if is_last or (k > 0 and reachable is None):
+            if k > 0 and reachable is None and not is_last:
+                _emit(f"Reachability: step {k + 1} left unpruned "
+                      f"(upstream intermediate set unavailable/too large)")
             reachable = None
             continue
 
-        vpos = varying[0]
-        varying_file_idx = idxs[vpos]
+        inputs = reachable if k > 0 else [None]
         next_slot = route[k + 1][2]
         next_template = compiled[k + 1].GetReactantTemplate(
             next_slot if next_slot is not None else 0)
 
-        survivors = []
-        products_after = []
-        seen: set = set()
-        for r in per_file[vpos]:
-            if r.mol is None:
+        # -- Prune each varying pool against (inputs x the other varying pools) --
+        for vpos in varying:
+            others = [p for p in varying if p != vpos]
+            partner_count = len(inputs)
+            for p in others:
+                partner_count *= len(current[p])
+            if partner_count > _PARTNER_CAP or fired[0] >= _FIRING_BUDGET:
+                _emit(f"Reachability: step {k + 1} pool {Path(files[idxs[vpos]]).name} "
+                      f"left unpruned (partner space {partner_count} exceeds cap "
+                      f"or firing budget reached)")
                 continue
-            fresh_mols = [r.mol if p == vpos else per_file[p][0].mol
-                          for p in range(len(per_file))]
-            matched = []
-            for interm in inputs:
-                prod = _run_step(rxn_k, slot_k, interm, fresh_mols)
-                if prod is not None and prod.HasSubstructMatch(next_template):
-                    matched.append(prod)
-            if matched:
-                survivors.append(r)
-                for prod in matched:
-                    smi = Chem.MolToSmiles(prod)
-                    if smi not in seen:
-                        seen.add(smi)
-                        if len(products_after) < _REACHABLE_CAP:
-                            products_after.append(prod)
 
-        pool_name = Path(files[varying_file_idx]).name
-        if not survivors:
-            raise UnreachableRouteError(
-                f"no reagent in {pool_name} can react at the downstream step "
-                f"{k + 2} -- check the route wiring / handle")
+            keep = []
+            for r in current[vpos]:
+                if r.mol is None:
+                    continue
+                ok = False
+                for interm in inputs:
+                    for combo in itertools.product(*[current[p] for p in others]):
+                        if fired[0] >= _FIRING_BUDGET:
+                            ok = True  # can't confirm dead within budget -> keep (safe)
+                            break
+                        chosen = {vpos: r}
+                        for pos, reagent in zip(others, combo):
+                            chosen[pos] = reagent
+                        fired[0] += 1
+                        prod = _run_step(rxn_k, slot_k, interm, _fresh_mols(current, chosen))
+                        if prod is not None and prod.HasSubstructMatch(next_template):
+                            ok = True
+                            break
+                    if ok:
+                        break
+                if ok:
+                    keep.append(r)
 
-        out = work / f"reachable_step{k + 1}_{Path(files[varying_file_idx]).stem}.smi"
-        with open(out, "w") as fh:
-            for r in survivors:
-                fh.write(f"{r.smiles} {r.reagent_name}\n")
-        files[varying_file_idx] = str(out)
-        _emit(f"Reachability: step {k + 1} pool {pool_name} "
-              f"{len(per_file[vpos])} -> {len(survivors)} reagents that can complete "
-              f"step {k + 2}")
+            orig = len(current[vpos])
+            if not keep:
+                raise UnreachableRouteError(
+                    f"no reagent in {Path(files[idxs[vpos]]).name} can react at the "
+                    f"downstream step {k + 2} -- check the route wiring / handle")
+            if len(keep) < orig:
+                current[vpos] = keep
+                out = work / f"reachable_step{k + 1}_{Path(files[idxs[vpos]]).stem}.smi"
+                with open(out, "w") as fh:
+                    for r in keep:
+                        fh.write(f"{r.smiles} {r.reagent_name}\n")
+                files[idxs[vpos]] = str(out)
+                _emit(f"Reachability: step {k + 1} pool {Path(out).name} "
+                      f"{orig} -> {len(keep)} reagents that can complete step {k + 2}")
 
-        # Carry surviving products forward as the next step's reachable inputs.
-        # Exact when a single fixed input produced one product per survivor
-        # (always true at step 0); dropped to None if we hit the dedup cap.
-        reachable = products_after if 0 < len(products_after) < _REACHABLE_CAP else None
+        # -- Carry the surviving intermediates forward for the next step. --
+        reachable = _reachable_products(rxn_k, slot_k, inputs, current, varying, fired)
 
     return files
+
+
+def _reachable_products(rxn, slot, inputs, current, varying, fired):
+    """Distinct step products over (``inputs`` x the varying pools' survivors),
+    deduped by canonical SMILES. Returns ``None`` (meaning "unknown -- don't
+    prune downstream") if the enumeration would exceed the reachable/firing
+    caps, so a later step is never pruned against a partial input set."""
+    space = len(inputs)
+    for p in varying:
+        space *= len(current[p])
+    if space > _REACHABLE_CAP:
+        return None
+    out = []
+    seen: set = set()
+    for interm in inputs:
+        for combo in itertools.product(*[current[p] for p in varying]):
+            if fired[0] >= _FIRING_BUDGET:
+                return None
+            chosen = {pos: reagent for pos, reagent in zip(varying, combo)}
+            fired[0] += 1
+            prod = _run_step(rxn, slot, interm, _fresh_mols(current, chosen))
+            if prod is None:
+                continue
+            smi = Chem.MolToSmiles(prod)
+            if smi not in seen:
+                seen.add(smi)
+                out.append(prod)
+                if len(out) >= _REACHABLE_CAP:
+                    return None
+    return out or None
