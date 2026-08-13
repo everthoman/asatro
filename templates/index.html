@@ -492,12 +492,10 @@ function renderAnalysis(){
   growthExtendStepDivs = [];
   el('growthRoutePanel').style.display = 'none';
   el('growthRemoveStepBtn').disabled = true;
-  el('fgClasses').innerHTML = '<span class="muted">Handles:</span> ' +
-    (analysis.fg_classes.length ? analysis.fg_classes.map(c=>`<span class="chip">${groupLabel(c)}</span>`).join('')
-      : '<span class="bad">none detected — this scaffold has no reactive handle</span>');
 
   step1Choices = {};
   const options = ['<option value="">— choose an accessible reaction/slot —</option>'];
+  const usableClasses = new Set();  // handle classes with an actually-usable reaction here
   const sortedReactions = Object.entries(analysis.reactions)
     .sort(([a], [b]) => (RXN[a]?.name || a).localeCompare(RXN[b]?.name || b));
   for (const [rid, info] of sortedReactions){
@@ -505,6 +503,7 @@ function renderAnalysis(){
     const rx = RXN[rid] || {name: rid, components: []};
     (info.slots||[]).forEach(s=>{
       if (s.accessible === false) return;
+      usableClasses.add(s.fg_class);
       const key = `${rid}|${s.index}`;
       step1Choices[key] = { reactionId: rid, slotIndex: s.index, coreSmarts: s.core_smarts, fgClass: s.fg_class };
       // The bound fragment is always route-position slot 1 here, regardless
@@ -516,6 +515,19 @@ function renderAnalysis(){
     });
   }
   el('step1Select').innerHTML = options.join('');
+
+  // Only surface handles that survived pruning with a usable reaction. A
+  // detected handle with no accessible/compatible reaction in this pose (e.g.
+  // a buried or chemically-incompatible N-H like uracil's) would otherwise be
+  // shown but offer nothing to pick -- misleading.
+  const shownHandles = analysis.fg_classes.filter(c => usableClasses.has(c));
+  el('fgClasses').innerHTML = '<span class="muted">Handles:</span> ' +
+    (shownHandles.length
+      ? shownHandles.map(c=>`<span class="chip">${groupLabel(c)}</span>`).join('')
+      : (analysis.fg_classes.length
+          ? '<span class="bad">handle(s) detected, but none has an accessible reaction in this pose</span>'
+          : '<span class="bad">none detected — this scaffold has no reactive handle</span>'));
+
   renderReactantSlots();
 }
 
