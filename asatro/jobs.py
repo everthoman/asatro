@@ -34,7 +34,7 @@ from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
 from asatro.engine.gnina_evaluator import DOCK_CPU, MolFilters
 from asatro.growth import run_growth
-from asatro.svg import mol_svg
+from asatro.svg import mol_props, mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -194,6 +194,7 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
         components_by_smiles = {}
     entry = {"n_docked": n_docked,
              "top": [{"score": s, "smiles": sm, "name": nm, "svg": mol_svg(sm),
+                     **mol_props(sm),
                      "components": components_by_smiles.get(sm, [])}
                     for s, sm, nm in ranked]}
     if evaluator is not None:

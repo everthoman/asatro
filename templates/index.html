@@ -69,6 +69,7 @@
   .card .rank { font-weight:700; color:#234a7a; }
   .card .score { font-weight:700; }
   .card .name { color:#555; word-break:break-all; }
+  .card .props { color:#666; font-size:0.85em; margin-top:2px; }
   .card .smi { color:#999; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
   .seedrow { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
   .seedBtn { font-size:10px; padding:4px 7px; }
@@ -917,6 +918,7 @@ function galleryCards(items, jobId, componentMeta){
       <div class="meta">
         <span class="rank">#${it.rank!=null?it.rank:i+1}</span> &middot; <span class="score">${it.score}</span>
         <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
+        ${(it.mw!=null||it.logp!=null) ? `<div class="props">MW ${it.mw!=null?it.mw:'–'} &middot; logP ${it.logp!=null?it.logp:'–'}</div>` : ''}
         <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
       </div>
       ${seedButtons(jobId, it.rank!=null?it.rank:i+1, it.components, componentMeta)}

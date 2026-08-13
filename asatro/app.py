@@ -15,7 +15,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
@@ -28,7 +28,7 @@ from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_s
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, jobs_dir, list_jobs, reap_orphaned_jobs, start_combi_job, start_growth_job
 from asatro.seed import carve_fragment, component_route_meta
-from asatro.svg import mol_svg
+from asatro.svg import mol_props, mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -290,8 +290,22 @@ def _top_items(rows) -> list:
     for rank, (score, smiles, name) in enumerate(rows, start=1):
         items.append({"rank": rank, "score": round(float(score), 3),
                       "smiles": str(smiles), "name": str(name),
-                      "svg": mol_svg(str(smiles))})
+                      "svg": mol_svg(str(smiles)), **mol_props(str(smiles))})
     return items
+
+
+def _enrich_top_props(result: Optional[dict]) -> Optional[dict]:
+    """Fill in per-structure ``mw``/``logp`` for any persisted top-hit that
+    predates those fields, so finished jobs (including ones run before this
+    feature) show them in the gallery. Computed on the fly from the stored
+    SMILES; idempotent."""
+    if not result:
+        return result
+    for run in result.get("runs", []):
+        for it in run.get("top", []) or []:
+            if it.get("mw") is None and it.get("logp") is None:
+                it.update(mol_props(str(it.get("smiles", ""))))
+    return result
 
 
 @app.get("/jobs/{job_id}/top")
@@ -336,13 +350,13 @@ async def jobs() -> dict:
 async def job_detail(job_id: str) -> dict:
     job = JOBS.get(job_id)
     if job is not None:
-        return {**job.meta(), "result": job.result, "n_log": len(job.lines)}
+        return {**job.meta(), "result": _enrich_top_props(job.result), "n_log": len(job.lines)}
     # Past run: read persisted metadata/results from disk.
     d = jobs_dir() / job_id
     if d.is_dir() and (d / "job.json").is_file():
         meta = json.loads((d / "job.json").read_text())
         res = json.loads((d / "results.json").read_text()) if (d / "results.json").is_file() else None
-        return {**meta, "result": res}
+        return {**meta, "result": _enrich_top_props(res)}
     raise HTTPException(404, "unknown job")
 
 
