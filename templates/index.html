@@ -695,13 +695,25 @@ async function refreshSuggestedParams(){
       el('numCycles').value = s.num_cycles;
       el('numWarmup').value = s.num_warmup;
       box.innerHTML = `<span class="ok">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
-        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</span>`;
+        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</span>`
+        + productPropsHtml(s.product_props);
     } else if (s.ok && s.mode === 'exhaustive'){
-      box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed (add the next reaction step for a TS search).</span>`;
+      box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed (add the next reaction step for a TS search).</span>`
+        + productPropsHtml(s.product_props);
     } else {
       box.innerHTML = `<span class="muted">Parameter suggestion unavailable: ${esc((s && s.error) || 'route not ready')}.</span>`;
     }
   } catch(e){ box.innerHTML = ''; }
+}
+
+// Product MW / cLogP distribution over a sample of the buildable products, so
+// the MW ceiling and logP window can be set from data (see /suggest-params).
+function productPropsHtml(pp){
+  if (!pp || !pp.mw) return '';
+  const mw = pp.mw, lp = pp.logp, pc = x => (x*100).toFixed(0);
+  return `<div class="muted" style="margin-top:3px">Product MW (n=${pp.n_sampled}): median ${mw.p50}, 10–90% ${mw.p10}–${mw.p90}`
+    + ` — an MW ceiling keeps ≤400: ${pc(mw.pass_400)}%, ≤450: ${pc(mw.pass_450)}%, ≤500: ${pc(mw.pass_500)}%.`
+    + ` cLogP: median ${lp.p50}, 10–90% ${lp.p10}–${lp.p90}.</div>`;
 }
 
 // Once the pool's been annotated, keep the suggested budget in sync with route

@@ -56,6 +56,12 @@ def test_suggest_growth_params_prunes_then_suggests(tmp_path):
     assert r["num_warmup"] == 3
     assert r["num_cycles"] == 500               # clamped floor for tiny pools
     assert r["est_docks"] == 3 * (3 + 1 + 4) + 500
+    # product MW / logP distribution over sampled products
+    pp = r["product_props"]
+    assert pp and pp["n_sampled"] > 0
+    assert pp["mw"]["p10"] <= pp["mw"]["p50"] <= pp["mw"]["p90"]
+    assert 0.0 <= pp["mw"]["pass_400"] <= pp["mw"]["pass_450"] <= pp["mw"]["pass_500"] <= 1.0
+    assert pp["logp"]["p10"] <= pp["logp"]["p50"] <= pp["logp"]["p90"]
 
 
 def test_suggest_params_endpoint_fills_budget(tmp_path, monkeypatch):

@@ -18,10 +18,13 @@ occupying one of step 0's slots instead of every slot being a real library.
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy as np
 from rdkit import Chem
+from rdkit.Chem import Crippen, Descriptors
 
 from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.handles import neutralize
@@ -122,6 +125,53 @@ def resolve_reactant_files(steps: List[StepSpec], fragment_slot: int, resolver
     return reactant_files
 
 
+def _sample_product_props(files: List[str], route, n: int = 400, seed: int = 1234
+                          ) -> Optional[dict]:
+    """Enumerate ~``n`` random products from the (pruned) pools, build each via
+    the route, and summarise the product **MW** and **cLogP** distributions --
+    so the UI can show what MW ceiling / logP window actually keeps, instead of
+    guessing. Returns ``None`` if nothing builds. Cheap (no docking); seeded so
+    the estimate is stable across calls."""
+    sampler = RouteSampler(mode="minimize")
+    sampler.set_hide_progress(True)
+    sampler.read_reagents(files)
+    sampler.set_route(route)
+    counts = [len(rl) for rl in sampler.reagent_lists]
+    if not counts or any(c == 0 for c in counts):
+        return None
+    rng = random.Random(seed)
+    mws: List[float] = []
+    logps: List[float] = []
+    attempts = 0
+    while len(mws) < n and attempts < n * 6:
+        attempts += 1
+        choice = [rng.randrange(c) for c in counts]
+        prod, _smi, _name, _sel = sampler._build_product(choice)
+        if prod is None:
+            continue
+        try:
+            mws.append(Descriptors.MolWt(prod))
+            logps.append(Crippen.MolLogP(prod))
+        except Exception:  # noqa: BLE001
+            continue
+    if not mws:
+        return None
+    mw = np.array(mws)
+    lp = np.array(logps)
+
+    def pct(a, p, nd=1):
+        return round(float(np.percentile(a, p)), nd)
+
+    return {
+        "n_sampled": len(mws),
+        "mw": {"p10": pct(mw, 10), "p50": pct(mw, 50), "p90": pct(mw, 90),
+               "pass_400": round(float((mw <= 400).mean()), 3),
+               "pass_450": round(float((mw <= 450).mean()), 3),
+               "pass_500": round(float((mw <= 500).mean()), 3)},
+        "logp": {"p10": pct(lp, 10, 2), "p50": pct(lp, 50, 2), "p90": pct(lp, 90, 2)},
+    }
+
+
 def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
                           fragment_slot: int, resolver, work_dir: str) -> dict:
     """Dry-run the pool resolution + reachability prune (**no docking**) and
@@ -142,13 +192,15 @@ def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
     files = prune_unreachable_reagents(route, files, work_dir=str(work / "reachability"))
     sizes = [sum(1 for _ in open(f)) for f in files]
     variable = [s for s in sizes if s > 1]
+    product_props = _sample_product_props(files, route)
     if len(variable) <= 1:
         return {"mode": "exhaustive", "candidates": int(math.prod(sizes) if sizes else 0),
-                "variable_slots": variable}
+                "variable_slots": variable, "product_props": product_props}
     num_warmup, num_cycles = suggest_ts_params(variable)
     est_docks = num_warmup * sum(sizes) + num_cycles
     return {"mode": "search", "num_warmup": num_warmup, "num_cycles": num_cycles,
-            "variable_slots": variable, "est_docks": est_docks}
+            "variable_slots": variable, "est_docks": est_docks,
+            "product_props": product_props}
 
 
 def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Optional[str],
