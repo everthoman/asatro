@@ -24,6 +24,7 @@ from rdkit import Chem
 
 from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.handles import neutralize
+from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
@@ -118,7 +119,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                mode: str = "minimize", concurrency: int = 1,
                hide_progress: bool = True,
                search_method: str = "ts", min_cpds_per_core: int = 50, stop: int = 6000,
-               max_core_rmsd: float = 1.5,
+               max_core_rmsd: float = 1.5, prune_unreachable: bool = True,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
     """Run the full growth search over a user-chosen (possibly multi-step)
@@ -163,6 +164,12 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     if evaluator.progress_callback is not None:
         for line in summary:
             evaluator.progress_callback(line)
+    if prune_unreachable:
+        # Drop reagents that can't complete a downstream step *before* the
+        # search wastes warm-up on them (see reachability.py). Exact prune.
+        files = prune_unreachable_reagents(
+            route, files, work_dir=str(work / "reachability"),
+            log=evaluator.progress_callback)
     sampler = RouteSampler(mode=mode)
     if seed is not None:
         sampler.set_seed(seed)
