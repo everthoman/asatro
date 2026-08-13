@@ -87,7 +87,7 @@ class RouteSampler(ThompsonSampler):
         selected_reagents = [
             self.reagent_lists[idx][choice] for idx, choice in enumerate(choice_list)
         ]
-        product_name = "_".join(r.reagent_name for r in selected_reagents)
+        product_name = self._product_name(selected_reagents)
         try:
             cursor = 0
             intermediate = None

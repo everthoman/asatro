@@ -286,6 +286,9 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     sampler.read_reagents(reagent_file_list=files, num_to_select=num_to_select)
     sampler.set_route(route)
     sampler.set_evaluator(evaluator)
+    # Lead product names with the fragment (flat index == its step-0 slot), so a
+    # hit reads FRAG_<step1 reagent>_<step2 reagent>… in route order.
+    sampler.name_lead_index = fragment_slot
     n_variable = sum(1 for rl in sampler.reagent_lists if len(rl) > 1)
     if n_variable <= 1:
         # At most one reagent slot actually varies (the fragment fills the

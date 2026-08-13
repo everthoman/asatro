@@ -40,6 +40,12 @@ class ThompsonSampler:
         # Seed for the search RNG (None == nondeterministic). warm-up uses the
         # global numpy/random state, which the caller seeds separately.
         self.seed = None
+        # Optional reagent index to lead the product *name* with (the rest keep
+        # route order). Growth sets this to the fragment's slot so a product
+        # reads FRAG_<step1 reagent>_<step2 reagent>..., matching how the route
+        # is applied, rather than the raw component order (which puts e.g. the
+        # acid before the fragment). Does not affect the chemistry, only the name.
+        self.name_lead_index = None
         self._mode = mode
         if self._mode == "maximize":
             self.pick_function = np.nanargmax
@@ -133,6 +139,17 @@ class ThompsonSampler:
         """
         self.reaction = AllChem.ReactionFromSmarts(rxn_smarts)
 
+    def _product_name(self, selected_reagents) -> str:
+        """Join reagent names for the product name. If ``name_lead_index`` is
+        set (growth's fragment slot), that reagent leads and the rest keep route
+        order -- e.g. ``FRAG_<acid>_<boronic>`` -- so the name reads in the order
+        the route is applied. Naming only; the chemistry is unchanged."""
+        names = [r.reagent_name for r in selected_reagents]
+        li = self.name_lead_index
+        if li is not None and 0 <= li < len(names):
+            names = [names[li]] + names[:li] + names[li + 1:]
+        return "_".join(names)
+
     def _build_product(self, choice_list: List[int]):
         """Build the product molecule for a set of reagent choices.
 
@@ -144,7 +161,7 @@ class ThompsonSampler:
         selected_reagents = [
             self.reagent_lists[idx][choice] for idx, choice in enumerate(choice_list)
         ]
-        product_name = "_".join(r.reagent_name for r in selected_reagents)
+        product_name = self._product_name(selected_reagents)
         try:
             prod = self.reaction.RunReactants([r.mol for r in selected_reagents])
             if not prod:
