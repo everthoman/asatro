@@ -17,6 +17,7 @@ occupying one of step 0's slots instead of every slot being a real library.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -28,7 +29,7 @@ from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
-from asatro.engine.ts_autoparams import resolve_ts_budget
+from asatro.engine.ts_autoparams import resolve_ts_budget, suggest_ts_params
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -94,6 +95,60 @@ def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slo
         route.append((rxn["smarts"], len(info["fresh_indices"]), info["intermediate_slot"]))
         summary.append(f"Step {i + 1}: {rxn['name']} [{', '.join(labels)}]")
     return files, route, summary
+
+
+def resolve_reactant_files(steps: List[StepSpec], fragment_slot: int, resolver
+                           ) -> List[Dict[int, str]]:
+    """Resolve each step's fresh reagent components to ``.smi`` paths via
+    ``resolver`` (a pool- or class-backed ReactantResolver), skipping step 0's
+    fragment slot. Shared by the live run (``jobs._run``) and the pre-launch
+    parameter suggestion (:func:`suggest_growth_params`) so both compute over
+    the exact same resolved pools."""
+    reactant_files: List[Dict[int, str]] = []
+    for i, step in enumerate(steps):
+        step_info = resolve_step(step, i)
+        rid, rxn = step_info["reaction_id"], step_info["rxn"]
+        step_map: Dict[int, str] = {}
+        for ci in step_info["fresh_indices"]:
+            if i == 0 and ci == fragment_slot:
+                continue
+            comp = rxn["components"][ci]
+            path = resolver(rid, ci, comp.get("accepts", []))
+            if not path:
+                raise ValueError(
+                    f"no reactant library for component {ci} of '{rid}' (step {i + 1})")
+            step_map[ci] = path
+        reactant_files.append(step_map)
+    return reactant_files
+
+
+def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
+                          fragment_slot: int, resolver, work_dir: str) -> dict:
+    """Dry-run the pool resolution + reachability prune (**no docking**) and
+    report the post-prune variable-slot sizes plus a suggested TS budget, so the
+    UI can show/fill ``num_warmup``/``num_cycles`` before launch. Read-only;
+    raises like a real run would on a bad route or an empty (unreachable) pool.
+
+    Returns ``{"mode": "search", "num_warmup", "num_cycles", "variable_slots",
+    "est_docks"}`` for a real TS search, or ``{"mode": "exhaustive",
+    "candidates", "variable_slots"}`` when at most one slot varies (the run
+    would dock the whole small library and skip warm-up/search)."""
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    frag_smiles = fragment_smiles_from_sdf(fragment_sdf)
+    reactant_files = resolve_reactant_files(steps, fragment_slot, resolver)
+    files, route, _summary = build_growth_route(
+        steps, frag_smiles, fragment_slot, reactant_files, work)
+    files = prune_unreachable_reagents(route, files, work_dir=str(work / "reachability"))
+    sizes = [sum(1 for _ in open(f)) for f in files]
+    variable = [s for s in sizes if s > 1]
+    if len(variable) <= 1:
+        return {"mode": "exhaustive", "candidates": int(math.prod(sizes) if sizes else 0),
+                "variable_slots": variable}
+    num_warmup, num_cycles = suggest_ts_params(variable)
+    est_docks = num_warmup * sum(sizes) + num_cycles
+    return {"mode": "search", "num_warmup": num_warmup, "num_cycles": num_cycles,
+            "variable_slots": variable, "est_docks": est_docks}
 
 
 def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Optional[str],

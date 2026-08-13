@@ -33,7 +33,7 @@ from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
 from asatro.engine.gnina_evaluator import DOCK_CPU, MolFilters
-from asatro.growth import run_growth
+from asatro.growth import resolve_reactant_files, run_growth
 from asatro.svg import mol_props, mol_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -344,22 +344,9 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         # Resolve every step's fresh components against the same source (pool
         # or class-tagged files) -- "prune combined reagents for both steps"
         # is just calling the reaction/component-agnostic resolver once per
-        # fresh component, across the whole route.
-        reactant_files: List[Dict[int, str]] = []
-        for i, step in enumerate(steps):
-            step_info = resolve_step(step, i)
-            rid, rxn = step_info["reaction_id"], step_info["rxn"]
-            step_map: Dict[int, str] = {}
-            for ci in step_info["fresh_indices"]:
-                if i == 0 and ci == fragment_slot:
-                    continue
-                comp = rxn["components"][ci]
-                path = resolver(rid, ci, comp.get("accepts", []))
-                if not path:
-                    raise ValueError(
-                        f"no reactant library for component {ci} of '{rid}' (step {i + 1})")
-                step_map[ci] = path
-            reactant_files.append(step_map)
+        # fresh component, across the whole route. Shared with the pre-launch
+        # parameter suggestion so both draw the exact same pools.
+        reactant_files = resolve_reactant_files(steps, fragment_slot, resolver)
 
         mol_filters = make_filters(cfg)
         if mol_filters.active:

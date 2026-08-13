@@ -131,6 +131,63 @@ async def pool_preview(pool: UploadFile = File(default=None)) -> dict:
             "n_untagged": p.n_total - p.n_tagged, "counts": p.counts()}
 
 
+@app.post("/suggest-params")
+async def suggest_params(fragment: UploadFile = File(...),
+                         config: str = Form("{}"),
+                         pool: UploadFile = File(default=None),
+                         reactants: List[UploadFile] = File(default=[])) -> dict:
+    """Pre-launch dry run for the growth form: resolve the chosen route's pools
+    and prune unreachable reagents (**no docking, no receptor needed**), then
+    return the post-prune variable-slot sizes and a suggested TS budget so the
+    "Annotate pool" step can fill ``num_warmup``/``num_cycles``. Read-only;
+    reports failures as ``{"ok": false, "error": ...}`` so the UI can still
+    show the plain pool annotation."""
+    import shutil
+
+    from asatro.growth import suggest_growth_params
+    from asatro.jobs import make_class_resolver
+    from asatro.pool import Pool, pool_resolver
+
+    try:
+        cfg = json.loads(config or "{}")
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"bad config JSON: {e}"}
+    steps = cfg.get("steps") or []
+    if not steps or cfg.get("fragment_slot") is None:
+        return {"ok": False, "error": "route not fully specified yet"}
+
+    stage = jobs_dir() / "_suggest" / f"{int(time.time() * 1000)}"
+    stage.mkdir(parents=True, exist_ok=True)
+    try:
+        frag_path = stage / "fragment.sdf"
+        frag_path.write_bytes(await fragment.read())
+        if pool is not None and pool.filename:
+            pool_path = stage / "pool.smi"
+            pool_path.write_bytes(await pool.read())
+            resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
+        else:
+            reactant_by_class = {}
+            for rf in reactants:
+                cls = Path(rf.filename or "").stem
+                if not cls:
+                    continue
+                p = stage / f"reactant_{cls}.smi"
+                p.write_bytes(await rf.read())
+                reactant_by_class[cls] = str(p)
+            if reactant_by_class:
+                resolver = make_class_resolver(reactant_by_class)
+            else:
+                resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+        result = suggest_growth_params(
+            fragment_sdf=str(frag_path), steps=steps,
+            fragment_slot=int(cfg["fragment_slot"]), resolver=resolver, work_dir=str(stage))
+        return {"ok": True, **result}
+    except Exception as e:  # noqa: BLE001 -- report, don't 500 the annotate flow
+        return {"ok": False, "error": str(e)}
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 @app.post("/grow")
 async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
                reactants: List[UploadFile] = File(default=[]),

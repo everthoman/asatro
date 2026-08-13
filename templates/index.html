@@ -637,6 +637,37 @@ el('poolPreviewBtn').addEventListener('click', async ()=>{
     }).join('');
     out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged (${d.n_untagged} no handle)</div>${rows}` +
       (need.some(c=>!(c in d.counts)) ? `<div class="bad">⚠ pool has nothing for: ${need.filter(c=>!(c in d.counts)).map(groupLabel).join(', ')}</div>` : '');
+    // Best-effort: dry-run the route (resolve + prune, no docking) to suggest a
+    // TS budget from the *buildable* pools and fill num_warmup / num_cycles.
+    if (el('fragment').files.length && typeof growthStep1 !== 'undefined' && growthStep1) {
+      const sfd = new FormData();
+      sfd.append('fragment', el('fragment').files[0]);
+      if (poolMode()){
+        if (el('poolFile').files.length) sfd.append('pool', el('poolFile').files[0], 'pool.smi');
+      } else {
+        [...document.querySelectorAll('.reactantFile')].forEach(i => {
+          if (i.files.length) sfd.append('reactants', i.files[0], i.dataset.class + '.smi'); });
+      }
+      const steps = [growthStep1.reactionId, ...growthExtendStepDivs.map(dv => {
+        const { reactionId, slot } = parseExtendChoice(dv.querySelector('.growthStepRxn').value);
+        return { reaction_id: reactionId, slot };
+      })];
+      sfd.append('config', JSON.stringify({ steps, fragment_slot: growthStep1.slotIndex }));
+      out.innerHTML += `<div class="muted" style="margin-top:6px">Computing suggested parameters…</div>`;
+      try {
+        const s = await (await fetch('/suggest-params', {method:'POST', body:sfd})).json();
+        if (s.ok && s.mode === 'search') {
+          el('numCycles').value = s.num_cycles;
+          el('numWarmup').value = s.num_warmup;
+          out.innerHTML += `<div class="ok" style="margin-top:2px">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
+            + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</div>`;
+        } else if (s.ok && s.mode === 'exhaustive') {
+          out.innerHTML += `<div class="muted" style="margin-top:2px">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed.</div>`;
+        } else if (!s.ok) {
+          out.innerHTML += `<div class="muted" style="margin-top:2px">Parameter suggestion skipped: ${esc(s.error||'route not ready')}.</div>`;
+        }
+      } catch(e){ /* best-effort; leave the annotation as-is */ }
+    }
   } catch(e){ out.textContent = 'Preview failed: ' + e.message; }
 });
 
