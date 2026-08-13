@@ -372,6 +372,10 @@
 
 <script>
 const CATALOG = __CATALOG_JSON__;
+// Show reactions alphabetically by name everywhere they're listed (extend-step
+// and combi-start menus iterate this array; RXN below is keyed by id, so its
+// order is irrelevant).
+CATALOG.reactions.sort((a, b) => a.name.localeCompare(b.name));
 const RXN = Object.fromEntries(CATALOG.reactions.map(r => [r.id, r]));
 const groupLabel = c => CATALOG.groups[c] || c;
 let analysis = null;       // last /prune response
@@ -494,7 +498,9 @@ function renderAnalysis(){
 
   step1Choices = {};
   const options = ['<option value="">— choose an accessible reaction/slot —</option>'];
-  for (const [rid, info] of Object.entries(analysis.reactions)){
+  const sortedReactions = Object.entries(analysis.reactions)
+    .sort(([a], [b]) => (RXN[a]?.name || a).localeCompare(RXN[b]?.name || b));
+  for (const [rid, info] of sortedReactions){
     if (!info.compatible) continue;
     const rx = RXN[rid] || {name: rid, components: []};
     (info.slots||[]).forEach(s=>{
