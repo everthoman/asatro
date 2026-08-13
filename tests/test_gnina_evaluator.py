@@ -190,3 +190,36 @@ def test_run_pollable_raises_timeout_expired_without_waiting_full_sleep(tmp_path
         pass
     elapsed = time.monotonic() - start
     assert elapsed < 2.0, f"took {elapsed:.2f}s -- should stop at ~1s (the configured timeout), not the full 10s sleep"
+
+
+def test_concurrent_duplicate_products_dock_once(tmp_path):
+    # Single-flight: at concurrency>1 many samples collapse to the same product
+    # (protected variants deprotect to identical structures). Without an
+    # in-flight guard, every worker re-docks it -- inflating dock_count well
+    # above the unique-product count. Concurrent identical products must dock
+    # exactly once, and all callers get that one result.
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+    ev.filters = None
+    calls = []
+    lock = threading.Lock()
+
+    def fake_dock(smiles):
+        with lock:
+            calls.append(smiles)
+        time.sleep(0.25)   # hold the in-flight slot so the others pile up behind it
+        return -7.0
+    ev._dock = fake_dock
+
+    results = []
+
+    def run():
+        m = Chem.MolFromSmiles("c1ccccc1")
+        results.append(ev.evaluate_detailed(m))
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(calls) == 1                    # docked once, not 8x
+    assert results == [(-7.0, None)] * 8       # every caller got the shared result

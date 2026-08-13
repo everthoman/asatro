@@ -49,6 +49,6 @@ def resolve_ts_budget(num_warmup, num_cycles, reagent_lists, log=None):
         warmup_docks = num_warmup * sum(len(rl) for rl in reagent_lists)
         log(f"TS budget: num_warmup={num_warmup}{' (auto)' if auto_w else ''}, "
             f"num_cycles={num_cycles}{' (auto)' if auto_c else ''} — variable slots "
-            f"{variable_sizes}; ~{(warmup_docks + num_cycles) / 1000:.1f}k docks "
-            f"incl. warm-up, before filters")
+            f"{variable_sizes}; ~{(warmup_docks + num_cycles) / 1000:.1f}k products "
+            f"evaluated (incl. warm-up, before filters/dedup)")
     return num_warmup, num_cycles

@@ -654,12 +654,15 @@ el('poolPreviewBtn').addEventListener('click', async ()=>{
   try {
     const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
     const need = JSON.parse(el('poolBox').dataset.need || '[]');
-    const rows = Object.entries(d.counts).map(([c,n])=>{
-      const star = need.includes(c) ? ' ◀ needed' : '';
-      return `<div class="${need.includes(c)?'ok':''}">${groupLabel(c)}: ${n}${star}</div>`;
+    // Only the classes this route actually draws on -- the pool tags ~50, but
+    // showing them all is noise; the needed ones (and whether the pool has any)
+    // are what matter.
+    const rows = need.map(c => {
+      const n = d.counts[c];
+      return `<div class="${n ? 'ok' : 'bad'}">${groupLabel(c)}: ${n != null ? n : '0 — none in this pool'}</div>`;
     }).join('');
-    out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged (${d.n_untagged} no handle)</div>${rows}` +
-      (need.some(c=>!(c in d.counts)) ? `<div class="bad">⚠ pool has nothing for: ${need.filter(c=>!(c in d.counts)).map(groupLabel).join(', ')}</div>` : '');
+    out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged</div>`
+      + (need.length ? rows : '<div class="muted">pick a route above to see which reactants it needs</div>');
     // Suggest a TS budget from the *buildable* pools and fill num_warmup /
     // num_cycles. Also re-runs automatically whenever the route changes after
     // this (see maybeRefreshParams), so adding the next reaction step updates it.
@@ -695,7 +698,7 @@ async function refreshSuggestedParams(){
       el('numCycles').value = s.num_cycles;
       el('numWarmup').value = s.num_warmup;
       box.innerHTML = `<span class="ok">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
-        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k docks incl. warm-up) — filled in below.</span>`
+        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k products evaluated incl. warm-up) — filled in below.</span>`
         + productPropsHtml(s.product_props);
     } else if (s.ok && s.mode === 'exhaustive'){
       box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed (add the next reaction step for a TS search).</span>`

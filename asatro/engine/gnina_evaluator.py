@@ -446,6 +446,13 @@ class GninaEvaluator(Evaluator):
         self._dock_count = 0
         self._score_cache: Dict[str, float] = {}
         self._reason_cache: Dict[str, Optional[str]] = {}  # smiles -> None | "filtered" | "fail"
+        # Products currently being scored, so concurrent workers single-flight
+        # the same structure (wait for the first result) instead of redundantly
+        # filtering/docking it. At concurrency>1 many samples collapse to the
+        # same product -- protected variants deprotect to identical structures
+        # -- and without this each thread would dock it again.
+        self._inflight: set = set()
+        self._inflight_cv = threading.Condition(self._lock)
         self._pose_cache: Dict[str, Tuple[float, Chem.Mol]] = {}  # smiles -> (score, pose mol)
         self._name_cache: Dict[str, str] = {}  # smiles -> reagent-combo name (for the live gallery)
         self._components_cache: Dict[str, list] = {}  # smiles -> [{"smiles","name"}, ...] per component
@@ -466,6 +473,13 @@ class GninaEvaluator(Evaluator):
 
     def evaluate(self, mol: Chem.Mol) -> float:
         return self.evaluate_detailed(mol)[0]
+
+    def _cached_result(self, dock_smiles: str) -> Optional[Tuple[float, Optional[str]]]:
+        """``(score, reason)`` if this product was already scored, else ``None``.
+        Must be called with ``self._lock`` held."""
+        if dock_smiles in self._score_cache:
+            return self._score_cache[dock_smiles], self._reason_cache.get(dock_smiles)
+        return None
 
     def evaluate_detailed(self, mol: Chem.Mol) -> Tuple[float, Optional[str]]:
         """Like :meth:`evaluate` but also returns *why* a score is NaN.
@@ -509,35 +523,50 @@ class GninaEvaluator(Evaluator):
                     self._components_cache.setdefault(dock_smiles, components)
 
         with self._lock:
-            if dock_smiles in self._score_cache:
-                return self._score_cache[dock_smiles], self._reason_cache.get(dock_smiles)
+            cached = self._cached_result(dock_smiles)
+            if cached is not None:
+                return cached
+            # Single-flight: if another worker is already scoring this exact
+            # product, wait for its result rather than filter/dock it again.
+            while dock_smiles in self._inflight:
+                self._inflight_cv.wait()
+                cached = self._cached_result(dock_smiles)
+                if cached is not None:
+                    return cached
+            self._inflight.add(dock_smiles)
 
-        # Hard filters before docking.
-        if self.filters is not None and self.filters.active:
-            reason = self.filters.reject_reason(dock_mol or mol)
-            if reason is not None:
-                key = reason.split(":")[0].split(" ")[0]
-                with self._lock:
-                    self.rejections[key] = self.rejections.get(key, 0) + 1
-                    self._score_cache[dock_smiles] = np.nan
-                    self._reason_cache[dock_smiles] = "filtered"
-                    total_rej = sum(self.rejections.values())
-                    snapshot = dict(self.rejections)
-                if self.progress_callback is not None and total_rej % 100 == 0:
-                    self.progress_callback(
-                        f"filtered {total_rej} products so far (pre-dock) {snapshot}"
-                    )
-                return np.nan, "filtered"
+        try:
+            # Hard filters before docking.
+            if self.filters is not None and self.filters.active:
+                reason = self.filters.reject_reason(dock_mol or mol)
+                if reason is not None:
+                    key = reason.split(":")[0].split(" ")[0]
+                    with self._lock:
+                        self.rejections[key] = self.rejections.get(key, 0) + 1
+                        self._score_cache[dock_smiles] = np.nan
+                        self._reason_cache[dock_smiles] = "filtered"
+                        total_rej = sum(self.rejections.values())
+                        snapshot = dict(self.rejections)
+                    if self.progress_callback is not None and total_rej % 100 == 0:
+                        self.progress_callback(
+                            f"filtered {total_rej} products so far (pre-dock) {snapshot}"
+                        )
+                    return np.nan, "filtered"
 
-        # Docking (the slow part) runs without the lock held so parallel docks
-        # actually overlap; only the bookkeeping around it is serialised.
-        score = self._dock(dock_smiles)
-        result_reason = None if np.isfinite(score) else "fail"
-        with self._lock:
-            self._score_cache[dock_smiles] = score
-            self._reason_cache[dock_smiles] = result_reason
-        self._emit_progress(score)
-        return score, result_reason
+            # Docking (the slow part) runs without the lock held so parallel
+            # docks of *different* products actually overlap; only the
+            # bookkeeping around it is serialised.
+            score = self._dock(dock_smiles)
+            result_reason = None if np.isfinite(score) else "fail"
+            with self._lock:
+                self._score_cache[dock_smiles] = score
+                self._reason_cache[dock_smiles] = result_reason
+            self._emit_progress(score)
+            return score, result_reason
+        finally:
+            with self._lock:
+                self._inflight.discard(dock_smiles)
+                self._inflight_cv.notify_all()
 
     # -- Overridable hooks (see AnchoredFragmentEvaluator) -------------------
     def _prepare_pose(self, smiles: str) -> Tuple[Optional[str], Optional[str]]:
