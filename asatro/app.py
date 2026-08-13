@@ -419,13 +419,46 @@ async def job_detail(job_id: str) -> dict:
 
 @app.get("/jobs/{job_id}/poses/{filename}")
 async def job_poses(job_id: str, filename: str) -> FileResponse:
-    """Download the docked poses (SDF) for one growth target of a job."""
+    """Download all docked poses (SDF) for one growth target of a job."""
     if not re.fullmatch(r"poses_\d+\.sdf", filename):
         raise HTTPException(400, "invalid filename")
     p = jobs_dir() / job_id / filename
     if not p.is_file():
         raise HTTPException(404, "poses not found")
     return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
+
+
+@app.get("/jobs/{job_id}/pose/{rank}")
+async def job_pose(job_id: str, rank: int) -> Response:
+    """Download a single docked pose (SDF) by its 1-based gallery rank -- the
+    ``DockingRank`` written into ``poses_0.sdf`` (best-scored first), which
+    lines up with the results gallery's ``#rank``."""
+    import tempfile
+
+    poses_path = jobs_dir() / job_id / "poses_0.sdf"
+    if not poses_path.is_file():
+        raise HTTPException(404, "no docked poses for this job")
+    target = None
+    for mol in Chem.SDMolSupplier(str(poses_path), sanitize=False, removeHs=False):
+        if mol is None:
+            continue
+        if mol.HasProp("DockingRank") and mol.GetProp("DockingRank") == str(rank):
+            target = mol
+            break
+    if target is None:
+        raise HTTPException(404, f"no pose with rank {rank}")
+    fd, tmp = tempfile.mkstemp(suffix=".sdf")
+    os.close(fd)
+    try:
+        writer = Chem.SDWriter(tmp)
+        writer.write(target)
+        writer.close()
+        with open(tmp) as fh:
+            sdf = fh.read()
+    finally:
+        os.unlink(tmp)
+    return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
+                    headers={"Content-Disposition": f'attachment; filename="{job_id}_pose_{rank}.sdf"'})
 
 
 @app.post("/jobs/{job_id}/seed")

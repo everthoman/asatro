@@ -71,8 +71,7 @@
   .card .name { color:#555; word-break:break-all; }
   .card .props { color:#666; font-size:0.85em; margin-top:2px; }
   .card .smi { color:#999; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
-  .seedrow { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
-  .seedBtn { font-size:10px; padding:4px 7px; }
+  .card .poseLink { display:inline-block; margin-top:6px; font-size:11px; }
   .conv-chart svg { width:100%; height:auto; display:block; }
   .conv-chart .axis { stroke:var(--border2); stroke-width:1; }
   .conv-chart .grid { stroke:var(--chart-grid); stroke-width:1; }
@@ -922,84 +921,28 @@ function convergenceSvg(data){
     + grid + axes + `<path class="curve" d="${d}"/>` + xlab + `</svg></div>`;
 }
 
-// Flatten a job's route (steps, as persisted in result.steps) into one
-// {reaction_id, label, accepts} per component, in the same order the job
-// layer's component provenance list is built in -- mirrors
-// asatro/seed.py's component_route_meta, client-side, just for button labels.
-function componentRouteMeta(steps){
-  const meta = [];
-  for (const s of (steps || [])){
-    const rx = RXN[s.reaction_id];
-    if (!rx) continue;
-    for (const c of rx.components) meta.push({label: c.label, accepts: c.accepts});
-  }
-  return meta;
-}
-
 // Cards only — the caller supplies the ".topgrid" container (some, like
 // #liveGrid, already have it in markup; wrapping here too would nest one
 // grid inside a single-cell grid item and collapse it to one column).
-// jobId/componentMeta are only given for a *finished* job's results panel
-// (seeding needs that job's poses_0.sdf, only written on completion) -- the
-// live in-progress grid omits them and cards render without seed buttons.
-function galleryCards(items, jobId, componentMeta){
-  return items.map((it,i) => `
+// jobId + poses are only given for a *finished* job's results panel (the
+// per-pose SDF lives in that job's poses_0.sdf, written on completion), so a
+// "Download pose" link is shown there; the live in-progress grid omits them.
+function galleryCards(items, jobId, poses){
+  return items.map((it,i) => {
+    const rank = it.rank!=null?it.rank:i+1;
+    return `
     <div class="card">
       ${it.svg || '<div class="muted" style="color:#888">no structure</div>'}
       <div class="meta">
-        <span class="rank">#${it.rank!=null?it.rank:i+1}</span> &middot; <span class="score">${it.score}</span>
+        <span class="rank">#${rank}</span> &middot; <span class="score">${it.score}</span>
         <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
         ${(it.mw!=null||it.logp!=null) ? `<div class="props">MW ${it.mw!=null?it.mw:'–'} &middot; logP ${it.logp!=null?it.logp:'–'}</div>` : ''}
         <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
       </div>
-      ${seedButtons(jobId, it.rank!=null?it.rank:i+1, it.components, componentMeta)}
-    </div>`).join('');
+      ${(jobId && poses) ? `<a class="poseLink" href="/jobs/${jobId}/pose/${rank}" download title="Download this docked pose (SDF)">Download pose ↓</a>` : ''}
+    </div>`;
+  }).join('');
 }
-
-// One small "Seed ↓" chip per reagent this hit used -- carves that reagent's
-// sub-pose (real 3D coords from this hit's dock) into a growth-ready
-// fragment.sdf download. Only rendered when the job persisted component
-// provenance (i.e. a finished job with a real evaluator, not a fake-runner
-// test or the live in-progress grid).
-function seedButtons(jobId, rank, components, componentMeta){
-  if (!jobId || !components || !components.length) return '';
-  return `<div class="seedrow">` + components.map((c, ci) => {
-    const label = (componentMeta && componentMeta[ci]) ? componentMeta[ci].label : c.name;
-    return `<button class="btn ghost seedBtn" type="button"
-      data-job="${jobId}" data-rank="${rank}" data-comp="${ci}"
-      title="Carve ${esc(c.name)} (${esc(c.smiles)}) out of this hit's docked pose">Seed: ${esc(label)} ↓</button>`;
-  }).join('') + `</div>`;
-}
-
-document.addEventListener('click', async (e)=>{
-  const btn = e.target.closest('.seedBtn');
-  if (!btn) return;
-  const { job, rank, comp } = btn.dataset;
-  btn.disabled = true;
-  const prevText = btn.textContent;
-  btn.textContent = 'Carving…';
-  try {
-    const res = await fetch(`/jobs/${job}/seed`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: `rank=${encodeURIComponent(rank)}&component_index=${encodeURIComponent(comp)}`,
-    });
-    if (!res.ok) throw new Error(await res.text());
-    const blob = await res.blob();
-    const cd = res.headers.get('Content-Disposition') || '';
-    const m = /filename="?([^"]+)"?/.exec(cd);
-    const filename = m ? m[1] : `fragment_${job}_rank${rank}_comp${comp}.sdf`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  } catch(err){
-    alert('Seed failed: ' + err.message);
-  }
-  btn.disabled = false;
-  btn.textContent = prevText;
-});
 
 // ---- collapsible right-hand panes ----
 function wireToggle(btnId, bodyId, label){
@@ -1066,7 +1009,7 @@ function renderHits(result){
     const topRows = (run.top||[]).slice(0, topN);
     html += `<div class="target-block"><h3>${chain || 'Combi search'}</h3>`;
     html += `<div class="sub">${run.n_docked} products scored · showing ${topRows.length} of ${ (run.top||[]).length } saved`;
-    if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download poses</a>`;
+    if (run.poses && currentJob) html += ` · <a href="/jobs/${currentJob}/poses/${run.poses}" download>download all poses</a>`;
     html += `</div>`;
     if (run.rejections && Object.keys(run.rejections).length){
       const rej = Object.entries(run.rejections).map(([k,n])=>`${esc(k)}: ${n}`).join(' · ');
@@ -1075,9 +1018,8 @@ function renderHits(result){
     if (run.convergence && run.convergence.points && run.convergence.points.length){
       html += convergenceSvg(run.convergence);
     }
-    const meta = componentRouteMeta(result.steps);
     html += `<div class="topgrid">` +
-      galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, meta) + `</div>`;
+      galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, !!run.poses) + `</div>`;
     html += `</div>`;
   }
   host.innerHTML = html;
