@@ -815,6 +815,46 @@ class GninaEvaluator(Evaluator):
         with self._lock:
             return dict(self._components_cache)
 
+    def reagent_rankings(self, top: int = 20) -> List[Dict]:
+        """Per variable component slot, the building blocks ranked by **mean
+        product score** (best-first), with ``best`` (single best product) and
+        ``count`` (how many scored products used it -- also a read on how much
+        Thompson Sampling exploited it).
+
+        Aggregated from every scored product's component provenance (the
+        reagent that filled each route slot). Answers "which acids/boronics
+        carry the good hits", which the top-*products* gallery can't -- a good
+        reagent's quality is spread across many products, not one leader. Slots
+        filled by a single fixed reagent (the bound fragment) are omitted."""
+        with self._lock:
+            items = [(smi, s, self._components_cache.get(smi))
+                     for smi, s in self._score_cache.items()]
+        per_slot: Dict[int, Dict[str, dict]] = {}
+        for smi, score, components in items:
+            if not np.isfinite(score) or not components:
+                continue
+            for ci, c in enumerate(components):
+                r_smi = c.get("smiles")
+                if r_smi is None:
+                    continue
+                slot = per_slot.setdefault(ci, {})
+                e = slot.setdefault(r_smi, {"name": c.get("name"), "smiles": r_smi, "scores": []})
+                e["scores"].append(score)
+        out: List[Dict] = []
+        for ci in sorted(per_slot):
+            reagents = per_slot[ci]
+            if len(reagents) <= 1:          # a fixed slot (the fragment) -- nothing to rank
+                continue
+            rows = []
+            for e in reagents.values():
+                s = e["scores"]
+                best = max(s) if self.higher_is_better else min(s)
+                rows.append({"name": e["name"], "smiles": e["smiles"], "count": len(s),
+                             "mean": round(float(np.mean(s)), 3), "best": round(float(best), 3)})
+            rows.sort(key=lambda r: r["mean"], reverse=self.higher_is_better)
+            out.append({"slot": ci, "reagents": rows[:max(1, int(top))]})
+        return out
+
     def stats(self) -> dict:
         return {
             "evaluations": self.num_evaluations,

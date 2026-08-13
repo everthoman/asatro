@@ -223,3 +223,29 @@ def test_concurrent_duplicate_products_dock_once(tmp_path):
 
     assert len(calls) == 1                    # docked once, not 8x
     assert results == [(-7.0, None)] * 8       # every caller got the shared result
+
+
+def test_reagent_rankings_aggregates_by_slot(tmp_path):
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+
+    def prod(smi, score, acid, boronic):
+        ev._score_cache[smi] = score
+        ev._components_cache[smi] = [
+            {"smiles": f"acid{acid}", "name": f"A{acid}"},
+            {"smiles": "FRAG", "name": "FRAG"},          # fixed fragment slot
+            {"smiles": f"bor{boronic}", "name": f"B{boronic}"},
+        ]
+    prod("p1", -8.0, 1, 1)
+    prod("p2", -7.5, 1, 2)
+    prod("p3", -5.0, 2, 1)
+
+    r = ev.reagent_rankings()
+    # only the variable slots (0=acid, 2=boronic); the single-reagent fragment
+    # slot (1) is omitted
+    assert {s["slot"] for s in r} == {0, 2}
+    acids = next(s for s in r if s["slot"] == 0)["reagents"]
+    # minimize: A1 (mean -7.75, over 2 products) ranks above A2 (mean -5.0)
+    assert acids[0]["name"] == "A1"
+    assert acids[0]["count"] == 2
+    assert acids[0]["best"] == -8.0
+    assert acids[-1]["name"] == "A2"

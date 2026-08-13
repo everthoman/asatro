@@ -207,6 +207,13 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
         }
         if st.get("rejections"):
             entry["rejections"] = st["rejections"]
+        if hasattr(evaluator, "reagent_rankings"):
+            rankings = evaluator.reagent_rankings()
+            for slot in rankings:
+                for r in slot["reagents"]:
+                    r["svg"] = mol_svg(r["smiles"])
+            if rankings:
+                entry["reagents"] = rankings
         if job_dir is not None and evaluator.write_top_poses(str(job_dir / "poses_0.sdf"), n=TOP_N) > 0:
             entry["poses"] = "poses_0.sdf"
     return {"runs": [entry]}

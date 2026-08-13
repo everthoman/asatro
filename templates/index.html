@@ -1078,9 +1078,33 @@ function renderHits(result){
     }
     html += `<div class="topgrid">` +
       galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, !!run.poses) + `</div>`;
+    html += reagentPanelHtml(run);
     html += `</div>`;
   }
   host.innerHTML = html;
+}
+
+// Per variable slot, the building blocks ranked by mean product score -- the
+// reagent-level view the top-products gallery can't give (a good reagent's
+// quality is spread across many products, not concentrated in one leader).
+function reagentPanelHtml(run){
+  if (!run.reagents || !run.reagents.length) return '';
+  let h = `<div class="sub" style="margin-top:12px"><b>Top building blocks</b> `
+    + `<span class="muted" style="font-weight:400">— ranked by mean product score; n = products docked with it</span></div>`;
+  run.reagents.forEach((slot, si) => {
+    h += `<div class="sub">Reagent slot ${si + 1}</div><div class="topgrid">`
+      + slot.reagents.map(r => `
+        <div class="card">
+          ${r.svg || '<div class="muted" style="color:#888">no structure</div>'}
+          <div class="meta">
+            <div class="name" title="${esc(r.name)}">${esc(r.name)}</div>
+            <div class="props">mean ${r.mean} &middot; best ${r.best} &middot; n=${r.count}</div>
+            <div class="smi" title="${esc(r.smiles)}">${esc(r.smiles)}</div>
+          </div>
+        </div>`).join('')
+      + `</div>`;
+  });
+  return h;
 }
 el('hitsTopN').addEventListener('change', ()=> renderHits(lastHitsResult));
 
