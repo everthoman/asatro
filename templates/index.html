@@ -77,6 +77,12 @@
   .conv-chart .grid { stroke:var(--chart-grid); stroke-width:1; }
   .conv-chart .curve { fill:none; stroke:var(--accent); stroke-width:2; }
   .conv-chart .lbl { fill:var(--muted); font-size:10px; font-family:ui-monospace,Menlo,monospace; }
+  .reagentSlotBox { border:1px solid var(--border2); border-radius:8px; padding:8px 10px; margin-top:8px; background:var(--step-bg); }
+  .reagentSlotBox summary { cursor:pointer; font-size:12.5px; color:var(--text); font-weight:600; list-style:none; }
+  .reagentSlotBox summary::-webkit-details-marker { display:none; }
+  .reagentSlotBox summary::before { content:'\25b8\a0'; color:var(--muted); }
+  .reagentSlotBox[open] summary::before { content:'\25be\a0'; }
+  .reagentSlotBox .topgrid { margin-top:8px; }
 </style>
 </head>
 <body>
@@ -1187,17 +1193,20 @@ async function pollLiveConvergence(){
   if (!d.ready || !d.points.length) return;
   el('liveConv').innerHTML = convergenceSvg(d);
 }
+let lastLiveReagents = null;  // last successful live poll, kept so the "show N" selector can re-render without a refetch
 async function pollLiveReagents(){
   if (!currentJob) return;
   let d; try { d = await (await fetch(`/jobs/${currentJob}/reagents`)).json(); } catch(e){ return; }
   if (!d.ready || !d.reagents.length) return;
-  el('liveReagents').innerHTML = reagentPanelHtml({reagents: d.reagents});
+  lastLiveReagents = d.reagents;
+  el('liveReagents').innerHTML = reagentPanelHtml(d.reagents);
+  wireReagentPanel();
 }
 function startLivePanels(){
   stopLivePanels();
   el('livePanel').style.display = '';
   el('liveGrid').innerHTML = ''; el('liveConv').innerHTML = ''; el('liveMeta').textContent = '';
-  el('liveReagents').innerHTML = '';
+  el('liveReagents').innerHTML = ''; lastLiveReagents = null;
   pollLiveTop(); pollLiveConvergence(); pollLiveReagents();
   liveTopTimer = setInterval(pollLiveTop, 8000);
   liveConvTimer = setInterval(pollLiveConvergence, 8000);
@@ -1232,22 +1241,41 @@ function renderHits(result){
     }
     html += `<div class="topgrid">` +
       galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, !!run.poses) + `</div>`;
-    html += reagentPanelHtml(run);
+    html += reagentPanelHtml(run.reagents);
     html += `</div>`;
   }
   host.innerHTML = html;
+  wireReagentPanel();
 }
 
 // Per variable slot, the building blocks ranked by mean product score -- the
 // reagent-level view the top-products gallery can't give (a good reagent's
 // quality is spread across many products, not concentrated in one leader).
-function reagentPanelHtml(run){
-  if (!run.reagents || !run.reagents.length) return '';
-  let h = `<div class="sub" style="margin-top:12px"><b>Top building blocks</b> `
-    + `<span class="muted" style="font-weight:400">— ranked by mean product score; n = products docked with it</span></div>`;
-  run.reagents.forEach((slot, si) => {
-    h += `<div class="sub">Reagent slot ${si + 1}</div><div class="topgrid">`
-      + slot.reagents.map(r => `
+// Each slot is its own collapsible <details> (state kept in reagentCollapsed
+// so it survives the live view's re-render every poll instead of springing
+// back open), with a shared "show N per slot" selector (reagentShowN) --
+// slicing client-side from whatever the server already sent (up to
+// GninaEvaluator.reagent_rankings' own cap) so changing it is instant, no
+// refetch needed.
+let reagentShowN = 10;
+let reagentCollapsed = new Set();  // slot indices currently collapsed
+function reagentPanelHtml(reagentsList){
+  if (!reagentsList || !reagentsList.length) return '';
+  const opts = [5, 10, 20, 50].map(n =>
+    `<option value="${n}"${n === reagentShowN ? ' selected' : ''}>${n}</option>`).join('');
+  let h = `<div class="sub" style="margin-top:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">`
+    + `<b>Top building blocks</b>`
+    + `<span class="muted" style="font-weight:400">— ranked by mean product score; n = products docked with it</span>`
+    + `<label class="muted" style="margin:0; display:inline-flex; align-items:center; gap:4px">show `
+    + `<select id="reagentShowN" style="width:auto; padding:2px 6px; font-size:11px">${opts}</select> per slot</label>`
+    + `</div>`;
+  reagentsList.forEach(slot => {
+    const open = !reagentCollapsed.has(slot.slot);
+    const rows = slot.reagents.slice(0, reagentShowN);
+    h += `<details class="reagentSlotBox" data-slot="${slot.slot}"${open ? ' open' : ''}>`
+      + `<summary>Reagent slot ${slot.slot + 1} <span class="muted">(${slot.reagents.length} ranked)</span></summary>`
+      + `<div class="topgrid">`
+      + rows.map(r => `
         <div class="card">
           ${r.svg || '<div class="muted" style="color:#888">no structure</div>'}
           <div class="meta">
@@ -1256,9 +1284,32 @@ function reagentPanelHtml(run){
             <div class="smi" title="${esc(r.smiles)}">${esc(r.smiles)}</div>
           </div>
         </div>`).join('')
-      + `</div>`;
+      + `</div></details>`;
   });
   return h;
+}
+// Re-attach the "show N" and per-slot collapse listeners after every
+// re-render (the DOM nodes are recreated each time via innerHTML).
+function wireReagentPanel(){
+  const sel = document.getElementById('reagentShowN');
+  if (sel){
+    sel.addEventListener('change', ()=>{
+      reagentShowN = parseInt(sel.value) || 10;
+      if (lastLiveReagents && el('livePanel').style.display !== 'none'){
+        el('liveReagents').innerHTML = reagentPanelHtml(lastLiveReagents);
+      } else if (lastHitsResult){
+        renderHits(lastHitsResult);
+        return;  // renderHits() already calls wireReagentPanel() at the end
+      }
+      wireReagentPanel();
+    });
+  }
+  document.querySelectorAll('.reagentSlotBox').forEach(dtl => {
+    dtl.addEventListener('toggle', ()=>{
+      const slot = parseInt(dtl.dataset.slot);
+      if (dtl.open) reagentCollapsed.delete(slot); else reagentCollapsed.add(slot);
+    });
+  });
 }
 el('hitsTopN').addEventListener('change', ()=> renderHits(lastHitsResult));
 

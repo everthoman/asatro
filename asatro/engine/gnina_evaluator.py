@@ -815,7 +815,7 @@ class GninaEvaluator(Evaluator):
         with self._lock:
             return dict(self._components_cache)
 
-    def reagent_rankings(self, top: int = 20) -> List[Dict]:
+    def reagent_rankings(self, top: int = 50) -> List[Dict]:
         """Per variable component slot, the building blocks ranked by **mean
         product score** (best-first), with ``best`` (single best product) and
         ``count`` (how many scored products used it -- also a read on how much
