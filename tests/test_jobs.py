@@ -388,6 +388,46 @@ def test_combi_endpoint_and_jobs_listing(tmp_path, monkeypatch):
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
 
 
+def test_combi_endpoint_resolves_reactants_from_master_pool(tmp_path, monkeypatch):
+    # No per-slot files -- a tagged master pool is pruned to each component by
+    # FG class, same as growth.
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    calls = []
+
+    def runner(**k):
+        calls.append(k)
+        return ([[-7.0, "X", "x"]], None)
+    monkeypatch.setattr(jobs, "run_combi", runner)
+    from starlette.testclient import TestClient
+
+    from asatro.app import app
+    pool = b"OB(O)c1ccccc1 phB\nBrc1ccccc1 phBr\nCCO ethanol\n"
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[("receptor", ("receptor.pdb", b"", "chemical/x-pdb")),
+                   ("pool", ("pool.smi", pool, "text/plain"))],
+            data={"config": json.dumps({
+                "steps": ["suzuki"], "center": [0.0, 0.0, 0.0], "size": [20.0, 20.0, 20.0],
+                "num_cycles": 1})},
+        )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+        for _ in range(200):
+            d = client.get(f"/jobs/{job_id}").json()
+            if d["status"] in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.02)
+        assert d["status"] == "done", d
+
+    # endpoint resolved 2 fresh components (boronic + aryl halide) from the pool
+    rf = calls[0]["reagent_files"]
+    assert len(rf) == 1 and len(rf[0]) == 2
+    picked = sorted(tok for f in rf[0] for tok in open(f).read().split()
+                    if tok in ("phB", "phBr"))
+    assert picked == ["phB", "phBr"]
+
+
 def test_seed_endpoint_carves_a_component_from_a_finished_hit(tmp_path, monkeypatch):
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     from rdkit import Chem

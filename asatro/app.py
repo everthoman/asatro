@@ -266,6 +266,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
 async def combi(receptor: UploadFile = File(...),
                 reference: UploadFile = File(default=None),
                 reactants: List[UploadFile] = File(default=[]),
+                pool: UploadFile = File(default=None),
                 config: str = Form("{}"), session_name: str = Form("")) -> dict:
     """Start an unanchored (plain ts-gnina) combinatorial search as a background job.
 
@@ -302,7 +303,7 @@ async def combi(receptor: UploadFile = File(...),
         except ValueError as e:
             raise HTTPException(400, str(e))
         counts.append(len(info["fresh_indices"]))
-    if len(reactants) != sum(counts):
+    if reactants and len(reactants) != sum(counts):
         raise HTTPException(
             400, f"steps {steps} need {sum(counts)} reagent file(s) (route order), "
             f"got {len(reactants)}")
@@ -323,17 +324,35 @@ async def combi(receptor: UploadFile = File(...),
         reference_path = str(stage / "reference.sdf")
         Path(reference_path).write_bytes(await reference.read())
 
-    reagent_files: List[List[str]] = []
-    idx = 0
-    for si, n in enumerate(counts):
-        step_paths = []
-        for ci in range(n):
-            rf = reactants[idx]
-            p = stage / f"step{si}_comp{ci}_{Path(rf.filename or 'reagent.smi').name}"
-            p.write_bytes(await rf.read())
-            step_paths.append(str(p))
-            idx += 1
-        reagent_files.append(step_paths)
+    if reactants:
+        # Per-slot uploaded libraries (route order).
+        reagent_files: List[List[str]] = []
+        idx = 0
+        for si, n in enumerate(counts):
+            step_paths = []
+            for ci in range(n):
+                rf = reactants[idx]
+                p = stage / f"step{si}_comp{ci}_{Path(rf.filename or 'reagent.smi').name}"
+                p.write_bytes(await rf.read())
+                step_paths.append(str(p))
+                idx += 1
+            reagent_files.append(step_paths)
+    else:
+        # Master-pool mode: resolve each component from the tagged pool by its
+        # accepted FG class(es), same as growth. Uploaded pool, else the bundled
+        # default (Enamine Rush-Delivery EU).
+        from asatro.combi import resolve_combi_reactant_files
+        from asatro.pool import Pool, pool_resolver
+        if pool is not None and pool.filename:
+            pool_path = stage / "pool.smi"
+            pool_path.write_bytes(await pool.read())
+            resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
+        else:
+            resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+        try:
+            reagent_files = resolve_combi_reactant_files(steps, resolver)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     job = start_combi_job(receptor_path=str(rec_path), steps=steps, reagent_files=reagent_files,
                           reference_path=reference_path, center=center, size=size,

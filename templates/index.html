@@ -247,6 +247,19 @@
         <button class="btn ghost" id="combiAddStepBtn" type="button">+ Add extend step</button>
         <button class="btn ghost" id="combiRemoveStepBtn" type="button" disabled>&minus; Remove last step</button>
       </div>
+      <div class="checkline" style="margin-top:10px">
+        <label style="margin:0">Reagent source</label>
+        <select id="combiReagentSource" style="width:auto">
+          <option value="pool">Master pool (auto-prune by class)</option>
+          <option value="perslot">Per-slot files</option>
+        </select>
+      </div>
+      <div id="combiPoolBox" class="muted" style="margin-top:6px">
+        One tagged <code>.smi</code> pool; each reaction slot above is pruned to its
+        functional-group class. Leave empty for the bundled default (Enamine
+        Rush-Delivery EU, ~45k blocks).
+        <div style="margin-top:6px"><input type="file" id="combiPoolFile" accept=".smi"></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -739,17 +752,24 @@ syncScoreFieldOptions('cnnScoring', 'scoreField');
 let combiStepDivs = [];
 
 function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
+function combiPoolModeOn(){ return el('combiReagentSource').value === 'pool'; }
 function renderCombiStepFiles(div){
   const isFirst = combiStepDivs.indexOf(div) === 0;
   const value = div.querySelector('.combiStepRxn').value;
   const { reactionId, slot } = isFirst ? { reactionId: value, slot: null } : parseExtendChoice(value);
   const rx = RXN[reactionId]; if (!rx) return;
+  const pool = combiPoolModeOn();
   div.querySelector('.combiStepFiles').innerHTML = rx.components
     .map((c, ci) => ({ c, ci }))
     .filter(({ ci }) => ci !== slot)
-    .map(({ c }) =>
-      `<label>${c.label} <span class="chip">${(c.accepts||[]).map(groupLabel).join(' / ')}</span></label>
-     <input type="file" class="combiReactantFile" accept=".smi">`).join('');
+    .map(({ c }) => {
+      const label = `${c.label} <span class="chip">${(c.accepts||[]).map(groupLabel).join(' / ')}</span>`;
+      // Pool mode: no per-slot upload -- the class label shows what the pool
+      // will be pruned to for this slot.
+      return pool
+        ? `<label>${label} <span class="muted">— from master pool</span></label>`
+        : `<label>${label}</label><input type="file" class="combiReactantFile" accept=".smi">`;
+    }).join('');
 }
 function addCombiStep(){
   const isFirst = combiStepDivs.length === 0;
@@ -788,6 +808,10 @@ function toggleCombiSiteMode(){
   el('combiPocketBox').style.display = pm ? '' : 'none';
 }
 el('combiSiteMode').addEventListener('change', toggleCombiSiteMode);
+el('combiReagentSource').addEventListener('change', ()=>{
+  el('combiPoolBox').style.display = combiPoolModeOn() ? '' : 'none';
+  combiStepDivs.forEach(renderCombiStepFiles);   // swap per-slot inputs <-> pool labels
+});
 el('combiSearchMethod').addEventListener('change', e=>{
   el('combiRwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
 });
@@ -800,12 +824,17 @@ el('combiRunBtn').addEventListener('click', async ()=>{
   const rec = el('combiReceptor').files[0];
   if (!rec){ alert('Upload a receptor PDB.'); return; }
   const fd = new FormData();
-  let missing = false;
-  combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
-    if (!inp.files.length){ missing = true; return; }
-    fd.append('reactants', inp.files[0]);
-  }));
-  if (missing){ alert('Upload a .smi library for every reagent slot.'); return; }
+  if (combiPoolModeOn()){
+    if (el('combiPoolFile').files.length) fd.append('pool', el('combiPoolFile').files[0], 'pool.smi');
+    // else: backend falls back to the bundled default pool
+  } else {
+    let missing = false;
+    combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
+      if (!inp.files.length){ missing = true; return; }
+      fd.append('reactants', inp.files[0]);
+    }));
+    if (missing){ alert('Upload a .smi library for every reagent slot, or switch to Master pool.'); return; }
+  }
   fd.append('receptor', rec);
 
   const cfg = {

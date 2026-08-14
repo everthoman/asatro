@@ -63,6 +63,28 @@ def build_combi_route(steps: List[StepSpec], reagent_files: List[List[str]], wor
     return files, route, summary
 
 
+def resolve_combi_reactant_files(steps: List[StepSpec], resolver) -> List[List[str]]:
+    """Resolve each step's fresh reagent components to ``.smi`` paths via
+    ``resolver`` (a pool- or class-backed ReactantResolver), in route order --
+    the ``List[List[str]]`` shape :func:`build_combi_route` expects. Lets a
+    combi run draw its libraries from the tagged master pool by functional-group
+    class (same as growth) instead of one uploaded file per slot."""
+    reagent_files: List[List[str]] = []
+    for i, step in enumerate(steps):
+        info = resolve_step(step, i)
+        rid, rxn = info["reaction_id"], info["rxn"]
+        step_paths: List[str] = []
+        for ci in info["fresh_indices"]:
+            comp = rxn["components"][ci]
+            path = resolver(rid, ci, comp.get("accepts", []))
+            if not path:
+                raise ValueError(
+                    f"no reactant library for component {ci} of '{rid}' (step {i + 1})")
+            step_paths.append(path)
+        reagent_files.append(step_paths)
+    return reagent_files
+
+
 def make_evaluator(*, receptor_path: str, work_dir: str,
                    reference_path: Optional[str] = None,
                    center: Optional[Tuple[float, float, float]] = None,
