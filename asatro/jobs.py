@@ -382,8 +382,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             cnn_scoring=cfg.get("cnn_scoring", "none"),
             filters=mol_filters if mol_filters.active else None,
             search_method=search_method,
-            min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
-            stop=int(cfg.get("stop", 6000)),
+            min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
+            stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
             max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
             prune_unreachable=bool(cfg.get("prune_unreachable", True)),
             concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
@@ -447,8 +447,8 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
             cnn_scoring=cfg.get("cnn_scoring", "none"),
             filters=mol_filters if mol_filters.active else None,
             search_method=search_method,
-            min_cpds_per_core=int(cfg.get("min_cpds_per_core", 50)),
-            stop=int(cfg.get("stop", 6000)),
+            min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
+            stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
             prune_unreachable=bool(cfg.get("prune_unreachable", True)),
             concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
             progress_callback=job.log, cancel_event=job.cancel_event,

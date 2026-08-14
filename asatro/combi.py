@@ -14,6 +14,7 @@ paths is a job-layer concern (mirrors ts-gnina's own ``_resolve_set`` /
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -21,7 +22,9 @@ from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.gnina_evaluator import GninaEvaluator, MolFilters
 from asatro.engine.route_sampler import RouteSampler
-from asatro.engine.ts_autoparams import resolve_ts_budget
+from asatro.engine.ts_autoparams import (resolve_rws_budget, resolve_ts_budget,
+                                         suggest_rws_params, suggest_ts_params)
+from asatro.growth import _sample_product_props
 
 
 def build_combi_route(steps: List[StepSpec], reagent_files: List[List[str]], work_dir: Path
@@ -85,6 +88,38 @@ def resolve_combi_reactant_files(steps: List[StepSpec], resolver) -> List[List[s
     return reagent_files
 
 
+def suggest_combi_params(*, steps: List[StepSpec], reagent_files: List[List[str]],
+                         work_dir: str) -> dict:
+    """Dry-run the pool resolution + reachability prune (**no docking, no
+    receptor needed**) and report the post-prune slot sizes plus a suggested TS
+    budget, so the UI can fill ``num_warmup``/``num_cycles`` before launch.
+    Mirrors ``growth.suggest_growth_params`` -- combi has no fragment fixing a
+    slot, so every component is a real library and this lands in "search" mode
+    as soon as more than one slot has more than one candidate.
+
+    Returns the same shape as ``growth.suggest_growth_params``: ``{"mode":
+    "search", "num_warmup", "num_cycles", "variable_slots", "est_docks",
+    "product_props"}`` or ``{"mode": "exhaustive", "candidates",
+    "variable_slots", "product_props"}``."""
+    work = Path(work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    files, route, _summary = build_combi_route(steps, reagent_files, work)
+    files = prune_unreachable_reagents(route, files, work_dir=str(work / "reachability"))
+    sizes = [sum(1 for _ in open(f)) for f in files]
+    variable = [s for s in sizes if s > 1]
+    product_props = _sample_product_props(files, route)
+    if len(variable) <= 1:
+        return {"mode": "exhaustive", "candidates": int(math.prod(sizes) if sizes else 0),
+                "variable_slots": variable, "product_props": product_props}
+    num_warmup, num_cycles = suggest_ts_params(variable)
+    min_cpds_per_core, stop = suggest_rws_params(num_cycles)
+    est_docks = num_warmup * sum(sizes) + num_cycles
+    return {"mode": "search", "num_warmup": num_warmup, "num_cycles": num_cycles,
+            "min_cpds_per_core": min_cpds_per_core, "stop": stop,
+            "variable_slots": variable, "est_docks": est_docks,
+            "product_props": product_props}
+
+
 def make_evaluator(*, receptor_path: str, work_dir: str,
                    reference_path: Optional[str] = None,
                    center: Optional[Tuple[float, float, float]] = None,
@@ -117,7 +152,8 @@ def run_combi(*, receptor_path: str, steps: List[StepSpec], reagent_files: List[
              num_warmup: Optional[int] = None, num_cycles: Optional[int] = None,
              num_to_select: Optional[int] = None, seed: Optional[int] = None,
              mode: str = "minimize", concurrency: int = 1, hide_progress: bool = True,
-             search_method: str = "ts", min_cpds_per_core: int = 50, stop: int = 6000,
+             search_method: str = "ts", min_cpds_per_core: Optional[int] = None,
+             stop: Optional[int] = None,
              prune_unreachable: bool = True,
              on_evaluator: Optional[Callable[[object], None]] = None,
              **gnina_opts):
@@ -163,6 +199,10 @@ def run_combi(*, receptor_path: str, steps: List[StepSpec], reagent_files: List[
         num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
 
     if search_method == "rws":
+        # Fill in an auto RWS budget from num_cycles for any of
+        # min_cpds_per_core/stop the caller left unset.
+        min_cpds_per_core, stop = resolve_rws_budget(
+            min_cpds_per_core, stop, num_cycles, log=evaluator.progress_callback)
         warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)
         if not warmup_results:
             # Same bail-out as run_growth: nothing scored means the per-reagent

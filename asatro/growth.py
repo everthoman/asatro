@@ -32,7 +32,8 @@ from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler
-from asatro.engine.ts_autoparams import resolve_ts_budget, suggest_ts_params
+from asatro.engine.ts_autoparams import (resolve_rws_budget, resolve_ts_budget,
+                                         suggest_rws_params, suggest_ts_params)
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -197,8 +198,10 @@ def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
         return {"mode": "exhaustive", "candidates": int(math.prod(sizes) if sizes else 0),
                 "variable_slots": variable, "product_props": product_props}
     num_warmup, num_cycles = suggest_ts_params(variable)
+    min_cpds_per_core, stop = suggest_rws_params(num_cycles)
     est_docks = num_warmup * sum(sizes) + num_cycles
     return {"mode": "search", "num_warmup": num_warmup, "num_cycles": num_cycles,
+            "min_cpds_per_core": min_cpds_per_core, "stop": stop,
             "variable_slots": variable, "est_docks": est_docks,
             "product_props": product_props}
 
@@ -226,7 +229,8 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                num_to_select: Optional[int] = None, seed: Optional[int] = None,
                mode: str = "minimize", concurrency: int = 1,
                hide_progress: bool = True,
-               search_method: str = "ts", min_cpds_per_core: int = 50, stop: int = 6000,
+               search_method: str = "ts", min_cpds_per_core: Optional[int] = None,
+               stop: Optional[int] = None,
                max_core_rmsd: float = 1.5, prune_unreachable: bool = True,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
@@ -307,6 +311,10 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     num_warmup, num_cycles = resolve_ts_budget(
         num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
     if search_method == "rws":
+        # Fill in an auto RWS budget from num_cycles for any of
+        # min_cpds_per_core/stop the caller left unset.
+        min_cpds_per_core, stop = resolve_rws_budget(
+            min_cpds_per_core, stop, num_cycles, log=evaluator.progress_callback)
         warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)
         if not warmup_results:
             # search_rws needs the per-reagent posteriors warm_up_rws seeds;

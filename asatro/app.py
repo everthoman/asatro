@@ -188,6 +188,73 @@ async def suggest_params(fragment: UploadFile = File(...),
         shutil.rmtree(stage, ignore_errors=True)
 
 
+@app.post("/suggest-combi-params")
+async def suggest_combi_params_endpoint(config: str = Form("{}"),
+                         pool: UploadFile = File(default=None),
+                         reactants: List[UploadFile] = File(default=[])) -> dict:
+    """Pre-launch dry run for the combi form: resolve the chosen route's pools
+    and prune unreachable reagents (**no docking, no receptor needed**), then
+    return the post-prune variable-slot sizes and a suggested TS budget so the
+    "Annotate pool" step can fill ``num_warmup``/``num_cycles``. Read-only;
+    reports failures as ``{"ok": false, "error": ...}`` so the UI can still
+    show the plain pool annotation. Mirrors ``/suggest-params`` (growth),
+    except reagent resolution follows ``/combi``'s own convention: per-slot
+    ``reactants`` is a flat list in route order, not filename-stem-keyed."""
+    import shutil
+
+    from asatro.combi import resolve_combi_reactant_files, suggest_combi_params
+    from asatro.pool import Pool, pool_resolver
+
+    try:
+        cfg = json.loads(config or "{}")
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"bad config JSON: {e}"}
+    steps = cfg.get("steps") or []
+    if not steps:
+        return {"ok": False, "error": "route not fully specified yet"}
+
+    counts = []
+    for i, s in enumerate(steps):
+        try:
+            info = resolve_step(s, i)
+        except (KeyError, ValueError) as e:
+            return {"ok": False, "error": str(e.args[0]) if e.args else str(e)}
+        counts.append(len(info["fresh_indices"]))
+
+    stage = jobs_dir() / "_suggest" / f"{int(time.time() * 1000)}"
+    stage.mkdir(parents=True, exist_ok=True)
+    try:
+        if reactants:
+            if len(reactants) != sum(counts):
+                return {"ok": False, "error": f"steps {steps} need {sum(counts)} "
+                        f"reagent file(s) (route order), got {len(reactants)}"}
+            reagent_files: List[List[str]] = []
+            idx = 0
+            for si, n in enumerate(counts):
+                step_paths = []
+                for ci in range(n):
+                    rf = reactants[idx]
+                    p = stage / f"step{si}_comp{ci}_{Path(rf.filename or 'reagent.smi').name}"
+                    p.write_bytes(await rf.read())
+                    step_paths.append(str(p))
+                    idx += 1
+                reagent_files.append(step_paths)
+        else:
+            if pool is not None and pool.filename:
+                pool_path = stage / "pool.smi"
+                pool_path.write_bytes(await pool.read())
+                resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
+            else:
+                resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+            reagent_files = resolve_combi_reactant_files(steps, resolver)
+        result = suggest_combi_params(steps=steps, reagent_files=reagent_files, work_dir=str(stage))
+        return {"ok": True, **result}
+    except Exception as e:  # noqa: BLE001 -- report, don't 500 the annotate flow
+        return {"ok": False, "error": str(e)}
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 @app.post("/grow")
 async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
                reactants: List[UploadFile] = File(default=[]),
@@ -415,6 +482,25 @@ async def job_convergence(job_id: str) -> dict:
             "points": [{"dock": d, "best": b} for d, b in pts],
         }
     return {"ready": False, "live": False, "points": []}
+
+
+@app.get("/jobs/{job_id}/reagents")
+async def job_reagents(job_id: str) -> dict:
+    """Live per-reagent ranking ("Top building blocks") for the job currently
+    docking -- same shape as the persisted ``GninaEvaluator.reagent_rankings()``
+    on a finished job's ``results.json`` (see ``_summarize_combi``), but read
+    live off the in-progress evaluator's score cache, same pattern as
+    ``/jobs/{id}/top``."""
+    job = JOBS.get(job_id)
+    if job is not None and job.status == "running" and job.evaluator is not None:
+        rankings = (job.evaluator.reagent_rankings()
+                   if hasattr(job.evaluator, "reagent_rankings") else [])
+        for slot in rankings:
+            for r in slot["reagents"]:
+                r["svg"] = mol_svg(r["smiles"])
+        return {"ready": bool(rankings), "live": True, "target": job.current_target,
+                "reagents": rankings}
+    return {"ready": False, "live": False, "reagents": []}
 
 
 @app.get("/jobs")

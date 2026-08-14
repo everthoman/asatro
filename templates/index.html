@@ -237,7 +237,32 @@
 
     <div id="combiPanels" style="display:none">
     <div class="panel">
-      <h2>1 &middot; Reaction route</h2>
+      <h2>1 &middot; Receptor &amp; binding site</h2>
+      <label>Receptor (PDB)</label>
+      <input type="file" id="combiReceptor" accept=".pdb">
+      <div class="checkline">
+        <label style="margin:0">Binding site</label>
+        <select id="combiSiteMode" style="width:auto">
+          <option value="reference">Reference ligand (autobox)</option>
+          <option value="pocket">Explicit pocket (center + size)</option>
+        </select>
+      </div>
+      <div id="combiRefBox">
+        <label>Reference ligand (SDF)</label>
+        <input type="file" id="combiReference" accept=".sdf,.mol">
+      </div>
+      <div id="combiPocketBox" class="grid3" style="display:none">
+        <div><label>Center X</label><input type="number" id="combiCx" step="0.1" value="0"></div>
+        <div><label>Center Y</label><input type="number" id="combiCy" step="0.1" value="0"></div>
+        <div><label>Center Z</label><input type="number" id="combiCz" step="0.1" value="0"></div>
+        <div><label>Size X</label><input type="number" id="combiSx" step="0.1" value="20"></div>
+        <div><label>Size Y</label><input type="number" id="combiSy" step="0.1" value="20"></div>
+        <div><label>Size Z</label><input type="number" id="combiSz" step="0.1" value="20"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>2 &middot; Reaction route</h2>
       <div class="muted">No bound fragment &mdash; every slot of a (possibly multi-step) route is
         Thompson-sampled from a real reagent library and freely docked (ts-gnina's own search,
         reused as-is). The first step must be a "start" reaction; each added step extends the
@@ -259,31 +284,11 @@
         functional-group class. Leave empty for the bundled default (Enamine
         Rush-Delivery EU, ~45k blocks).
         <div style="margin-top:6px"><input type="file" id="combiPoolFile" accept=".smi"></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>2 &middot; Receptor &amp; binding site</h2>
-      <label>Receptor (PDB)</label>
-      <input type="file" id="combiReceptor" accept=".pdb">
-      <div class="checkline">
-        <label style="margin:0">Binding site</label>
-        <select id="combiSiteMode" style="width:auto">
-          <option value="reference">Reference ligand (autobox)</option>
-          <option value="pocket">Explicit pocket (center + size)</option>
-        </select>
-      </div>
-      <div id="combiRefBox">
-        <label>Reference ligand (SDF)</label>
-        <input type="file" id="combiReference" accept=".sdf,.mol">
-      </div>
-      <div id="combiPocketBox" class="grid3" style="display:none">
-        <div><label>Center X</label><input type="number" id="combiCx" step="0.1" value="0"></div>
-        <div><label>Center Y</label><input type="number" id="combiCy" step="0.1" value="0"></div>
-        <div><label>Center Z</label><input type="number" id="combiCz" step="0.1" value="0"></div>
-        <div><label>Size X</label><input type="number" id="combiSx" step="0.1" value="20"></div>
-        <div><label>Size Y</label><input type="number" id="combiSy" step="0.1" value="20"></div>
-        <div><label>Size Z</label><input type="number" id="combiSz" step="0.1" value="20"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn ghost" id="combiPoolPreviewBtn" type="button">Annotate pool</button>
+        </div>
+        <div id="combiPoolPreview" class="muted" style="margin-top:8px"></div>
+        <div id="combiParamSuggest" style="margin-top:6px"></div>
       </div>
     </div>
 
@@ -367,6 +372,7 @@
       <div id="liveBody">
         <div id="liveConv"></div>
         <div id="liveGrid" class="topgrid"></div>
+        <div id="liveReagents"></div>
       </div>
     </div>
 
@@ -710,8 +716,11 @@ async function refreshSuggestedParams(){
     if (s.ok && s.mode === 'search'){
       el('numCycles').value = s.num_cycles;
       el('numWarmup').value = s.num_warmup;
+      el('rwsMinCore').value = s.min_cpds_per_core;
+      el('rwsStop').value = s.stop;
       box.innerHTML = `<span class="ok">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
-        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k products evaluated incl. warm-up) — filled in below.</span>`
+        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k products evaluated incl. warm-up) — filled in below. `
+        + `If RWS: min compounds/core=${s.min_cpds_per_core}, resample stop=${s.stop}.</span>`
         + productPropsHtml(s.product_props);
     } else if (s.ok && s.mode === 'exhaustive'){
       box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed (add the next reaction step for a TS search).</span>`
@@ -750,6 +759,7 @@ syncScoreFieldOptions('cnnScoring', 'scoreField');
 
 // ---- combi route builder (no fragment: every slot is a real reagent library) ----
 let combiStepDivs = [];
+let combiPoolAnnotated = false;  // set once "Annotate pool" runs; gates auto param refresh
 
 function combiStartReactions(){ return CATALOG.reactions.filter(r=>r.role==='start'); }
 function combiPoolModeOn(){ return el('combiReagentSource').value === 'pool'; }
@@ -787,19 +797,47 @@ function addCombiStep(){
     <label>Reaction</label><select class="combiStepRxn">${opts}</select>
     <div class="combiStepFiles"></div>`;
   el('combiSteps').appendChild(div);
-  div.querySelector('.combiStepRxn').addEventListener('change', ()=>renderCombiStepFiles(div));
+  div.querySelector('.combiStepRxn').addEventListener('change', ()=>{
+    renderCombiStepFiles(div);
+    updateCombiPoolNeed();
+  });
   combiStepDivs.push(div);
   renderCombiStepFiles(div);
   el('combiRemoveStepBtn').disabled = combiStepDivs.length <= 1;
+  updateCombiPoolNeed();
 }
 function removeCombiStep(){
   if (combiStepDivs.length <= 1) return;
   combiStepDivs.pop().remove();
   el('combiRemoveStepBtn').disabled = combiStepDivs.length <= 1;
+  updateCombiPoolNeed();
 }
 el('combiAddStepBtn').addEventListener('click', addCombiStep);
 el('combiRemoveStepBtn').addEventListener('click', removeCombiStep);
 addCombiStep(); // seed step 1 (start)
+
+// Which building-block libraries the chosen combi route needs -- every
+// component of step 1 (no fragment to exclude) plus every extend step's
+// fresh component(s), same idea as growth's neededClasses().
+function combiNeededClasses(){
+  const need = {};
+  combiStepDivs.forEach((d, idx) => {
+    const isFirst = idx === 0;
+    const value = d.querySelector('.combiStepRxn').value;
+    const { reactionId, slot } = isFirst ? { reactionId: value, slot: null } : parseExtendChoice(value);
+    const rx = RXN[reactionId]; if (!rx) return;
+    rx.components.forEach((c, ci) => {
+      if (ci === slot) return;    // the intermediate's slot
+      const cls = (c.accepts||[])[0]; if (!cls) return;
+      need[cls] = { label: c.label, accepts: c.accepts };
+    });
+  });
+  return need;
+}
+function updateCombiPoolNeed(){
+  el('combiPoolBox').dataset.need = JSON.stringify(Object.keys(combiNeededClasses()));
+  maybeRefreshCombiParams();
+}
 
 function combiPocketMode(){ return el('combiSiteMode').value === 'pocket'; }
 function toggleCombiSiteMode(){
@@ -811,6 +849,7 @@ el('combiSiteMode').addEventListener('change', toggleCombiSiteMode);
 el('combiReagentSource').addEventListener('change', ()=>{
   el('combiPoolBox').style.display = combiPoolModeOn() ? '' : 'none';
   combiStepDivs.forEach(renderCombiStepFiles);   // swap per-slot inputs <-> pool labels
+  maybeRefreshCombiParams();
 });
 el('combiSearchMethod').addEventListener('change', e=>{
   el('combiRwsParams').style.display = e.target.value === 'rws' ? '' : 'none';
@@ -818,6 +857,83 @@ el('combiSearchMethod').addEventListener('change', e=>{
 
 el('combiCnnScoring').addEventListener('change', ()=>syncScoreFieldOptions('combiCnnScoring', 'combiScoreField'));
 syncScoreFieldOptions('combiCnnScoring', 'combiScoreField');
+
+el('combiPoolPreviewBtn').addEventListener('click', async ()=>{
+  const f = el('combiPoolFile').files[0];
+  const out = el('combiPoolPreview');
+  out.textContent = 'Annotating…';
+  const fd = new FormData();
+  if (f) fd.append('pool', f);
+  try {
+    const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
+    const need = JSON.parse(el('combiPoolBox').dataset.need || '[]');
+    const rows = need.map(c => {
+      const n = d.counts[c];
+      return `<div class="${n ? 'ok' : 'bad'}">${groupLabel(c)}: ${n != null ? n : '0 — none in this pool'}</div>`;
+    }).join('');
+    out.innerHTML = `<div>${d.n_tagged}/${d.n_total} blocks tagged</div>`
+      + (need.length ? rows : '<div class="muted">pick a route above to see which reactants it needs</div>');
+    combiPoolAnnotated = true;
+    refreshSuggestedCombiParams();
+  } catch(e){ out.textContent = 'Preview failed: ' + e.message; }
+});
+
+// Dry-run the current combi route (resolve + prune, no docking, no receptor)
+// and fill num_warmup / num_cycles from the buildable pool sizes -- the combi
+// analog of growth's refreshSuggestedParams.
+async function refreshSuggestedCombiParams(){
+  const box = el('combiParamSuggest');
+  if (!box || !combiStepDivs.length) { if (box) box.innerHTML = ''; return; }
+  const sfd = new FormData();
+  if (combiPoolModeOn()){
+    if (el('combiPoolFile').files.length) sfd.append('pool', el('combiPoolFile').files[0], 'pool.smi');
+  } else {
+    let missing = false;
+    combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
+      if (!inp.files.length){ missing = true; return; }
+      sfd.append('reactants', inp.files[0]);
+    }));
+    if (missing){
+      box.innerHTML = '<span class="muted">Upload a .smi library for every reagent slot to see a suggestion, or switch to Master pool.</span>';
+      return;
+    }
+  }
+  const steps = combiStepDivs.map((d, i) => {
+    const value = d.querySelector('.combiStepRxn').value;
+    if (i === 0) return value;
+    const { reactionId, slot } = parseExtendChoice(value);
+    return { reaction_id: reactionId, slot };
+  });
+  sfd.append('config', JSON.stringify({ steps }));
+  box.innerHTML = '<span class="muted">Computing suggested parameters…</span>';
+  try {
+    const s = await (await fetch('/suggest-combi-params', {method:'POST', body:sfd})).json();
+    if (s.ok && s.mode === 'search'){
+      el('combiNumCycles').value = s.num_cycles;
+      el('combiNumWarmup').value = s.num_warmup;
+      el('combiRwsMinCore').value = s.min_cpds_per_core;
+      el('combiRwsStop').value = s.stop;
+      box.innerHTML = `<span class="ok">Suggested TS budget: num_warmup=${s.num_warmup}, num_cycles=${s.num_cycles} `
+        + `(buildable slots ${JSON.stringify(s.variable_slots)}, ~${(s.est_docks/1000).toFixed(1)}k products evaluated incl. warm-up) — filled in below. `
+        + `If RWS: min compounds/core=${s.min_cpds_per_core}, resample stop=${s.stop}.</span>`
+        + productPropsHtml(s.product_props);
+    } else if (s.ok && s.mode === 'exhaustive'){
+      box.innerHTML = `<span class="muted">Single variable slot (${s.candidates} candidates) — exhaustive dock, no warm-up/search budget needed.</span>`
+        + productPropsHtml(s.product_props);
+    } else {
+      box.innerHTML = `<span class="muted">Parameter suggestion unavailable: ${esc((s && s.error) || 'route not ready')}.</span>`;
+    }
+  } catch(e){ box.innerHTML = ''; }
+}
+
+// Once the pool's been annotated, keep the suggested budget in sync with route
+// edits (add/remove extend step, change a step's reaction), debounced.
+let _combiParamTimer = null;
+function maybeRefreshCombiParams(){
+  if (!combiPoolAnnotated) return;
+  clearTimeout(_combiParamTimer);
+  _combiParamTimer = setTimeout(refreshSuggestedCombiParams, 400);
+}
 
 // ---- launch combi search (/combi) ----
 el('combiRunBtn').addEventListener('click', async ()=>{
@@ -1044,11 +1160,12 @@ wireToggle('logToggle', 'log', 'console');
 wireToggle('liveToggle', 'liveBody');
 wireToggle('hitsToggle', 'hitsBody');
 
-// ---- live progress (gallery + convergence) while a job is running ----
-let liveTopTimer = null, liveConvTimer = null;
+// ---- live progress (gallery + convergence + reagent rankings) while a job is running ----
+let liveTopTimer = null, liveConvTimer = null, liveReagentsTimer = null;
 function stopLivePanels(){
   if (liveTopTimer){ clearInterval(liveTopTimer); liveTopTimer=null; }
   if (liveConvTimer){ clearInterval(liveConvTimer); liveConvTimer=null; }
+  if (liveReagentsTimer){ clearInterval(liveReagentsTimer); liveReagentsTimer=null; }
   el('livePanel').style.display = 'none';
 }
 async function pollLiveTop(){
@@ -1070,13 +1187,21 @@ async function pollLiveConvergence(){
   if (!d.ready || !d.points.length) return;
   el('liveConv').innerHTML = convergenceSvg(d);
 }
+async function pollLiveReagents(){
+  if (!currentJob) return;
+  let d; try { d = await (await fetch(`/jobs/${currentJob}/reagents`)).json(); } catch(e){ return; }
+  if (!d.ready || !d.reagents.length) return;
+  el('liveReagents').innerHTML = reagentPanelHtml({reagents: d.reagents});
+}
 function startLivePanels(){
   stopLivePanels();
   el('livePanel').style.display = '';
   el('liveGrid').innerHTML = ''; el('liveConv').innerHTML = ''; el('liveMeta').textContent = '';
-  pollLiveTop(); pollLiveConvergence();
+  el('liveReagents').innerHTML = '';
+  pollLiveTop(); pollLiveConvergence(); pollLiveReagents();
   liveTopTimer = setInterval(pollLiveTop, 8000);
   liveConvTimer = setInterval(pollLiveConvergence, 8000);
+  liveReagentsTimer = setInterval(pollLiveReagents, 8000);
 }
 
 let lastHitsResult = null;
