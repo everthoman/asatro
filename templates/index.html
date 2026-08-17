@@ -1191,6 +1191,7 @@ async function pollLiveConvergence(){
   if (!currentJob) return;
   let d; try { d = await (await fetch(`/jobs/${currentJob}/convergence`)).json(); } catch(e){ return; }
   if (!d.ready || !d.points.length) return;
+  reagentHigherBetter = !!d.higher_better;
   el('liveConv').innerHTML = convergenceSvg(d);
 }
 let lastLiveReagents = null;  // last successful live poll, kept so the "show N" selector can re-render without a refetch
@@ -1239,6 +1240,7 @@ function renderHits(result){
     if (run.convergence && run.convergence.points && run.convergence.points.length){
       html += convergenceSvg(run.convergence);
     }
+    if (run.convergence) reagentHigherBetter = !!run.convergence.higher_better;
     html += `<div class="topgrid">` +
       galleryCards(topRows.map((h,i)=>({rank:i+1, ...h})), currentJob, !!run.poses) + `</div>`;
     html += reagentPanelHtml(run.reagents);
@@ -1258,20 +1260,31 @@ function renderHits(result){
 // GninaEvaluator.reagent_rankings' own cap) so changing it is instant, no
 // refetch needed.
 let reagentShowN = 10;
+let reagentSortBy = 'mean';  // 'mean' or 'best' -- which field ranks/slices each slot's rows
 let reagentCollapsed = new Set();  // slot indices currently collapsed
+// Score direction for whatever run/live-job the panel is currently showing --
+// kept in step with convergence's own higher_better (both come from the same
+// evaluator) so the "sort by" toggle ranks the same way the server does.
+let reagentHigherBetter = false;
 function reagentPanelHtml(reagentsList){
   if (!reagentsList || !reagentsList.length) return '';
   const opts = [5, 10, 20, 50].map(n =>
     `<option value="${n}"${n === reagentShowN ? ' selected' : ''}>${n}</option>`).join('');
+  const sortOpts = [['mean', 'mean score'], ['best', 'best score']].map(([v, label]) =>
+    `<option value="${v}"${v === reagentSortBy ? ' selected' : ''}>${label}</option>`).join('');
   let h = `<div class="sub" style="margin-top:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">`
     + `<b>Top building blocks</b>`
-    + `<span class="muted" style="font-weight:400">— ranked by mean product score; n = products docked with it</span>`
+    + `<span class="muted" style="font-weight:400">— n = products docked with it</span>`
+    + `<label class="muted" style="margin:0; display:inline-flex; align-items:center; gap:4px">sort by `
+    + `<select id="reagentSortBy" style="width:auto; padding:2px 6px; font-size:11px">${sortOpts}</select></label>`
     + `<label class="muted" style="margin:0; display:inline-flex; align-items:center; gap:4px">show `
     + `<select id="reagentShowN" style="width:auto; padding:2px 6px; font-size:11px">${opts}</select> per slot</label>`
     + `</div>`;
   reagentsList.forEach(slot => {
     const open = !reagentCollapsed.has(slot.slot);
-    const rows = slot.reagents.slice(0, reagentShowN);
+    const dir = reagentHigherBetter ? -1 : 1;
+    const ranked = slot.reagents.slice().sort((a, b) => dir * (a[reagentSortBy] - b[reagentSortBy]));
+    const rows = ranked.slice(0, reagentShowN);
     h += `<details class="reagentSlotBox" data-slot="${slot.slot}"${open ? ' open' : ''}>`
       + `<summary>Reagent slot ${slot.slot + 1} <span class="muted">(${slot.reagents.length} ranked)</span></summary>`
       + `<div class="topgrid">`
@@ -1288,20 +1301,30 @@ function reagentPanelHtml(reagentsList){
   });
   return h;
 }
-// Re-attach the "show N" and per-slot collapse listeners after every
-// re-render (the DOM nodes are recreated each time via innerHTML).
+// Re-attach the "show N", "sort by" and per-slot collapse listeners after
+// every re-render (the DOM nodes are recreated each time via innerHTML).
+function reRenderReagentPanel(){
+  if (lastLiveReagents && el('livePanel').style.display !== 'none'){
+    el('liveReagents').innerHTML = reagentPanelHtml(lastLiveReagents);
+  } else if (lastHitsResult){
+    renderHits(lastHitsResult);
+    return;  // renderHits() already calls wireReagentPanel() at the end
+  }
+  wireReagentPanel();
+}
 function wireReagentPanel(){
   const sel = document.getElementById('reagentShowN');
   if (sel){
     sel.addEventListener('change', ()=>{
       reagentShowN = parseInt(sel.value) || 10;
-      if (lastLiveReagents && el('livePanel').style.display !== 'none'){
-        el('liveReagents').innerHTML = reagentPanelHtml(lastLiveReagents);
-      } else if (lastHitsResult){
-        renderHits(lastHitsResult);
-        return;  // renderHits() already calls wireReagentPanel() at the end
-      }
-      wireReagentPanel();
+      reRenderReagentPanel();
+    });
+  }
+  const sortSel = document.getElementById('reagentSortBy');
+  if (sortSel){
+    sortSel.addEventListener('change', ()=>{
+      reagentSortBy = sortSel.value === 'best' ? 'best' : 'mean';
+      reRenderReagentPanel();
     });
   }
   document.querySelectorAll('.reagentSlotBox').forEach(dtl => {

@@ -63,6 +63,7 @@ from asatro.chemistry.handles import carve_substructure_3d, neutralize
 from asatro.engine.gnina_evaluator import (
     GninaEvaluator,
     prepare_ligand_3d,
+    protonate_smiles,
     _strip_sdf_properties,
 )
 
@@ -237,12 +238,20 @@ def _constrained_pose_block(
     pose with the ``core`` atoms pinned at their bound coordinates via
     ConstrainedEmbed. Returns ``(sdf_block, error)`` shaped like prepare_ligand_3d.
     """
-    # Reuse the existing protonate+embed only to get a clean protonated SMILES;
-    # we then re-embed under the core constraint. Cheapest correct path: redo
-    # protonation here is overkill, so just parse and add Hs and constrain.
-    mol = Chem.MolFromSmiles(smiles)
+    # Reuse the existing protonate step (same OpenBabel -p pH call the free
+    # combi path uses) so a basic amine on the grown building block -- not
+    # part of the conserved core, which stays neutral, see _load_core -- comes
+    # out charged here too, instead of docking (and reporting hits as) the
+    # neutral tautomer. Formal charge isn't part of RDKit's default
+    # Mol-vs-Mol substructure match (verified: an [NH3+] target still matches
+    # a neutral "N" query), so protonating before the core match/embed below
+    # doesn't put the two out of step.
+    protonated_smiles, prot_err = protonate_smiles(smiles, ph)
+    if protonated_smiles is None:
+        return None, prot_err
+    mol = Chem.MolFromSmiles(protonated_smiles)
     if mol is None:
-        return None, f"RDKit could not parse '{smiles}'"
+        return None, f"RDKit could not parse protonated '{protonated_smiles}' (from '{smiles}')"
     mol = Chem.AddHs(mol)
     if not mol.HasSubstructMatch(core):
         # The conserved core is not present -> the reaction did not preserve the

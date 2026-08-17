@@ -154,6 +154,36 @@ def test_anchored_evaluator_constrained_pose(tmp_path):
     assert placed.HasSubstructMatch(Chem.MolFromSmiles(core))
 
 
+def test_anchored_evaluator_protonates_a_basic_amine_on_the_grown_part(tmp_path):
+    """Regression: ``_constrained_pose_block`` used to parse the raw (neutral)
+    product SMILES straight into RDKit, skipping the OpenBabel pH-protonation
+    step the free (non-anchored) combi path always runs -- so a basic
+    aliphatic amine picked up from a grown building block (piperidine,
+    pyrrolidine, a primary amine, ...) came out of the constrained embed
+    still neutral, docked and reported as the wrong ionization state. The
+    fragment's own conserved core must stay neutral (it's excluded from
+    protonation by construction, and matching is charge-insensitive anyway --
+    see the comment in ``_constrained_pose_block``)."""
+    sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    core = derive_core("Brc1ccccc1", "aryl_halide")  # benzene ring, halide excluded
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=str(rec), core_smarts=core,
+                        work_dir=str(tmp_path / "dock"))
+    # Grow a biphenyl-piperidine product: the conserved benzene ring plus a
+    # basic secondary amine (piperidine) on the newly-added ring.
+    block, err = ev._prepare_pose("c1ccc(-c2ccc(C3CCNCC3)cc2)cc1")
+    assert err is None and block is not None
+    placed = Chem.MolFromMolBlock(block, removeHs=False)
+    assert placed is not None and placed.GetNumConformers() == 1
+    assert placed.HasSubstructMatch(Chem.MolFromSmiles(core))  # conserved core intact
+    n_atoms = [a for a in placed.GetAtoms() if a.GetSymbol() == "N"]
+    assert len(n_atoms) == 1
+    n = n_atoms[0]
+    assert n.GetFormalCharge() == 1                       # piperidine protonated ...
+    assert n.GetTotalNumHs(includeNeighbors=True) == 2     # ... to a secondary ammonium
+
+
 def test_anchored_evaluator_box_scales_with_the_actual_candidate(tmp_path):
     """Regression: the docking box used to be fixed once, sized only to the
     small original fragment (via a static --autobox_ligand reference) --

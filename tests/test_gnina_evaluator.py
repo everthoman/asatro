@@ -240,12 +240,47 @@ def test_reagent_rankings_aggregates_by_slot(tmp_path):
     prod("p3", -5.0, 2, 1)
 
     r = ev.reagent_rankings()
-    # only the variable slots (0=acid, 2=boronic); the single-reagent fragment
-    # slot (1) is omitted
-    assert {s["slot"] for s in r} == {0, 2}
-    acids = next(s for s in r if s["slot"] == 0)["reagents"]
+    # only the variable slots are ranked; the single-reagent fragment (raw
+    # component index 1) is omitted but still leads the display order (it's
+    # the growth seed), so acid/boronic renumber to slots 1/2, not 0/2
+    assert {s["slot"] for s in r} == {1, 2}
+    acids = next(s for s in r if s["slot"] == 1)["reagents"]
     # minimize: A1 (mean -7.75, over 2 products) ranks above A2 (mean -5.0)
     assert acids[0]["name"] == "A1"
     assert acids[0]["count"] == 2
     assert acids[0]["best"] == -8.0
     assert acids[-1]["name"] == "A2"
+
+
+def test_reagent_rankings_keeps_one_hit_wonders_for_best_sort(tmp_path):
+    """A reagent that lands a single outstanding hit but also a much weaker
+    one elsewhere can have a mean outside the top-``top`` cutoff -- it must
+    still appear (with its real ``best``) so a best-sorted view can surface
+    it, rather than silently dropping out of the ranking entirely."""
+    ev = _make_ev(tmp_path, cnn_scoring="none")
+
+    def prod(smi, score, acid):
+        ev._score_cache[smi] = score
+        ev._components_cache[smi] = [
+            {"smiles": f"acid{acid}", "name": f"A{acid}"},
+            {"smiles": "FRAG", "name": "FRAG"},
+            {"smiles": "bor1", "name": "B1"},
+        ]
+
+    # A_lucky: one great hit (-9.5) but also one bad one (-5.5) -> mean -7.5,
+    # outside the top-3-by-mean cutoff set by the three consistent A2..A4.
+    prod("p_lucky_best", -9.5, "_lucky")
+    prod("p_lucky_worst", -5.5, "_lucky")
+    for i in range(2, 5):
+        prod(f"p{i}a", -8.0, i)
+        prod(f"p{i}b", -8.0, i)
+
+    r = ev.reagent_rankings(top=3)
+    # both the fragment (ci=1) and the single boronic value used throughout
+    # (ci=2) are fixed here and lead the display order, so the acid slot
+    # (the only variable one, raw ci=0) renumbers to display slot 2
+    acids = next(s for s in r if s["slot"] == 2)["reagents"]
+    names = {row["name"]: row for row in acids}
+    assert "A_lucky" in names          # kept via the best-list, not dropped
+    assert names["A_lucky"]["best"] == -9.5
+    assert names["A_lucky"]["mean"] == -7.5

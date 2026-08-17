@@ -194,24 +194,24 @@ def _rdkit_embed_and_minimize(smiles: str) -> Tuple[Optional[str], Optional[str]
         return None, f"RDKit 3D generation error: {e}"
 
 
-def prepare_ligand_3d(smiles: str, ph: float, identifier: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Protonate ``smiles`` at ``ph`` with OpenBabel, then build a single 3D
-    conformer with RDKit (OpenBabel ``--gen3d`` fallback).
+def protonate_smiles(smiles: str, ph: float, identifier: str = "lig") -> Tuple[Optional[str], Optional[str]]:
+    """Protonate ``smiles`` at ``ph`` with OpenBabel (``-r`` strips salts /
+    small fragments). Returns ``(protonated_smiles, error)``.
 
-    Returns ``(sdf_block, error)``. ``sdf_block`` is a clean, property-free
-    SDF record whose title line is ``identifier``.
-    """
+    This is the ionization-state step of ``prepare_ligand_3d``, factored out
+    so callers that build their own 3D conformer (e.g. the anchored-fragment
+    evaluator's ``ConstrainedEmbed``, which needs the *ionized* molecule
+    before embedding, not a separately-built one) can reuse it without
+    duplicating the OpenBabel invocation or its ``ph`` convention."""
     tmp_dir = None
     try:
-        tmp_dir = tempfile.mkdtemp(prefix="ts_lig_")
+        tmp_dir = tempfile.mkdtemp(prefix="ts_protonate_")
         smi_file = os.path.join(tmp_dir, "input.smi")
         protonated_smi_file = os.path.join(tmp_dir, "protonated.smi")
 
         with open(smi_file, "w") as f:
             f.write(f"{smiles} {identifier}\n")
 
-        # Step 1: protonate at pH (-r strips salts / small fragments).
         cmd_protonate = [OBABEL_PATH, smi_file, "-O", protonated_smi_file, "-r", "-p", str(ph)]
         result1 = subprocess.run(cmd_protonate, capture_output=True, text=True, timeout=30)
         if not os.path.exists(protonated_smi_file) or os.path.getsize(protonated_smi_file) == 0:
@@ -223,6 +223,34 @@ def prepare_ligand_3d(smiles: str, ph: float, identifier: str) -> Tuple[Optional
         protonated_smiles = re.split(r"[\s\t]", protonated_line, 1)[0] if protonated_line else ""
         if not protonated_smiles:
             return None, f"Protonation produced empty SMILES from '{smiles}'"
+        return protonated_smiles, None
+    except subprocess.TimeoutExpired:
+        return None, f"Protonation timeout for: {smiles[:50]}"
+    except Exception as e:  # pragma: no cover - defensive
+        return None, f"Protonation error for {smiles[:50]}: {e}"
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def prepare_ligand_3d(smiles: str, ph: float, identifier: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Protonate ``smiles`` at ``ph`` with OpenBabel, then build a single 3D
+    conformer with RDKit (OpenBabel ``--gen3d`` fallback).
+
+    Returns ``(sdf_block, error)``. ``sdf_block`` is a clean, property-free
+    SDF record whose title line is ``identifier``.
+    """
+    tmp_dir = None
+    try:
+        tmp_dir = tempfile.mkdtemp(prefix="ts_lig_")
+        protonated_smi_file = os.path.join(tmp_dir, "protonated.smi")
+
+        protonated_smiles, prot_err = protonate_smiles(smiles, ph, identifier)
+        if protonated_smiles is None:
+            return None, prot_err
+        with open(protonated_smi_file, "w") as f:
+            f.write(f"{protonated_smiles} {identifier}\n")
 
         # Step 2: 3D embed + minimise with RDKit (primary).
         sdf_block, rdkit_err = _rdkit_embed_and_minimize(protonated_smiles)
@@ -825,7 +853,23 @@ class GninaEvaluator(Evaluator):
         reagent that filled each route slot). Answers "which acids/boronics
         carry the good hits", which the top-*products* gallery can't -- a good
         reagent's quality is spread across many products, not one leader. Slots
-        filled by a single fixed reagent (the bound fragment) are omitted."""
+        filled by a single fixed reagent (the bound fragment) are omitted, but
+        still claim a slot number ahead of the variable slots that follow them
+        -- growth's fragment is always "slot 1" this way, matching how a human
+        reads the route (seed first, then whatever reacts onto it), rather
+        than the raw SMARTS component index, which can put the fragment
+        anywhere depending on the reaction's atom-mapping order (e.g. Suzuki
+        puts it between the acid and boronic components). Mirrors the same
+        fragment-leads reordering ``ThompsonSampler._product_name`` already
+        applies to product names.
+
+        The returned set per slot is the *union* of the top ``top`` reagents by
+        mean and the top ``top`` by best (each row still carries both fields),
+        not just top-by-mean -- otherwise a reagent that landed one outstanding
+        hit but also a poor one elsewhere could have a mean outside the cutoff
+        and vanish entirely, even though it's exactly the kind of reagent a
+        best-sorted view exists to surface. Order is by mean; callers that want
+        best-first can re-sort client-side."""
         with self._lock:
             items = [(smi, s, self._components_cache.get(smi))
                      for smi, s in self._score_cache.items()]
@@ -840,19 +884,31 @@ class GninaEvaluator(Evaluator):
                 slot = per_slot.setdefault(ci, {})
                 e = slot.setdefault(r_smi, {"name": c.get("name"), "smiles": r_smi, "scores": []})
                 e["scores"].append(score)
+        # Fixed (single-reagent) slots lead the display order -- same
+        # fragment-first convention as _product_name -- so a fixed slot
+        # always claims its slot number even though it isn't ranked/shown;
+        # the variable slots after it renumber to fill the gap.
+        fixed_cis = [ci for ci in sorted(per_slot) if len(per_slot[ci]) <= 1]
+        variable_cis = [ci for ci in sorted(per_slot) if len(per_slot[ci]) > 1]
+        display_slot = {ci: i for i, ci in enumerate(fixed_cis + variable_cis)}
         out: List[Dict] = []
-        for ci in sorted(per_slot):
+        for ci in variable_cis:
             reagents = per_slot[ci]
-            if len(reagents) <= 1:          # a fixed slot (the fragment) -- nothing to rank
-                continue
             rows = []
             for e in reagents.values():
                 s = e["scores"]
                 best = max(s) if self.higher_is_better else min(s)
                 rows.append({"name": e["name"], "smiles": e["smiles"], "count": len(s),
                              "mean": round(float(np.mean(s)), 3), "best": round(float(best), 3)})
-            rows.sort(key=lambda r: r["mean"], reverse=self.higher_is_better)
-            out.append({"slot": ci, "reagents": rows[:max(1, int(top))]})
+            n = max(1, int(top))
+            by_mean = sorted(rows, key=lambda r: r["mean"], reverse=self.higher_is_better)[:n]
+            by_best = sorted(rows, key=lambda r: r["best"], reverse=self.higher_is_better)[:n]
+            merged = {r["smiles"]: r for r in by_mean}
+            for r in by_best:
+                merged.setdefault(r["smiles"], r)
+            merged_rows = sorted(merged.values(), key=lambda r: r["mean"], reverse=self.higher_is_better)
+            out.append({"slot": display_slot[ci], "reagents": merged_rows})
+        out.sort(key=lambda o: o["slot"])
         return out
 
     def stats(self) -> dict:
