@@ -29,6 +29,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 from asatro.engine.thompson_sampling import ThompsonSampler
+from asatro.engine.ts_autoparams import resolve_rws_budget, resolve_ts_budget
 
 
 class RouteSampler(ThompsonSampler):
@@ -114,3 +115,41 @@ class RouteSampler(ThompsonSampler):
             # Any RDKit failure in the route -> treat as a failed product (NaN).
             return None, "FAIL", product_name, selected_reagents
         return intermediate, product_smiles, product_name, selected_reagents
+
+
+def run_ts_or_rws_search(sampler: ThompsonSampler, evaluator, search_method: str,
+                         num_warmup: Optional[int], num_cycles: Optional[int],
+                         min_cpds_per_core: Optional[int] = None,
+                         stop: Optional[int] = None) -> list:
+    """Auto-tune the TS/RWS budget from ``sampler``'s (pruned) pool sizes for
+    any of ``num_warmup``/``num_cycles``/``min_cpds_per_core``/``stop`` left
+    unset, then run the warm-up + search dispatch for ``search_method``
+    (``"ts"`` or ``"rws"``). Shared by ``growth.run_growth`` and
+    ``combi.run_combi``, which otherwise duplicated this dispatch verbatim.
+
+    Returns the finite ``[score, smiles, name]`` result rows, or ``[]`` if
+    nothing scored during warm-up (mirrors both callers' original bail-out)."""
+    num_warmup, num_cycles = resolve_ts_budget(
+        num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
+    if search_method == "rws":
+        min_cpds_per_core, stop = resolve_rws_budget(
+            min_cpds_per_core, stop, num_cycles, log=evaluator.progress_callback)
+        warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)
+        if not warmup_results:
+            # search_rws needs the per-reagent posteriors warm_up_rws seeds;
+            # nothing scored means those were never initialized, and searching
+            # further would just repeat the same all-nan warm-up. Bail out
+            # cleanly instead of the AttributeError search_rws would raise.
+            return []
+        search_results = sampler.search_rws(
+            num_targets=num_cycles, min_cpds_per_core=min_cpds_per_core, stop=stop)
+        return warmup_results + search_results
+    warmup_results = sampler.warm_up(num_warmup_trials=num_warmup)
+    if not warmup_results:
+        # search() draws from per-reagent priors warm_up() seeds; nothing
+        # scored means those were never initialized (every reagent is still
+        # in its uninitialized "warmup" phase), so searching further would
+        # sample meaningless all-zero priors. Bail out cleanly, mirroring
+        # the RWS branch's guard above.
+        return []
+    return sampler.search(num_cycles=num_cycles)

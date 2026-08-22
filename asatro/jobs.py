@@ -98,6 +98,24 @@ class GrowthJob:
 
 JOBS: Dict[str, GrowthJob] = {}
 
+# Cap how many *finished* jobs stay in memory -- queued/running jobs are never
+# evicted. A finished job is already fully persisted to job.json/results.json
+# (see _persist_meta and the ``results.json`` writes in _run/_run_combi), so
+# dropping its in-memory GrowthJob just frees memory; list_jobs()/job_detail()
+# fall back to reading it from disk. Without this, JOBS grows unboundedly for
+# the lifetime of the server process.
+MAX_FINISHED_JOBS_IN_MEMORY = 50
+
+
+def _prune_finished_jobs() -> None:
+    finished = [(j.finished or 0, jid) for jid, j in JOBS.items()
+               if j.status not in ("queued", "running")]
+    if len(finished) <= MAX_FINISHED_JOBS_IN_MEMORY:
+        return
+    finished.sort()  # oldest-finished first
+    for _, jid in finished[:len(finished) - MAX_FINISHED_JOBS_IN_MEMORY]:
+        JOBS.pop(jid, None)
+
 
 def reap_orphaned_jobs() -> List[str]:
     """Fix up any job whose persisted ``job.json`` says ``running``/``queued``
@@ -138,6 +156,19 @@ def reap_orphaned_jobs() -> List[str]:
 
 def _slugify(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", (name or "").strip()).strip("._-")[:64]
+
+
+def _check_not_running(job_id: str) -> None:
+    """Reject starting a job under an id that's already running -- both
+    ``start_growth_job``/``start_combi_job`` derive a deterministic job_id
+    from ``session_name``, so a double-submit (double-click, two tabs) would
+    otherwise reuse the same job_dir and JOBS entry as the run already in
+    flight, corrupting its output files."""
+    existing = JOBS.get(job_id)
+    if existing is not None and existing.status in ("queued", "running"):
+        raise ValueError(
+            f"a job named {job_id!r} is already running -- wait for it to "
+            f"finish or choose a different session name.")
 
 
 def _range_or_none(val) -> Optional[tuple]:
@@ -546,6 +577,7 @@ def _run_with_watchdog(job: GrowthJob, fn: Callable[[], None]) -> None:
     finally:
         stop_event.set()
         watchdog.join(timeout=5)
+        _prune_finished_jobs()
 
 
 def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
@@ -563,6 +595,7 @@ def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
     driven without docking."""
     runner = runner or run_growth
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
+    _check_not_running(job_id)
     job_dir = jobs_dir() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     job = GrowthJob(id=job_id, dir=job_dir)
@@ -588,6 +621,7 @@ def start_combi_job(*, receptor_path: str, steps: List, reagent_files: List[List
     :func:`start_growth_job`."""
     runner = runner or run_combi
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
+    _check_not_running(job_id)
     job_dir = jobs_dir() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     job = GrowthJob(id=job_id, dir=job_dir)
@@ -603,21 +637,24 @@ def start_combi_job(*, receptor_path: str, steps: List, reagent_files: List[List
 
 
 def list_jobs() -> List[dict]:
-    """Live jobs first, then any persisted-only past runs on disk (newest first)."""
-    items: List[dict] = []
-    seen = set()
-    for d in sorted(jobs_dir().iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    """Currently-running jobs first, then any other runs (newest first)."""
+    # (running, mtime, meta) so a still-running job outranks one that merely
+    # wrote to disk more recently -- sorting on mtime alone (as this used to)
+    # can rank a just-finished job above one that's still mid-run but hasn't
+    # flushed to disk in a while.
+    rows: List[tuple] = []
+    for d in jobs_dir().iterdir():
         if not d.is_dir():
             continue
         live = JOBS.get(d.name)
         if live is not None:
-            items.append(live.meta())
+            rows.append((live.status in ("queued", "running"), d.stat().st_mtime, live.meta()))
         else:
             f = d / "job.json"
             if f.is_file():
                 try:
-                    items.append(json.loads(f.read_text()))
+                    rows.append((False, d.stat().st_mtime, json.loads(f.read_text())))
                 except Exception:
                     pass
-        seen.add(d.name)
-    return items
+    rows.sort(key=lambda r: (not r[0], -r[1]))
+    return [meta for _, _, meta in rows]

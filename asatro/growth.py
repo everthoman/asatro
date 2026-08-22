@@ -31,9 +31,8 @@ from asatro.chemistry.handles import neutralize
 from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
 from asatro.engine.gnina_evaluator import MolFilters
-from asatro.engine.route_sampler import RouteSampler
-from asatro.engine.ts_autoparams import (resolve_rws_budget, resolve_ts_budget,
-                                         suggest_rws_params, suggest_ts_params)
+from asatro.engine.route_sampler import RouteSampler, run_ts_or_rws_search
+from asatro.engine.ts_autoparams import suggest_rws_params, suggest_ts_params
 
 
 def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
@@ -306,35 +305,9 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                 f"exhaustive dock, no warm-up/search split")
         results = sampler.dock_all()
         return results, evaluator
-    # Two or more variable slots: fill in an auto TS budget from the (pruned)
-    # pool sizes for any of num_warmup/num_cycles the caller left unset.
-    num_warmup, num_cycles = resolve_ts_budget(
-        num_warmup, num_cycles, sampler.reagent_lists, log=evaluator.progress_callback)
-    if search_method == "rws":
-        # Fill in an auto RWS budget from num_cycles for any of
-        # min_cpds_per_core/stop the caller left unset.
-        min_cpds_per_core, stop = resolve_rws_budget(
-            min_cpds_per_core, stop, num_cycles, log=evaluator.progress_callback)
-        warmup_results = sampler.warm_up_rws(num_warmup_trials=num_warmup)
-        if not warmup_results:
-            # search_rws needs the per-reagent posteriors warm_up_rws seeds;
-            # nothing scored means those were never initialized, and searching
-            # further would just repeat the same all-nan warm-up. Bail out
-            # cleanly instead of the AttributeError search_rws would raise.
-            results = []
-        else:
-            search_results = sampler.search_rws(
-                num_targets=num_cycles, min_cpds_per_core=min_cpds_per_core, stop=stop)
-            results = warmup_results + search_results
-    else:
-        warmup_results = sampler.warm_up(num_warmup_trials=num_warmup)
-        if not warmup_results:
-            # search() draws from per-reagent priors warm_up() seeds; nothing
-            # scored means those were never initialized (every reagent is still
-            # in its uninitialized "warmup" phase), so searching further would
-            # sample meaningless all-zero priors. Bail out cleanly, mirroring
-            # the RWS branch's guard above.
-            results = []
-        else:
-            results = sampler.search(num_cycles=num_cycles)
+    # Two or more variable slots: auto-tune the TS/RWS budget from the
+    # (pruned) pool sizes and run the warm-up + search dispatch, shared with
+    # combi.run_combi's identical dispatch.
+    results = run_ts_or_rws_search(
+        sampler, evaluator, search_method, num_warmup, num_cycles, min_cpds_per_core, stop)
     return results, evaluator

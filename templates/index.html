@@ -1077,8 +1077,10 @@ function attachStream(jobId){
     evtSource.close(); el('cancelBtn').style.display = 'none';
     stopLivePanels();
     setStatus(ev.data);
-    const d = await (await fetch(`/jobs/${jobId}`)).json();
-    renderHits(d.result);
+    try {
+      const d = await (await fetch(`/jobs/${jobId}`)).json();
+      renderHits(d.result);
+    } catch(e){ logLine('Error loading finished job: ' + e.message); }
     loadHistory();
   });
   evtSource.onerror = ()=>{ /* stream closed; status came via the end event */ };
@@ -1350,12 +1352,23 @@ el('refreshJobs').addEventListener('click', loadHistory);
 el('history').addEventListener('change', async e=>{
   const id = e.target.value; if (!id) return;
   currentJob = id;
-  const d = await (await fetch(`/jobs/${id}`)).json();
+  let d;
+  try { d = await (await fetch(`/jobs/${id}`)).json(); }
+  catch(err){ logLine('Error loading job ' + id + ': ' + err.message); return; }
   setStatus(d.status);
   el('log').classList.remove('muted');
   el('log').textContent = `Loaded job ${id} (${d.status}).`;
-  if (d.status === 'running' || d.status === 'queued') attachStream(id);
-  else stopLivePanels();
+  if (d.status === 'running' || d.status === 'queued') {
+    attachStream(id);
+  } else {
+    // A previously-attached running job's stream/Cancel button must not be
+    // left dangling once we switch to a finished one -- otherwise its SSE
+    // messages keep overwriting this job's panel, and Cancel would still
+    // target the old job.
+    if (evtSource){ evtSource.close(); evtSource = null; }
+    el('cancelBtn').style.display = 'none';
+    stopLivePanels();
+  }
   renderHits(d.result);
 });
 

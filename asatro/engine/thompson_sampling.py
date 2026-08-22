@@ -78,7 +78,11 @@ class ThompsonSampler:
         """
         if self._mode == "minimize_boltzmann":
             scores = -scores
-        exp_terms = np.exp(scores / self._warmup_std)
+        # A heavily-pruned pool's warm-up can yield one score (or several
+        # identical ones), making std 0; fall back to 1.0 rather than
+        # dividing by zero, matching the same fallback in the RWS path.
+        std = self._warmup_std if self._warmup_std else 1.0
+        exp_terms = np.exp(scores / std)
         probs = exp_terms / np.nansum(exp_terms)
         probs[np.isnan(probs)] = 0.0
         return np.random.choice(probs.shape[0], p=probs)
@@ -534,6 +538,11 @@ class ThompsonSampler:
         """
         scaling = self._rws_scaling_factor()
         reagent_count_list = [len(x) for x in self.reagent_lists]
+        empty = [i for i, nr in enumerate(reagent_count_list) if nr == 0]
+        if empty:
+            raise ValueError(
+                f"RWS warm-up: component index(es) {empty} have no reagents to "
+                f"sample from (all were pruned as unreachable?) -- nothing to warm up.")
         rmax = max(reagent_count_list)
 
         # Balanced warm-up matrix: shuffle each component and tile shorter ones up

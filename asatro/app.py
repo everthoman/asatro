@@ -20,6 +20,7 @@ from typing import List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from rdkit import Chem
+from starlette.concurrency import run_in_threadpool
 
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
@@ -108,9 +109,13 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
     if mol.GetNumConformers() == 0:
         raise HTTPException(400, "fragment SDF has no 3D conformer (need the bound pose)")
     receptor_atoms = load_receptor_atoms((await receptor.read()).decode("utf-8", "replace"))
+    # CPU-bound RDKit work (the refine path in particular actually grows
+    # stub substituents onto each vector) -- run off the event loop thread so
+    # it doesn't stall every other request (SSE streams, job polling) for its
+    # duration.
     if refine:
-        return assess_with_stubs(mol, receptor_atoms)
-    return assess_fragment(mol, receptor_atoms)
+        return await run_in_threadpool(assess_with_stubs, mol, receptor_atoms)
+    return await run_in_threadpool(assess_fragment, mol, receptor_atoms)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +183,8 @@ async def suggest_params(fragment: UploadFile = File(...),
                 resolver = make_class_resolver(reactant_by_class)
             else:
                 resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
-        result = suggest_growth_params(
+        result = await run_in_threadpool(
+            suggest_growth_params,
             fragment_sdf=str(frag_path), steps=steps,
             fragment_slot=int(cfg["fragment_slot"]), resolver=resolver, work_dir=str(stage))
         return {"ok": True, **result}
@@ -247,7 +253,8 @@ async def suggest_combi_params_endpoint(config: str = Form("{}"),
             else:
                 resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
             reagent_files = resolve_combi_reactant_files(steps, resolver)
-        result = suggest_combi_params(steps=steps, reagent_files=reagent_files, work_dir=str(stage))
+        result = await run_in_threadpool(
+            suggest_combi_params, steps=steps, reagent_files=reagent_files, work_dir=str(stage))
         return {"ok": True, **result}
     except Exception as e:  # noqa: BLE001 -- report, don't 500 the annotate flow
         return {"ok": False, "error": str(e)}
@@ -322,10 +329,13 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     if not pool_path and not reactant_by_class:
         pool_path = DEFAULT_POOL_PATH  # bundled Enamine Rush-Delivery EU pool
 
-    job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
-                           steps=steps, fragment_slot=fragment_slot,
-                           reactant_by_class=reactant_by_class, pool_path=pool_path,
-                           cfg=cfg, session_name=session_name)
+    try:
+        job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
+                               steps=steps, fragment_slot=fragment_slot,
+                               reactant_by_class=reactant_by_class, pool_path=pool_path,
+                               cfg=cfg, session_name=session_name)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"job_id": job.id, "status": job.status}
 
 
@@ -421,9 +431,12 @@ async def combi(receptor: UploadFile = File(...),
         except ValueError as e:
             raise HTTPException(400, str(e))
 
-    job = start_combi_job(receptor_path=str(rec_path), steps=steps, reagent_files=reagent_files,
-                          reference_path=reference_path, center=center, size=size,
-                          cfg=cfg, session_name=session_name)
+    try:
+        job = start_combi_job(receptor_path=str(rec_path), steps=steps, reagent_files=reagent_files,
+                              reference_path=reference_path, center=center, size=size,
+                              cfg=cfg, session_name=session_name)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"job_id": job.id, "status": job.status}
 
 

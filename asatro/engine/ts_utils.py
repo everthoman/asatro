@@ -12,8 +12,12 @@ def create_reagents(filename: str, num_to_select: Optional[int] = None) -> List[
     """
     reagent_list = []
     with open(filename, 'r') as f:
-        for line in f.readlines():
-            smiles, reagent_name = line.split()
+        for i, line in enumerate(f.readlines()):
+            parts = line.split()
+            if not parts:
+                continue  # skip blank lines
+            smiles = parts[0]
+            reagent_name = parts[1] if len(parts) > 1 else f"BB{i+1}"
             reagent = Reagent(reagent_name=reagent_name, smiles=smiles)
             reagent_list.append(reagent)
     if num_to_select is not None and len(reagent_list) > num_to_select:
