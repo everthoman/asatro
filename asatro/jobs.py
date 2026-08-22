@@ -337,14 +337,14 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
     unanchored, pre-pass-free route."""
     job.status = "running"
     _persist_meta(job)
-    step0_id = resolve_step(steps[0], 0)["reaction_id"]
-    step_ids = [step0_id] + [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps[1:], 1)]
-    # Displayed slot numbers are route position, not fragment_slot's raw
-    # component index: the fragment is always shown as slot 1, matching the
-    # UI's convention (see templates/index.html's renderGrowthStep1Summary).
-    job.log(f"Growth job {job.id} started — route {' -> '.join(step_ids)} "
-            f"(fragment fills slot 1 of step 1)")
     try:
+        step0_id = resolve_step(steps[0], 0)["reaction_id"]
+        step_ids = [step0_id] + [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps[1:], 1)]
+        # Displayed slot numbers are route position, not fragment_slot's raw
+        # component index: the fragment is always shown as slot 1, matching the
+        # UI's convention (see templates/index.html's renderGrowthStep1Summary).
+        job.log(f"Growth job {job.id} started — route {' -> '.join(step_ids)} "
+                f"(fragment fills slot 1 of step 1)")
         mol = Chem.MolFromMolFile(fragment_path, removeHs=True)
         if mol is None:
             raise ValueError(f"could not read fragment SDF: {fragment_path}")
@@ -448,9 +448,10 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
     contrast with ``_run``'s multiple growth targets."""
     job.status = "running"
     _persist_meta(job)
-    step_ids = [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps)]
-    job.log(f"Combi job {job.id} started — route {' -> '.join(step_ids)}")
     try:
+        step_ids = [resolve_step(s, i)["reaction_id"] for i, s in enumerate(steps)]
+        job.log(f"Combi job {job.id} started — route {' -> '.join(step_ids)}")
+
         def _on_evaluator(ev):
             job.evaluator = ev
             job.current_target = " -> ".join(step_ids)
