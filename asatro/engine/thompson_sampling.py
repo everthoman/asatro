@@ -518,7 +518,11 @@ class ThompsonSampler:
             sw = self._rws_sumw[comp_i][reagent_j]
             mu = self._rws_mu[comp_i][reagent_j]
             self._rws_mu[comp_i][reagent_j] = mu + (w / sw) * (value - mu)
-            self._rws_std[comp_i][reagent_j] = np.sqrt(prior_var * self._rws_var_known / denominator)
+            # denominator is 0 only when both variances are 0 (a degenerate,
+            # fully-certain prior); the combined variance stays 0 in that
+            # limit rather than the 0/0 NaN a bare division would produce.
+            new_var = prior_var * self._rws_var_known / denominator if denominator > 0 else 0.0
+            self._rws_std[comp_i][reagent_j] = np.sqrt(new_var)
 
     def warm_up_rws(self, num_warmup_trials=5):
         """RWS warm-up: dock a balanced set of random products (each reagent used
@@ -590,7 +594,11 @@ class ThompsonSampler:
                     w_sum = float(np.sum(w_batch))
                     sumw[j] += w_sum
                     mu[j] = mu[j] + (w_sum / sumw[j]) * (mean_batch - mu[j])
-                    std[j] = np.sqrt(prior_var * self._rws_var_known / denominator)
+                    # Same 0/0 guard as _rws_single_update: denominator is 0
+                    # only when both variances are 0, and the combined
+                    # variance should stay 0 there, not NaN.
+                    new_var = prior_var * self._rws_var_known / denominator if denominator > 0 else 0.0
+                    std[j] = np.sqrt(new_var)
             self._rws_mu.append(mu)
             self._rws_std.append(std)
             self._rws_sumw.append(sumw)

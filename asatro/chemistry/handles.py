@@ -69,13 +69,19 @@ def derive_core(frag: MolOrSmiles, fg_class: str) -> str:
     if lq is None:
         return Chem.MolToSmiles(mol)
 
-    # Restrict leaving-atom matches to the reacting functional group's occurrence,
-    # so e.g. a free alcohol elsewhere is not mistaken for an acid hydroxyl.
+    # Restrict leaving-atom matches to a single occurrence of the reacting
+    # functional group, so e.g. a free alcohol elsewhere is not mistaken for
+    # an acid hydroxyl. When the class occurs more than once (e.g. two
+    # carboxylic acids), which one actually reacts is ambiguous from
+    # fg_class alone -- take only the first occurrence rather than the union
+    # of all of them, so an unrelated occurrence elsewhere is under-removed
+    # (safe) instead of over-removed (a silently wrong conserved core).
     fg_q = VOCAB.query.get(fg_class)
     fg_atoms: set = set()
     if fg_q is not None:
-        for m in mol.GetSubstructMatches(fg_q):
-            fg_atoms.update(m)
+        matches = mol.GetSubstructMatches(fg_q)
+        if matches:
+            fg_atoms.update(matches[0])
 
     drop: set = set()
     for m in mol.GetSubstructMatches(lq):

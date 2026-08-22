@@ -748,34 +748,48 @@ class GninaEvaluator(Evaluator):
         return score if score is not None else np.nan
 
     def _best_pose(self, sdf_path: str, smiles: str) -> Tuple[Optional[float], Optional[Chem.Mol]]:
-        """Read poses, return the best ``(score, mol)`` by the configured field."""
+        """Read poses, return the best ``(score, mol)`` by the configured field.
+
+        A pose missing the configured field falls back to ``minimizedAffinity``
+        -- but that's a different-scale, opposite-direction metric, so it is
+        kept in its own comparison pool (always lower-is-better) rather than
+        compared directly against configured-field scores under
+        ``self.higher_is_better``. The fallback pool is only used when no pose
+        has the configured field at all."""
         best_score: Optional[float] = None
         best_mol: Optional[Chem.Mol] = None
+        fallback_score: Optional[float] = None
+        fallback_mol: Optional[Chem.Mol] = None
         supplier = Chem.SDMolSupplier(sdf_path, sanitize=True, removeHs=False)
         for pose in supplier:
             if pose is None:
                 continue
-            val = self._read_score(pose)
-            if val is None or not np.isfinite(val):
+            val = self._parse_prop(pose, self.score_field)
+            if val is not None and np.isfinite(val):
+                if best_score is None or (val > best_score if self.higher_is_better else val < best_score):
+                    best_score = val
+                    best_mol = pose
                 continue
-            if best_score is None or (val > best_score if self.higher_is_better else val < best_score):
-                best_score = val
-                best_mol = pose
-        if best_mol is None:
+            aff = self._parse_prop(pose, "minimizedAffinity")
+            if aff is not None and np.isfinite(aff):
+                if fallback_score is None or aff < fallback_score:
+                    fallback_score = aff
+                    fallback_mol = pose
+        result_score, result_mol = (best_score, best_mol) if best_mol is not None else (fallback_score, fallback_mol)
+        if result_mol is None:
             return None, None
-        best_mol.SetProp("_Name", smiles)
-        best_mol.SetProp("SMILES", smiles)
-        return best_score, best_mol
+        result_mol.SetProp("_Name", smiles)
+        result_mol.SetProp("SMILES", smiles)
+        return result_score, result_mol
 
-    def _read_score(self, pose: Chem.Mol) -> Optional[float]:
-        # Try the configured field first, then minimizedAffinity as a fallback.
-        for field in [self.score_field, "minimizedAffinity"]:
-            if pose.HasProp(field):
-                try:
-                    return float(pose.GetProp(field))
-                except (ValueError, TypeError):
-                    continue
-        return None
+    @staticmethod
+    def _parse_prop(pose: Chem.Mol, field: str) -> Optional[float]:
+        if not pose.HasProp(field):
+            return None
+        try:
+            return float(pose.GetProp(field))
+        except (ValueError, TypeError):
+            return None
 
     # -- Progress + output --------------------------------------------------
     def _emit_progress(self, score: float) -> None:

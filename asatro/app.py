@@ -508,13 +508,25 @@ async def jobs() -> dict:
     return {"jobs": list_jobs()}
 
 
+def _job_path(job_id: str, *parts: str) -> Path:
+    """Resolve a path under jobs_dir() rooted at ``job_id``, rejecting any
+    job_id that would escape it (e.g. "..") -- job_id comes straight from a
+    request path parameter and is otherwise used unsanitized to build
+    filesystem paths."""
+    base = jobs_dir().resolve()
+    p = (base / job_id).joinpath(*parts).resolve()
+    if p != base and base not in p.parents:
+        raise HTTPException(400, "invalid job id")
+    return p
+
+
 @app.get("/jobs/{job_id}")
 async def job_detail(job_id: str) -> dict:
     job = JOBS.get(job_id)
     if job is not None:
         return {**job.meta(), "result": _enrich_top_props(job.result), "n_log": len(job.lines)}
     # Past run: read persisted metadata/results from disk.
-    d = jobs_dir() / job_id
+    d = _job_path(job_id)
     if d.is_dir() and (d / "job.json").is_file():
         meta = json.loads((d / "job.json").read_text())
         res = json.loads((d / "results.json").read_text()) if (d / "results.json").is_file() else None
@@ -527,7 +539,7 @@ async def job_poses(job_id: str, filename: str) -> FileResponse:
     """Download all docked poses (SDF) for one growth target of a job."""
     if not re.fullmatch(r"poses_\d+\.sdf", filename):
         raise HTTPException(400, "invalid filename")
-    p = jobs_dir() / job_id / filename
+    p = _job_path(job_id, filename)
     if not p.is_file():
         raise HTTPException(404, "poses not found")
     return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
@@ -540,7 +552,7 @@ async def job_pose(job_id: str, rank: int) -> Response:
     lines up with the results gallery's ``#rank``."""
     import tempfile
 
-    poses_path = jobs_dir() / job_id / "poses_0.sdf"
+    poses_path = _job_path(job_id, "poses_0.sdf")
     if not poses_path.is_file():
         raise HTTPException(404, "no docked poses for this job")
     target = None
@@ -580,7 +592,7 @@ async def seed_fragment(job_id: str, rank: int = Form(...),
     if job is not None:
         result = job.result
     else:
-        d = jobs_dir() / job_id
+        d = _job_path(job_id)
         if not (d.is_dir() and (d / "results.json").is_file()):
             raise HTTPException(404, "unknown job (or it hasn't produced results yet)")
         result = json.loads((d / "results.json").read_text())
@@ -606,7 +618,7 @@ async def seed_fragment(job_id: str, rank: int = Form(...),
     reagent = components[component_index]
     accepts = meta[component_index]["accepts"]
 
-    poses_path = jobs_dir() / job_id / "poses_0.sdf"
+    poses_path = _job_path(job_id, "poses_0.sdf")
     if not poses_path.is_file():
         raise HTTPException(400, "no docked poses available to seed from")
     pose_mol = None

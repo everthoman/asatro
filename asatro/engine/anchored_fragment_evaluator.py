@@ -364,14 +364,27 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     def _core_drift(self, pose: Chem.Mol) -> Optional[float]:
         """Heavy-atom RMSD of the conserved core in the docked pose vs the bound
-        reference, in the receptor frame (no superposition -- absolute drift)."""
-        match = pose.GetSubstructMatch(self.core)
-        if not match or len(match) != self.core.GetNumAtoms():
+        reference, in the receptor frame (no superposition -- absolute drift).
+
+        When the core has graph symmetry (e.g. a symmetric ring/linker),
+        ``GetSubstructMatch`` returns one arbitrary atom mapping, which can
+        pair reference and pose atoms that aren't physically the same atom
+        and so under-report real drift. Take the minimum RMSD over every
+        symmetry-equivalent mapping instead -- the standard fix for RMSD
+        under symmetry, and never an under-estimate of the true drift."""
+        matches = pose.GetSubstructMatches(self.core, uniquify=False)
+        matches = [m for m in matches if len(m) == self.core.GetNumAtoms()]
+        if not matches:
             return None
         conf = pose.GetConformer()
-        xyz = np.array([list(conf.GetAtomPosition(i)) for i in match])
-        d2 = ((xyz - self._core_ref_xyz) ** 2).sum(axis=1)
-        return float(np.sqrt(d2.mean()))
+        best = None
+        for match in matches:
+            xyz = np.array([list(conf.GetAtomPosition(i)) for i in match])
+            d2 = ((xyz - self._core_ref_xyz) ** 2).sum(axis=1)
+            rmsd = float(np.sqrt(d2.mean()))
+            if best is None or rmsd < best:
+                best = rmsd
+        return best
 
 
 # ---------------------------------------------------------------------------
