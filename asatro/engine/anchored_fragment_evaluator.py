@@ -53,12 +53,14 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit.Geometry import Point3D
 
+from asatro.chemistry.accessibility import rotate_about, torsion_axis, load_receptor_atoms
 from asatro.chemistry.handles import carve_substructure_3d, neutralize
 from asatro.engine.gnina_evaluator import (
     GninaEvaluator,
@@ -105,10 +107,72 @@ def _match_core(frag: Chem.Mol, core_str: str):
     return (), queries[0]
 
 
-def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
+def _movable_core_atoms(frag: Chem.Mol, match: Sequence[int]) -> Tuple[int, ...]:
+    """Core atoms whose *position* the bound pose does not fix, as indices into
+    the carved core.
+
+    The reaction consumes the leaving group, and the handle it hangs off can
+    turn about the single bond into the core -- a carboxyl flips its -OH and its
+    C=O, an aryl sulfonyl chloride spins its S=O pair. Those atoms survive into
+    the product but their bound coordinates are one arbitrary torsion state, so
+    pinning them would force the new substituent onto whichever site the leaving
+    group happened to occupy (see DESIGN.md; the same reasoning as the
+    accessibility pass's rotamers). Everything else in the core is genuinely
+    conserved.
+    """
+    core_of = {f: c for c, f in enumerate(match)}
+    leaving = {a.GetIdx() for a in frag.GetAtoms()
+               if a.GetIdx() not in core_of and a.GetAtomicNum() != 1}
+    for attach in match:
+        a = frag.GetAtomWithIdx(attach)
+        if not any(n.GetIdx() in leaving for n in a.GetNeighbors()):
+            continue
+        anchor = torsion_axis(frag, attach, leaving)
+        if anchor is None:
+            continue
+        movable = tuple(sorted(
+            core_of[n.GetIdx()] for n in a.GetNeighbors()
+            if n.GetIdx() in core_of and n.GetIdx() != anchor
+            and n.GetAtomicNum() != 1 and n.GetDegree() == 1))
+        if movable:
+            return movable
+    return ()
+
+
+def _flipped_core(core: Chem.Mol, movable: Tuple[int, ...]) -> Optional[Chem.Mol]:
+    """The core template with its ``movable`` atoms turned 180 deg about the bond
+    into the rest of the core -- the other torsion state the handle can adopt,
+    so the product can be built with the new bond on either site."""
+    if not movable:
+        return None
+    conf = core.GetConformer()
+    pos = lambda i: np.array(conf.GetAtomPosition(i))
+    attach = None
+    for a in core.GetAtomWithIdx(movable[0]).GetNeighbors():
+        attach = a.GetIdx()
+        break
+    if attach is None:
+        return None
+    anchor = torsion_axis(core, attach, set(movable))
+    if anchor is None:
+        return None
+    axis = pos(attach) - pos(anchor)
+    n = float(np.linalg.norm(axis))
+    if n < 1e-6:
+        return None
+    flipped = Chem.Mol(core)
+    fconf = flipped.GetConformer()
+    turned = rotate_about(np.array([pos(i) for i in movable]), pos(attach), axis / n, 180.0)
+    for i, xyz in zip(movable, turned):
+        fconf.SetAtomPosition(i, Point3D(*(float(v) for v in xyz)))
+    return flipped
+
+
+def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Tuple[Chem.Mol, Tuple[int, ...]]:
     """
     Build the conserved-core template (a 3D mol) used both to seed the embed and
-    to check pose drift.
+    to check pose drift, plus the indices of its atoms whose position the bound
+    pose does not actually fix (``_movable_core_atoms``).
 
     ``fragment_sdf`` is the fragment in its *bound* pose. ``core_smarts``, if
     given, selects the sub-part of the fragment that survives the growth
@@ -131,7 +195,7 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
     # matches what it needs to substruct-match against.
     frag = neutralize(frag)
     if core_smarts is None:
-        return frag
+        return frag, ()
     match, q = _match_core(frag, core_smarts)
     if not match:
         frag_smiles = Chem.MolToSmiles(frag)
@@ -143,7 +207,7 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Chem.Mol:
             f"excluded only the reacting handle, not ring atoms.")
     # Carve the matched atoms out *with their coordinates* into a core template.
     try:
-        return carve_substructure_3d(frag, match)
+        return carve_substructure_3d(frag, match), _movable_core_atoms(frag, match)
     except ValueError as e:
         # More specific context than the generic carving error: here we know
         # it was core_smarts, not an arbitrary match, that cut the ring.
@@ -229,14 +293,38 @@ def _run_constrained_embed(mol: Chem.Mol, core: Chem.Mol, seed: int, timeout: fl
     return Chem.Mol(payload)
 
 
+def _receptor_clashes(mol: Chem.Mol, receptor: np.ndarray, radius: float = 2.2) -> int:
+    """Heavy atoms of ``mol`` sitting inside ``radius`` of a receptor atom."""
+    if receptor.size == 0 or mol.GetNumConformers() == 0:
+        return 0
+    conf = mol.GetConformer()
+    xyz = np.array([list(conf.GetAtomPosition(a.GetIdx())) for a in mol.GetAtoms()
+                    if a.GetAtomicNum() != 1])
+    if xyz.size == 0:
+        return 0
+    near = receptor[np.linalg.norm(receptor - xyz.mean(axis=0), axis=1) <= 25.0]
+    if near.size == 0:
+        return 0
+    d2 = ((near[None, :, :] - xyz[:, None, :]) ** 2).sum(axis=2)
+    return int((d2.min(axis=1) < radius * radius).sum())
+
+
 def _constrained_pose_block(
     smiles: str, ph: float, core: Chem.Mol, seed: int = 0xF00D,
     embed_timeout: float = _EMBED_TIMEOUT_DEFAULT,
+    alt_cores: Sequence[Chem.Mol] = (), receptor: Optional[np.ndarray] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Protonate ``smiles`` (reusing GninaEvaluator's obabel step), then build a 3D
     pose with the ``core`` atoms pinned at their bound coordinates via
     ConstrainedEmbed. Returns ``(sdf_block, error)`` shaped like prepare_ligand_3d.
+
+    ``alt_cores`` are the same core in the other torsion states its handle can
+    adopt (see ``_flipped_core``). They are tried only if the as-posed template
+    puts the product into the receptor, and the variant with the fewest clashes
+    wins -- so a fragment whose leaving group faced a wall grows out the other
+    way instead of being built into it. Without a ``receptor`` there is nothing
+    to choose on, so the as-posed template is used as before.
     """
     # Reuse the existing protonate step (same OpenBabel -p pH call the free
     # combi path uses) so a basic amine on the grown building block -- not
@@ -257,14 +345,30 @@ def _constrained_pose_block(
         # The conserved core is not present -> the reaction did not preserve the
         # fragment (wrong route / wrong exit vector). Reject like a prep failure.
         return None, "conserved fragment core not found in product"
-    try:
-        # ConstrainedEmbed: matches core in mol, fixes those atoms at the core
-        # coordinates, embeds the rest, and runs a restrained MMFF minimisation.
-        # Runs isolated in a child process (see _run_constrained_embed) -- the
-        # embedded conformer comes back on `mol`, not mutated in place.
-        mol = _run_constrained_embed(mol, core, seed, embed_timeout)
-    except Exception as e:  # embedding can fail (or time out) for very strained grows
-        return None, f"constrained embed failed: {e}"
+    templates = [core] + [c for c in alt_cores if c is not None]
+    best = best_clashes = None
+    for template in templates:
+        try:
+            # ConstrainedEmbed: matches core in mol, fixes those atoms at the core
+            # coordinates, embeds the rest, and runs a restrained MMFF minimisation.
+            # Runs isolated in a child process (see _run_constrained_embed) -- the
+            # embedded conformer comes back on `mol`, not mutated in place.
+            placed = _run_constrained_embed(mol, template, seed, embed_timeout)
+        except Exception as e:  # embedding can fail (or time out) for very strained grows
+            if template is templates[-1] and best is None:
+                return None, f"constrained embed failed: {e}"
+            continue
+        if receptor is None or len(templates) == 1:
+            best = placed
+            break
+        clashes = _receptor_clashes(placed, receptor)
+        if best is None or clashes < best_clashes:
+            best, best_clashes = placed, clashes
+        if best_clashes == 0:
+            break
+    if best is None:
+        return None, "constrained embed failed for every core orientation"
+    mol = best
     block = Chem.MolToMolBlock(mol) + "$$$$\n"
     lines = block.split("\n")
     if lines:
@@ -302,19 +406,34 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         input_dict.setdefault("reference_path", input_dict.get("fragment_sdf"))
         super().__init__(input_dict)
         self.fragment_sdf = input_dict["fragment_sdf"]
-        self.core = _load_core(self.fragment_sdf, input_dict.get("core_smarts"))
+        self.core, self._core_movable = _load_core(self.fragment_sdf,
+                                                   input_dict.get("core_smarts"))
         self.max_core_rmsd = float(input_dict.get("max_core_rmsd", 1.5))
         self.local_only = bool(input_dict.get("local_only", True))
         self.embed_timeout = float(input_dict.get("embed_timeout", _EMBED_TIMEOUT_DEFAULT))
+        # The handle can turn about the bond into the core, so the product may be
+        # buildable in a second orientation. Keep that template (and the receptor
+        # to choose between them) only when there is actually something movable.
+        flipped = _flipped_core(self.core, self._core_movable)
+        self._alt_cores = [flipped] if flipped is not None else []
+        self._receptor_xyz = (load_receptor_atoms(self.receptor_path)
+                              if self._alt_cores else None)
         # Precompute reference core coordinates (receptor frame) for the guard.
         conf = self.core.GetConformer()
         self._core_ref_xyz = np.array(
             [list(conf.GetAtomPosition(i)) for i in range(self.core.GetNumAtoms())]
         )
+        # Drift is measured on the atoms the pose really does fix: a movable atom
+        # sits ~2 A away in the flipped orientation, which is a legitimate build,
+        # not the broken binding mode the guard exists to catch.
+        self._core_fixed = np.array([i for i in range(self.core.GetNumAtoms())
+                                     if i not in set(self._core_movable)], dtype=int)
 
     # --- override hook 1: constrained 3D build --------------------------------
     def _prepare_pose(self, smiles: str) -> Tuple[Optional[str], Optional[str]]:
-        return _constrained_pose_block(smiles, self.ph, self.core, self.seed, self.embed_timeout)
+        return _constrained_pose_block(smiles, self.ph, self.core, self.seed,
+                                       self.embed_timeout, self._alt_cores,
+                                       self._receptor_xyz)
 
     # --- override hook 2: docking flags ---------------------------------------
     def _extra_flags(self) -> List[str]:
@@ -365,6 +484,9 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
     def _core_drift(self, pose: Chem.Mol) -> Optional[float]:
         """Heavy-atom RMSD of the conserved core in the docked pose vs the bound
         reference, in the receptor frame (no superposition -- absolute drift).
+        Atoms whose position the bound pose does not fix (``_core_movable``,
+        e.g. a carboxyl C=O whose -OH left) are excluded -- they are free to
+        turn, so scoring them as drift would reject correctly anchored poses.
 
         When the core has graph symmetry (e.g. a symmetric ring/linker),
         ``GetSubstructMatch`` returns one arbitrary atom mapping, which can
@@ -378,9 +500,12 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
             return None
         conf = pose.GetConformer()
         best = None
+        keep = self._core_fixed
+        if keep.size == 0:
+            return 0.0
         for match in matches:
             xyz = np.array([list(conf.GetAtomPosition(i)) for i in match])
-            d2 = ((xyz - self._core_ref_xyz) ** 2).sum(axis=1)
+            d2 = ((xyz[keep] - self._core_ref_xyz[keep]) ** 2).sum(axis=1)
             rmsd = float(np.sqrt(d2.mean()))
             if best is None or rmsd < best:
                 best = rmsd

@@ -5,6 +5,7 @@ enumeration with the bound fragment fixed, and the AnchoredFragmentEvaluator's
 constrained pose generation. The dock itself needs the gnina binary + a GPU and
 is not run here.
 """
+import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -303,3 +304,48 @@ def test_anchored_evaluator_alcohol_nothing_leaves(tmp_path):
 def test_fragment_smiles_from_sdf_roundtrip(tmp_path):
     sdf = _write_bound_fragment(tmp_path, "OC(=O)c1ccncc1")
     assert fragment_smiles_from_sdf(sdf) == Chem.CanonSmiles("OC(=O)c1ccncc1")
+
+
+def _wall_receptor(path, points):
+    """A PDB of pseudo-atoms at ``points`` — a wall for the anchored evaluator."""
+    with open(path, "w") as fh:
+        for i, p in enumerate(points, 1):
+            fh.write(f"ATOM  {i:5d}  CA  ALA A{i:4d}    "
+                     f"{p[0]:8.3f}{p[1]:8.3f}{p[2]:8.3f}  1.00  0.00           C\n")
+    return str(path)
+
+
+def test_anchored_evaluator_builds_the_product_on_the_open_side(tmp_path):
+    """Regression: the conserved core used to pin a carboxyl's C=O, so an amide
+    could only be built where the -OH sat in the bound pose — into the wall,
+    when that is where the -OH pointed. The C=O position is not conserved
+    information (the whole group turns about the ring bond), so it is unpinned
+    and the flipped core template is tried: the product must come out on the
+    open side, clash-free."""
+    sdf = _write_bound_fragment(tmp_path, "Cc1ccc(cc1)C(=O)O")
+    frag = Chem.MolFromMolFile(sdf)
+    conf = frag.GetConformer()
+    c, o_carbonyl, o_h = frag.GetSubstructMatch(Chem.MolFromSmarts("[CX3](=O)[OX2H1]"))
+    pos = lambda i: np.array(conf.GetAtomPosition(i))
+    d = pos(o_h) - pos(c); d /= np.linalg.norm(d)
+    u = np.cross(d, [0, 0, 1.0]); u /= np.linalg.norm(u)
+    v = np.cross(d, u)
+    centre = pos(o_h) + d * 2.8       # a wall 2.8 Å past the hydroxyl oxygen
+    wall = [centre + a * u + b * v
+            for a in np.arange(-9, 9.1, 1.2) for b in np.arange(-9, 9.1, 1.2)]
+    rec = _wall_receptor(tmp_path / "receptor.pdb", wall)
+
+    core = derive_core(frag, "carboxylic_acid")
+    ev = make_evaluator(fragment_sdf=sdf, receptor_path=rec, core_smarts=core,
+                        work_dir=str(tmp_path / "dock"))
+    assert ev._core_movable and ev._alt_cores      # the C=O is free to turn
+
+    block, err = ev._prepare_pose("Cc1ccc(cc1)C(=O)NC")   # the amide
+    assert err is None and block is not None
+    placed = Chem.MolFromMolBlock(block)
+    n = [a.GetIdx() for a in placed.GetAtoms() if a.GetSymbol() == "N"]
+    assert len(n) == 1
+    n_pos = np.array(placed.GetConformer().GetAtomPosition(n[0]))
+    # the amide N took the open C=O site, not the walled-in -OH site
+    assert np.linalg.norm(n_pos - pos(o_carbonyl)) < np.linalg.norm(n_pos - pos(o_h))
+    assert min(np.linalg.norm(np.array(w) - n_pos) for w in wall) > 3.0

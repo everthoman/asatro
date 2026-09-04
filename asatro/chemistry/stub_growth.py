@@ -105,17 +105,30 @@ def build_grown(fragment: Chem.Mol, attach_idx: int, leaving: tuple, stub_smiles
     return mol, core_pairs, stub_idxs
 
 
-def place_stub(fragment: Chem.Mol, grown: Chem.Mol, seed: int) -> Optional[np.ndarray]:
+def place_stub(fragment: Chem.Mol, grown: Chem.Mol, seed: int,
+               free_atoms: tuple = ()) -> Optional[np.ndarray]:
     """Constrained-embed ``grown`` with the core pinned to the fragment's bound
     coordinates, then rigid-align the core onto the exact bound pose. Returns the
-    stub heavy-atom coordinates in the receptor frame, or ``None`` on failure.
+    *unpinned* heavy-atom coordinates (stub + ``free_atoms``) in the receptor
+    frame, or ``None`` on failure.
+
+    ``free_atoms`` are fragment atoms that survive the reaction but whose
+    position the pose does not fix -- a carboxyl's C=O when its -OH is what
+    leaves, since the whole group can turn about the bond into the core. Pinning
+    them would force the new substituent onto the site the -OH happened to
+    occupy; leaving them free lets the embed find the turn that fits, and they
+    are clash-checked alongside the stub.
 
     Hydrogens are added before embedding (better geometry); the core/stub atom
     indices are recovered from the ``_o``/``_stub`` tags, which survive AddHs."""
     conf = fragment.GetConformer()
     m = Chem.AddHs(Chem.Mol(grown))
-    core_pairs = [(a.GetIdx(), a.GetIntProp("_o")) for a in m.GetAtoms() if a.HasProp("_o")]
-    stub_idxs = [a.GetIdx() for a in m.GetAtoms() if a.HasProp("_stub")]
+    free = set(free_atoms)
+    core_pairs = [(a.GetIdx(), a.GetIntProp("_o")) for a in m.GetAtoms()
+                  if a.HasProp("_o") and a.GetIntProp("_o") not in free]
+    free_idxs = [a.GetIdx() for a in m.GetAtoms()
+                 if a.HasProp("_o") and a.GetIntProp("_o") in free]
+    stub_idxs = [a.GetIdx() for a in m.GetAtoms() if a.HasProp("_stub")] + free_idxs
     coord_map = {gi: conf.GetAtomPosition(oi) for gi, oi in core_pairs}
     cid = AllChem.EmbedMolecule(m, coordMap=coord_map, randomSeed=seed)
     if cid < 0:
@@ -151,7 +164,12 @@ def _clash(stub_xyz: np.ndarray, receptor: np.ndarray, radius: float) -> bool:
 # ---------------------------------------------------------------------------
 def refine_vector(fragment: Chem.Mol, ev: ExitVector, receptor: np.ndarray,
                   p: StubParams = StubParams()) -> dict:
-    """Which stubs physically fit on this growth vector. Accessible if any does."""
+    """Which stubs physically fit on this growth vector. Accessible if any does.
+
+    The handle's own movable atoms (``ExitVector.free_atoms``) are unpinned and
+    clash-checked with the stub, so a stub that only fits once the handle turns
+    (an amide off a carboxyl whose -OH faced a wall) is found rather than
+    rejected."""
     fits: List[str] = []
     for name, smi in p.stubs:
         built = build_grown(fragment, ev.attach_idx, ev.leaving, smi)
@@ -159,7 +177,7 @@ def refine_vector(fragment: Chem.Mol, ev: ExitVector, receptor: np.ndarray,
             continue
         grown, _core_pairs, _stub_idxs = built
         for s in range(p.seeds):
-            xyz = place_stub(fragment, grown, 0xC0FFEE + s)
+            xyz = place_stub(fragment, grown, 0xC0FFEE + s, ev.free_atoms)
             if xyz is None:
                 continue
             if not _clash(xyz, receptor, p.clash_radius):

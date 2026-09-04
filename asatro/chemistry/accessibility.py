@@ -38,12 +38,28 @@ class ProbeParams:
 
 
 @dataclass
+class Rotamer:
+    """One torsion state of a handle about the bond that joins it to the core.
+
+    ``angle`` is the rotation applied to the bound pose (0 = as posed);
+    ``free_xyz`` are the positions the handle's own movable atoms take in that
+    state, so a rotamer that would ram them into the receptor can be rejected.
+    """
+    angle: float                 # degrees from the bound pose
+    direction: np.ndarray        # (3,) unit exit vector in this state
+    free_xyz: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
+
+
+@dataclass
 class ExitVector:
     fg_class: str
     attach_idx: int
     attach_pos: np.ndarray       # (3,)
-    direction: np.ndarray        # (3,) unit vector
+    direction: np.ndarray        # (3,) unit vector, as posed
     leaving: tuple = ()          # fragment atom indices that leave (empty for amines)
+    free_atoms: tuple = ()       # kept atoms whose position the torsion moves (e.g. a
+                                 # carboxyl's C=O when the -OH leaves)
+    rotamers: tuple = ()         # Rotamer states, as-posed first
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +91,49 @@ def _unit(v: np.ndarray) -> Optional[np.ndarray]:
     return v / n if n > 1e-6 else None
 
 
+def rotate_about(points: np.ndarray, origin: np.ndarray, axis: np.ndarray,
+                  angle_deg: float) -> np.ndarray:
+    """Rodrigues rotation of ``points`` about the line (``origin``, unit ``axis``)."""
+    th = math.radians(angle_deg)
+    v = points - origin
+    return (origin + v * math.cos(th)
+            + np.cross(axis, v) * math.sin(th)
+            + np.outer(v @ axis, axis) * (1 - math.cos(th)))
+
+
+def torsion_axis(mol: Chem.Mol, attach: int, drop: set):
+    """The bond the handle can spin about: ``(anchor, attach)`` where ``anchor``
+    is the atom tying ``attach`` to the rest of the fragment, or ``None`` when
+    the handle's direction is locked (an aromatic C-X: the bond into the ring is
+    not rotatable, so the halide's direction is fixed by the ring geometry)."""
+    a = mol.GetAtomWithIdx(attach)
+    for nbr in a.GetNeighbors():
+        i = nbr.GetIdx()
+        if i in drop or nbr.GetAtomicNum() == 1:
+            continue
+        bond = mol.GetBondBetweenAtoms(attach, i)
+        if bond.GetBondType() != Chem.BondType.SINGLE or bond.IsInRing():
+            continue
+        if nbr.GetDegree() < 2:   # terminal: spinning about it moves nothing
+            continue
+        return i
+    return None
+
+
+def _rotamer_angles(mol: Chem.Mol, attach: int) -> List[float]:
+    """Torsion states to consider about the core-handle bond, in degrees.
+
+    An sp2 attachment point (a carboxyl/acyl/aldehyde carbon) is planar and
+    conjugated to what it hangs off: the only other minimum is the 180 deg flip,
+    which swaps the leaving group with the group opposite it. An sp3 one (a
+    sulfonyl S, a CH2-X) really does sweep its substituent around the bond, so
+    walk the circle."""
+    hyb = mol.GetAtomWithIdx(attach).GetHybridization()
+    if hyb == Chem.HybridizationType.SP2:
+        return [0.0, 180.0]
+    return [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]
+
+
 def growth_vectors(mol: Chem.Mol, fg_class: str) -> List[ExitVector]:
     """Exit vectors for every occurrence of ``fg_class`` on the *3D* fragment.
 
@@ -82,6 +141,10 @@ def growth_vectors(mol: Chem.Mol, fg_class: str) -> List[ExitVector]:
     atom toward the leaving atom it's bonded to (where the new substituent lands).
     For an amine (nothing leaves) the vector is the N's open-valence direction
     (away from its heavy neighbours), since the new bond replaces an N-H.
+
+    The bound pose pins one torsion state of the handle, which is *not* what the
+    product is stuck with: each vector carries the ``rotamers`` its core bond can
+    turn to (see ``_rotamer_angles``), as-posed first.
     """
     if mol.GetNumConformers() == 0:
         return []
@@ -125,8 +188,31 @@ def growth_vectors(mol: Chem.Mol, fg_class: str) -> List[ExitVector]:
             direction = _unit(pos(lead) - pos(attach))
             if direction is None:
                 continue
+            # The bound pose fixes one torsion state of the handle, but the bond
+            # into the core can spin: a carboxyl's -OH and its C=O swap on a 180
+            # deg flip, so the substituent can leave along *either* C-O direction.
+            # Enumerate those states, carrying the atoms that move with them.
+            anchor = torsion_axis(mol, attach, drop)
+            free = ()
+            rotamers = [Rotamer(0.0, direction)]
+            if anchor is not None:
+                free = tuple(sorted(
+                    n.GetIdx() for n in mol.GetAtomWithIdx(attach).GetNeighbors()
+                    if n.GetIdx() not in drop and n.GetIdx() != anchor
+                    and n.GetAtomicNum() != 1 and n.GetDegree() == 1))
+                axis = _unit(pos(attach) - pos(anchor))
+                if axis is not None:
+                    free_xyz = np.array([pos(i) for i in free]).reshape(-1, 3)
+                    rotamers = []
+                    for ang in _rotamer_angles(mol, attach):
+                        d = _unit(rotate_about(pos(lead).reshape(1, 3), pos(attach),
+                                                axis, ang)[0] - pos(attach))
+                        if d is None:
+                            continue
+                        rotamers.append(Rotamer(
+                            ang, d, rotate_about(free_xyz, pos(attach), axis, ang)))
             vectors.append(ExitVector(fg_class, attach, pos(attach), direction,
-                                      tuple(sorted(drop))))
+                                      tuple(sorted(drop)), free, tuple(rotamers)))
     return vectors
 
 
@@ -165,26 +251,55 @@ def _free_distance(p0: np.ndarray, d: np.ndarray, recat: np.ndarray, p: ProbePar
     return p.max_reach
 
 
+def _rotamer_blocked(free_xyz: np.ndarray, near: np.ndarray, p: ProbeParams) -> bool:
+    """Would turning to this rotamer push the handle's own atoms into the
+    receptor? (An empty set of movable atoms never blocks.)"""
+    if free_xyz.size == 0 or near.size == 0:
+        return False
+    d2 = ((near[None, :, :] - free_xyz[:, None, :]) ** 2).sum(axis=2)
+    return bool((d2.min(axis=1) < p.clash_radius ** 2).any())
+
+
 def probe_vector(ev: ExitVector, receptor: np.ndarray, p: ProbeParams = ProbeParams()) -> dict:
-    """Free reach of an exit vector through a cone of growth directions."""
+    """Free reach of an exit vector through a cone of growth directions.
+
+    Every rotamer the handle can turn to is probed (a rotamer that would bury
+    the handle's own atoms in the receptor is skipped); the result reports the
+    best one, and ``rotamer`` says how far from the bound pose that state is.
+    Growth is not committed to the torsion the pose happens to show, so pruning
+    on the as-posed direction alone drops chemistry that is plainly reachable —
+    e.g. a carboxylic acid whose -OH points at a wall while its C=O, 120 deg
+    away and free to swap with it, points into open space."""
     # Crop the receptor to atoms that could possibly be hit — keeps it fast.
     if receptor.size:
         near = receptor[np.linalg.norm(receptor - ev.attach_pos, axis=1)
                         <= p.max_reach + p.clash_radius + 1.0]
     else:
         near = receptor
-    dirs = _fibonacci_cone(ev.direction, p.cone_half_angle, p.n_cone)
-    depths = np.array([_free_distance(ev.attach_pos, d, near, p) for d in dirs])
-    free_central = float(depths[0])
-    max_free = float(depths.max())
-    return {
-        "attach_idx": ev.attach_idx,
-        "free_central": round(free_central, 2),
-        "mean_free": round(float(depths.mean()), 2),
-        "max_free": round(max_free, 2),
-        "open_fraction": round(float(np.mean(depths >= p.open_depth)), 3),
-        "accessible": max_free >= p.min_free,
-    }
+    rotamers = list(ev.rotamers) or [Rotamer(0.0, ev.direction)]
+
+    best = None
+    for rot in rotamers:
+        if rot.angle and _rotamer_blocked(rot.free_xyz, near, p):
+            continue
+        dirs = _fibonacci_cone(rot.direction, p.cone_half_angle, p.n_cone)
+        depths = np.array([_free_distance(ev.attach_pos, d, near, p) for d in dirs])
+        cand = {
+            "attach_idx": ev.attach_idx,
+            "free_central": round(float(depths[0]), 2),
+            "mean_free": round(float(depths.mean()), 2),
+            "max_free": round(float(depths.max()), 2),
+            "open_fraction": round(float(np.mean(depths >= p.open_depth)), 3),
+            "accessible": float(depths.max()) >= p.min_free,
+            "rotamer": rot.angle,
+        }
+        if best is None or cand["max_free"] > best["max_free"]:
+            best = cand
+    if best is None:   # every alternative rotamer was blocked; report as posed
+        return probe_vector(ExitVector(ev.fg_class, ev.attach_idx, ev.attach_pos,
+                                       ev.direction, ev.leaving), receptor, p)
+    best["n_rotamers"] = len(rotamers)
+    return best
 
 
 # ---------------------------------------------------------------------------

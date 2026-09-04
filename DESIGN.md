@@ -58,6 +58,20 @@ conserved core. Before spending search budget, screen vectors for pocket room:
   geometric clash check is already strict on-axis, so the stub pass mainly adds
   fidelity for bulky/planar groups and multi-atom reach.
 
+- **Handle rotamers — IMPLEMENTED**: the bound pose shows *one* torsion state of
+  a handle, and the product is not stuck with it. A carboxyl turns 180° about the
+  bond into the core, swapping its –OH and its C=O (121° apart, well outside the
+  probe cone); an sp3 handle (a sulfonyl, a CH2–X) sweeps its leaving group right
+  around that bond. So each exit vector carries the rotamers its bond can reach
+  (none for a handle locked by a ring, e.g. an aryl C–X), the probe takes the best
+  state whose own atoms don't end up buried in the receptor, and the stub pass
+  leaves those movable atoms unpinned. The same freedom is carried into placement:
+  atoms whose position the pose does not fix are excluded from the pinned core and
+  from the core-drift guard, and the flipped core template is tried when the
+  as-posed one builds the product into the receptor
+  (`AnchoredFragmentEvaluator`). Without this, a fragment whose –OH happened to
+  face a wall was pruned outright even with the C=O side wide open.
+
 Net effect: the main search only ever explores growable directions.
 
 ### 3. Thompson-Sampled growth + constrained placement — ENGINE LIFTED (`growth.py`, `engine/`)

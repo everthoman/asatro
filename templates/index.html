@@ -546,7 +546,13 @@ function renderAnalysis(){
       // reaction's own SMARTS -- that raw index (s.index) stays purely
       // internal (still needed to place the fragment correctly for the
       // reaction), never shown to the user.
-      options.push(`<option value="${key}">${esc(rx.name)} (${esc(groupLabel(s.fg_class))}) — slot 1</option>`);
+      // Flag the slots that only open once the handle turns about its bond into
+      // the core (a carboxyl swapping -OH and C=O, say): worth knowing that the
+      // grown substituent goes where the *other* substituent currently sits.
+      const open = (s.vectors || []).filter(v => v.accessible);
+      const turned = open.length > 0 && open.every(v => v.rotamer);
+      options.push(`<option value="${key}">${esc(rx.name)} (${esc(groupLabel(s.fg_class))})`
+        + ` — slot 1${turned ? ' · via a turned handle' : ''}</option>`);
     });
   }
   el('step1Select').innerHTML = options.join('');

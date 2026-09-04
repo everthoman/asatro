@@ -105,3 +105,21 @@ def test_geometric_prune_skips_stub_work():
     a = assess_with_stubs(mol, wall, sp=StubParams(seeds=4))
     assert a["reactions"]["suzuki"]["accessible"] is False
     assert "stub" not in a["reactions"]["suzuki"]["slots"][0]
+
+
+def test_stub_fits_by_turning_the_handle():
+    """The stub pass must not pin atoms the pose doesn't fix: with a wall against
+    a carboxyl's -OH, a stub still fits once the carboxyl turns (its C=O is
+    unpinned and swaps into the blocked site instead)."""
+    mol = _embed("Cc1ccc(cc1)C(=O)O")
+    conf = mol.GetConformer()
+    c, o_carbonyl, o_h = mol.GetSubstructMatch(Chem.MolFromSmarts("[CX3](=O)[OX2H1]"))
+    pos = lambda i: np.array(conf.GetAtomPosition(i))
+    to_oh = pos(o_h) - pos(c); to_oh /= np.linalg.norm(to_oh)
+    wall = _slab(pos(o_h) + to_oh * 2.8, to_oh, radius=9.0, spacing=1.2)
+
+    ev = growth_vectors(mol, "carboxylic_acid")[0]
+    assert ev.free_atoms == (o_carbonyl,)
+    res = refine_vector(mol, ev, wall)
+    assert res["accessible"] and res["fits"]
+    assert "schotten_baumann_amide" in assess_with_stubs(mol, wall)["accessible_reactions"]

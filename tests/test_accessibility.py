@@ -8,6 +8,11 @@ from asatro.chemistry.accessibility import (
 )
 
 
+def _carboxyl_atoms(mol):
+    """(carbonyl C, =O, -OH) of the acid in ``mol``."""
+    return mol.GetSubstructMatch(Chem.MolFromSmarts("[CX3](=O)[OX2H1]"))
+
+
 def _embed(smiles):
     m = Chem.AddHs(Chem.MolFromSmiles(smiles))
     AllChem.EmbedMolecule(m, randomSeed=0xA5A)
@@ -85,3 +90,62 @@ def test_receptor_parser_skips_water_and_h():
     at = load_receptor_atoms(pdb)
     assert at.shape == (1, 3)  # only the carbon survives
     assert np.allclose(at[0], [10, 10, 10])
+
+
+# --- handle rotamers -------------------------------------------------------
+# The bound pose shows one torsion state of a handle; growth is not bound to it.
+
+def test_carboxyl_flip_opens_a_vector_blocked_as_posed():
+    """A wall against the -OH must not prune the acid: the carboxyl turns 180°
+    about the ring bond, putting the new bond where the C=O sits (~121° away,
+    far outside the probe cone), which is open."""
+    mol = _embed("Cc1ccc(cc1)C(=O)O")
+    conf = mol.GetConformer()
+    c, _o_carbonyl, o_h = _carboxyl_atoms(mol)
+    pos = lambda i: np.array(conf.GetAtomPosition(i))
+    to_oh = pos(o_h) - pos(c); to_oh /= np.linalg.norm(to_oh)
+    wall = _slab(pos(o_h) + to_oh * 2.8, to_oh, radius=9.0, spacing=1.2)
+
+    ev = growth_vectors(mol, "carboxylic_acid")[0]
+    assert [r.angle for r in ev.rotamers] == [0.0, 180.0]
+    assert ev.free_atoms == (_o_carbonyl,)      # the C=O moves with the flip
+    res = probe_vector(ev, wall)
+    assert res["accessible"] and res["rotamer"] == 180.0
+    assert "schotten_baumann_amide" in assess_fragment(mol, wall)["accessible_reactions"]
+
+
+def test_enclosed_carboxyl_is_still_pruned():
+    """Rotamers open real space, not any space: with both C-O directions walled
+    in, the handle must still be pruned."""
+    mol = _embed("Cc1ccc(cc1)C(=O)O")
+    conf = mol.GetConformer()
+    c = _carboxyl_atoms(mol)[0]
+    centre = np.array(conf.GetAtomPosition(c))
+    shell = np.array([centre + np.array([x, y, z])
+                      for x in np.arange(-8, 8.1, 1.0)
+                      for y in np.arange(-8, 8.1, 1.0)
+                      for z in np.arange(-8, 8.1, 1.0)
+                      if 4.0 <= np.linalg.norm([x, y, z]) <= 5.0])
+    assert assess_fragment(mol, shell)["accessible_reactions"] == []
+
+
+def test_a_rotamer_that_buries_the_handle_is_rejected():
+    """The turn has to be physically available: a wall where the C=O would land
+    blocks that rotamer, leaving only the as-posed direction."""
+    mol = _embed("Cc1ccc(cc1)C(=O)O")
+    conf = mol.GetConformer()
+    _c, o_carbonyl, _o_h = _carboxyl_atoms(mol)
+    ev = growth_vectors(mol, "carboxylic_acid")[0]
+    flipped_o = ev.rotamers[1].free_xyz[0]
+    # a wall right on top of the flipped C=O position
+    wall = _slab(flipped_o, flipped_o - ev.attach_pos, radius=4.0, spacing=1.0)
+    res = probe_vector(ev, wall)
+    assert res["rotamer"] == 0.0
+
+
+def test_ring_bound_handles_have_no_phantom_rotamers():
+    """An aryl halide's direction is fixed by the ring — the bond into the core
+    is aromatic, so there is nothing to turn about."""
+    mol = _embed("Brc1ccccc1")
+    ev = growth_vectors(mol, "aryl_halide")[0]
+    assert [r.angle for r in ev.rotamers] == [0.0] and ev.free_atoms == ()
