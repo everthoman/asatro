@@ -36,10 +36,45 @@ INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
 REACTION_TABLE_HTML = (BASE_DIR / "reaction-catalog.html").read_text()
 PORT = int(os.environ.get("ASATRO_PORT", "5015"))
 
-# Bundled master pool (Enamine Rush-Delivery EU, reused from ts-gnina) — the
-# default reactant source when a run doesn't supply its own pool or per-class
-# libraries.
-DEFAULT_POOL_PATH = str(BASE_DIR / "asatro" / "data" / "enamine_rush_EU.smi")
+# Bundled master pools — the reactant source when a run doesn't supply its own
+# pool or per-class libraries. A request names one with the ``pool_id`` form
+# field; anything unknown (or empty) falls back to the first, which stays the
+# app-wide default.
+POOL_DIR = BASE_DIR / "asatro" / "data"
+BUNDLED_POOLS = [
+    {"id": "enamine_rush_EU", "label": "Enamine Rush-Delivery EU",
+     "file": "enamine_rush_EU.smi"},
+    {"id": "klara_sep_25", "label": "KLARA in-house stock (Sep 2025)",
+     "file": "klara_sep_25.smi"},
+]
+DEFAULT_POOL_PATH = str(POOL_DIR / BUNDLED_POOLS[0]["file"])
+
+
+def bundled_pool_path(pool_id: str = "") -> str:
+    """Path of the bundled pool named by ``pool_id``, else the default pool."""
+    for p in BUNDLED_POOLS:
+        if p["id"] == pool_id:
+            return str(POOL_DIR / p["file"])
+    return DEFAULT_POOL_PATH
+
+
+async def stage_pool(pool: Optional[UploadFile], pool_id: str, stage: Path) -> str:
+    """The .smi pool a request should use: an upload staged into ``stage``, else
+    the bundled pool ``pool_id`` names."""
+    if pool is not None and pool.filename:
+        path = stage / "pool.smi"
+        path.write_bytes(await pool.read())
+        return str(path)
+    return bundled_pool_path(pool_id)
+
+
+def _pool_size(path: Path) -> int:
+    """Building blocks in a bundled pool (non-blank lines), for the UI label."""
+    try:
+        with open(path, "rb") as fh:
+            return sum(1 for line in fh if line.strip())
+    except OSError:
+        return 0
 
 # Static catalog the UI needs to render reaction names + slot labels.
 CATALOG = {
@@ -50,6 +85,8 @@ CATALOG = {
         for r in REACTIONS
     ],
     "groups": {k: g.get("label", k) for k, g in VOCAB.groups.items()},
+    "pools": [{"id": p["id"], "label": p["label"],
+               "n": _pool_size(POOL_DIR / p["file"])} for p in BUNDLED_POOLS],
 }
 
 @asynccontextmanager
@@ -122,16 +159,17 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
 # Growth jobs
 # ---------------------------------------------------------------------------
 @app.post("/pool-preview")
-async def pool_preview(pool: UploadFile = File(default=None)) -> dict:
+async def pool_preview(pool: UploadFile = File(default=None),
+                       pool_id: str = Form("")) -> dict:
     """Annotate a master reagent pool: how many building blocks fall in each
     functional-group class (and how many carry no handle). This is the pruning a
-    reaction's slots would draw on. With no upload, annotates the bundled default
-    pool."""
+    reaction's slots would draw on. With no upload, annotates the bundled pool
+    ``pool_id`` names (the default pool when unset)."""
     from asatro.pool import Pool
     if pool is not None and pool.filename:
         p = Pool.from_file((await pool.read()).decode("utf-8", "replace"))
     else:
-        p = Pool.from_file(DEFAULT_POOL_PATH)
+        p = Pool.from_file(bundled_pool_path(pool_id))
     return {"n_total": p.n_total, "n_tagged": p.n_tagged,
             "n_untagged": p.n_total - p.n_tagged, "counts": p.counts()}
 
@@ -140,6 +178,7 @@ async def pool_preview(pool: UploadFile = File(default=None)) -> dict:
 async def suggest_params(fragment: UploadFile = File(...),
                          config: str = Form("{}"),
                          pool: UploadFile = File(default=None),
+                         pool_id: str = Form(""),
                          reactants: List[UploadFile] = File(default=[])) -> dict:
     """Pre-launch dry run for the growth form: resolve the chosen route's pools
     and prune unreachable reagents (**no docking, no receptor needed**), then
@@ -167,9 +206,8 @@ async def suggest_params(fragment: UploadFile = File(...),
         frag_path = stage / "fragment.sdf"
         frag_path.write_bytes(await fragment.read())
         if pool is not None and pool.filename:
-            pool_path = stage / "pool.smi"
-            pool_path.write_bytes(await pool.read())
-            resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
+            pool_path = await stage_pool(pool, pool_id, stage)
+            resolver = pool_resolver(Pool.from_file(pool_path), str(stage / "pool"))
         else:
             reactant_by_class = {}
             for rf in reactants:
@@ -182,7 +220,8 @@ async def suggest_params(fragment: UploadFile = File(...),
             if reactant_by_class:
                 resolver = make_class_resolver(reactant_by_class)
             else:
-                resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+                resolver = pool_resolver(Pool.from_file(bundled_pool_path(pool_id)),
+                                         str(stage / "pool"))
         result = await run_in_threadpool(
             suggest_growth_params,
             fragment_sdf=str(frag_path), steps=steps,
@@ -197,6 +236,7 @@ async def suggest_params(fragment: UploadFile = File(...),
 @app.post("/suggest-combi-params")
 async def suggest_combi_params_endpoint(config: str = Form("{}"),
                          pool: UploadFile = File(default=None),
+                         pool_id: str = Form(""),
                          reactants: List[UploadFile] = File(default=[])) -> dict:
     """Pre-launch dry run for the combi form: resolve the chosen route's pools
     and prune unreachable reagents (**no docking, no receptor needed**), then
@@ -246,12 +286,8 @@ async def suggest_combi_params_endpoint(config: str = Form("{}"),
                     idx += 1
                 reagent_files.append(step_paths)
         else:
-            if pool is not None and pool.filename:
-                pool_path = stage / "pool.smi"
-                pool_path.write_bytes(await pool.read())
-                resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
-            else:
-                resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+            resolver = pool_resolver(
+                Pool.from_file(await stage_pool(pool, pool_id, stage)), str(stage / "pool"))
             reagent_files = resolve_combi_reactant_files(steps, resolver)
         result = await run_in_threadpool(
             suggest_combi_params, steps=steps, reagent_files=reagent_files, work_dir=str(stage))
@@ -265,7 +301,7 @@ async def suggest_combi_params_endpoint(config: str = Form("{}"),
 @app.post("/grow")
 async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...),
                reactants: List[UploadFile] = File(default=[]),
-               pool: UploadFile = File(default=None),
+               pool: UploadFile = File(default=None), pool_id: str = Form(""),
                config: str = Form("{}"), session_name: str = Form("")) -> dict:
     """Start a fragment-anchored growth run (one user-chosen, possibly
     multi-step route) as a background job.
@@ -276,8 +312,8 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     class) OR one ``reactants`` library per slot (each file's name stem = its
     FG class, e.g. ``boronic.smi``). The same pool/class-tagged files serve
     every step, since a component is resolved by the FG class(es) it accepts,
-    not by position. Neither upload given falls back to the bundled default
-    pool (Enamine Rush-Delivery EU).
+    not by position. Neither upload given falls back to the bundled pool
+    ``pool_id`` names (the default, Enamine Rush-Delivery EU, when unset).
 
     ``config`` is JSON: ``steps`` (list of reaction ids — the first must be an
     accessible "start" reaction for this fragment, later ones "extend"),
@@ -314,8 +350,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
 
     pool_path = None
     if pool is not None and pool.filename:
-        pool_path = str(stage / "pool.smi")
-        Path(pool_path).write_bytes(await pool.read())
+        pool_path = await stage_pool(pool, pool_id, stage)
 
     reactant_by_class = {}
     for rf in reactants:
@@ -327,7 +362,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
         reactant_by_class[cls] = str(p)
 
     if not pool_path and not reactant_by_class:
-        pool_path = DEFAULT_POOL_PATH  # bundled Enamine Rush-Delivery EU pool
+        pool_path = bundled_pool_path(pool_id)  # bundled pool (default: Enamine Rush EU)
 
     try:
         job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
@@ -343,7 +378,7 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
 async def combi(receptor: UploadFile = File(...),
                 reference: UploadFile = File(default=None),
                 reactants: List[UploadFile] = File(default=[]),
-                pool: UploadFile = File(default=None),
+                pool: UploadFile = File(default=None), pool_id: str = Form(""),
                 config: str = Form("{}"), session_name: str = Form("")) -> dict:
     """Start an unanchored (plain ts-gnina) combinatorial search as a background job.
 
@@ -417,15 +452,11 @@ async def combi(receptor: UploadFile = File(...),
     else:
         # Master-pool mode: resolve each component from the tagged pool by its
         # accepted FG class(es), same as growth. Uploaded pool, else the bundled
-        # default (Enamine Rush-Delivery EU).
+        # one ``pool_id`` names (default: Enamine Rush-Delivery EU).
         from asatro.combi import resolve_combi_reactant_files
         from asatro.pool import Pool, pool_resolver
-        if pool is not None and pool.filename:
-            pool_path = stage / "pool.smi"
-            pool_path.write_bytes(await pool.read())
-            resolver = pool_resolver(Pool.from_file(str(pool_path)), str(stage / "pool"))
-        else:
-            resolver = pool_resolver(Pool.from_file(DEFAULT_POOL_PATH), str(stage / "pool"))
+        resolver = pool_resolver(
+            Pool.from_file(await stage_pool(pool, pool_id, stage)), str(stage / "pool"))
         try:
             reagent_files = resolve_combi_reactant_files(steps, resolver)
         except ValueError as e:

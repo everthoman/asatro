@@ -159,10 +159,13 @@
       </div>
       <div id="poolBox">
         <div class="muted">One tagged <code>.smi</code> pool; Asatro prunes it to each
-          slot by functional-group class. <code>SMILES name</code> per line.
-          Leave empty to use the bundled default pool (Enamine Rush-Delivery EU,
-          ~45k blocks).</div>
-        <input type="file" id="poolFile" accept=".smi">
+          slot by functional-group class. <code>SMILES name</code> per line. Pick a
+          bundled pool, or upload your own.</div>
+        <div class="checkline" style="margin-top:6px">
+          <label style="margin:0">Pool</label>
+          <select id="poolChoice" style="width:auto"></select>
+        </div>
+        <input type="file" id="poolFile" accept=".smi" style="display:none">
         <div class="row" style="margin-top:8px">
           <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
         </div>
@@ -287,9 +290,12 @@
       </div>
       <div id="combiPoolBox" class="muted" style="margin-top:6px">
         One tagged <code>.smi</code> pool; each reaction slot above is pruned to its
-        functional-group class. Leave empty for the bundled default (Enamine
-        Rush-Delivery EU, ~45k blocks).
-        <div style="margin-top:6px"><input type="file" id="combiPoolFile" accept=".smi"></div>
+        functional-group class. Pick a bundled pool, or upload your own.
+        <div class="checkline" style="margin-top:6px">
+          <label style="margin:0">Pool</label>
+          <select id="combiPoolChoice" style="width:auto"></select>
+        </div>
+        <div style="margin-top:6px"><input type="file" id="combiPoolFile" accept=".smi" style="display:none"></div>
         <div class="row" style="margin-top:8px">
           <button class="btn ghost" id="combiPoolPreviewBtn" type="button">Annotate pool</button>
         </div>
@@ -662,6 +668,27 @@ function renderReactantSlots(){
   maybeRefreshParams();
 }
 
+// ---- master-pool picker (bundled pools, shared by growth + combi) ----
+// The <select> lists every pool bundled with the app plus an "upload" entry;
+// the file input only appears for the latter. Runs send either `pool_id` (a
+// bundled pool) or the uploaded `pool` file -- never both.
+const POOL_UPLOAD = '__upload__';
+function fillPoolChoices(selId, fileId, onChange){
+  const sel = el(selId);
+  sel.innerHTML = CATALOG.pools.map(p =>
+      `<option value="${p.id}">${p.label} — ${p.n.toLocaleString()} blocks</option>`).join('')
+    + `<option value="${POOL_UPLOAD}">Upload a .smi pool…</option>`;
+  const sync = ()=>{ el(fileId).style.display = sel.value === POOL_UPLOAD ? '' : 'none'; };
+  sel.addEventListener('change', ()=>{ sync(); onChange(); });
+  el(fileId).addEventListener('change', onChange);
+  sync();
+}
+function appendPool(fd, selId, fileId){
+  const sel = el(selId), f = el(fileId).files[0];
+  if (sel.value === POOL_UPLOAD){ if (f) fd.append('pool', f, 'pool.smi'); }
+  else fd.append('pool_id', sel.value);
+}
+
 function poolMode(){ return el('reagentSource').value === 'pool'; }
 function togglePoolMode(){
   const pm = poolMode();
@@ -671,11 +698,10 @@ function togglePoolMode(){
 el('reagentSource').addEventListener('change', togglePoolMode);
 
 el('poolPreviewBtn').addEventListener('click', async ()=>{
-  const f = el('poolFile').files[0];
   const out = el('poolPreview');
   out.textContent = 'Annotating…';
   const fd = new FormData();
-  if (f) fd.append('pool', f);
+  appendPool(fd, 'poolChoice', 'poolFile');
   try {
     const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
     const need = JSON.parse(el('poolBox').dataset.need || '[]');
@@ -706,7 +732,7 @@ async function refreshSuggestedParams(){
   const sfd = new FormData();
   sfd.append('fragment', el('fragment').files[0]);
   if (poolMode()){
-    if (el('poolFile').files.length) sfd.append('pool', el('poolFile').files[0], 'pool.smi');
+    appendPool(sfd, 'poolChoice', 'poolFile');
   } else {
     [...document.querySelectorAll('.reactantFile')].forEach(i => {
       if (i.files.length) sfd.append('reactants', i.files[0], i.dataset.class + '.smi'); });
@@ -865,11 +891,10 @@ el('combiCnnScoring').addEventListener('change', ()=>syncScoreFieldOptions('comb
 syncScoreFieldOptions('combiCnnScoring', 'combiScoreField');
 
 el('combiPoolPreviewBtn').addEventListener('click', async ()=>{
-  const f = el('combiPoolFile').files[0];
   const out = el('combiPoolPreview');
   out.textContent = 'Annotating…';
   const fd = new FormData();
-  if (f) fd.append('pool', f);
+  appendPool(fd, 'combiPoolChoice', 'combiPoolFile');
   try {
     const d = await (await fetch('/pool-preview', {method:'POST', body:fd})).json();
     const need = JSON.parse(el('combiPoolBox').dataset.need || '[]');
@@ -892,7 +917,7 @@ async function refreshSuggestedCombiParams(){
   if (!box || !combiStepDivs.length) { if (box) box.innerHTML = ''; return; }
   const sfd = new FormData();
   if (combiPoolModeOn()){
-    if (el('combiPoolFile').files.length) sfd.append('pool', el('combiPoolFile').files[0], 'pool.smi');
+    appendPool(sfd, 'combiPoolChoice', 'combiPoolFile');
   } else {
     let missing = false;
     combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
@@ -947,8 +972,7 @@ el('combiRunBtn').addEventListener('click', async ()=>{
   if (!rec){ alert('Upload a receptor PDB.'); return; }
   const fd = new FormData();
   if (combiPoolModeOn()){
-    if (el('combiPoolFile').files.length) fd.append('pool', el('combiPoolFile').files[0], 'pool.smi');
-    // else: backend falls back to the bundled default pool
+    appendPool(fd, 'combiPoolChoice', 'combiPoolFile');
   } else {
     let missing = false;
     combiStepDivs.forEach(div => div.querySelectorAll('.combiReactantFile').forEach(inp=>{
@@ -1013,7 +1037,7 @@ el('growBtn').addEventListener('click', async ()=>{
   if (!growthStep1){ alert('Pick step 1 from the accessible reactions above.'); return; }
   const fd = new FormData();
   if (poolMode()){
-    if (el('poolFile').files.length) fd.append('pool', el('poolFile').files[0], 'pool.smi');
+    appendPool(fd, 'poolChoice', 'poolFile');
   } else {
     const reactantInputs = [...document.querySelectorAll('.reactantFile')];
     if (!reactantInputs.length){ alert('No reactant slots for this route.'); return; }
@@ -1372,6 +1396,16 @@ el('history').addEventListener('change', async e=>{
   renderHits(d.result);
 });
 
+// Switching pools invalidates the annotation + suggested budget: clear the
+// counts, and re-suggest if the user had already annotated once.
+fillPoolChoices('poolChoice', 'poolFile', ()=>{
+  el('poolPreview').innerHTML = '';
+  if (poolAnnotated) refreshSuggestedParams();
+});
+fillPoolChoices('combiPoolChoice', 'combiPoolFile', ()=>{
+  el('combiPoolPreview').innerHTML = '';
+  if (combiPoolAnnotated) refreshSuggestedCombiParams();
+});
 loadHistory();
 </script>
 </body>
