@@ -778,7 +778,15 @@ class GninaEvaluator(Evaluator):
         result_score, result_mol = (best_score, best_mol) if best_mol is not None else (fallback_score, fallback_mol)
         if result_mol is None:
             return None, None
-        result_mol.SetProp("_Name", smiles)
+        # gnina hands the pose back unnamed. Title it with the product name the
+        # sampler stamped -- FRAG_150266_..., the reagent identifiers the
+        # product was built from, which is what an exported SDF has to carry to
+        # be orderable. Only a molecule that arrived through a bare evaluate()
+        # (no sampler, no reagents) has no name to use, and falls back to its
+        # SMILES; the SMILES is a property either way.
+        with self._lock:
+            name = self._name_cache.get(smiles)
+        result_mol.SetProp("_Name", name or smiles)
         result_mol.SetProp("SMILES", smiles)
         return result_score, result_mol
 
@@ -946,15 +954,27 @@ class GninaEvaluator(Evaluator):
         reached this file can never be downloaded afterwards, whatever
         top-N/top-N% slice the user asks for."""
         with self._lock:
-            poses = list(self._pose_cache.values())
-        poses.sort(key=lambda x: x[0], reverse=self.higher_is_better)
+            poses = list(self._pose_cache.items())
+            components = dict(self._components_cache)
+        poses.sort(key=lambda kv: kv[1][0], reverse=self.higher_is_better)
         if n is not None:
             poses = poses[: max(1, int(n))]
         writer = Chem.SDWriter(path)
         written = 0
         try:
-            for rank, (_score, mol) in enumerate(poses, start=1):
+            for rank, (smiles, (_score, mol)) in enumerate(poses, start=1):
                 mol.SetProp("DockingRank", str(rank))
+                # Which building block filled each route slot. The title already
+                # concatenates their names, but as fields they survive into a
+                # spreadsheet or an ordering list without being re-split. Slots
+                # are in route-component order (the order the reaction consumes
+                # them), which is not the fragment-first order the reagent
+                # rankings panel displays.
+                for i, comp in enumerate(components.get(smiles) or (), start=1):
+                    if comp.get("name"):
+                        mol.SetProp(f"Reagent_{i}_Name", str(comp["name"]))
+                    if comp.get("smiles"):
+                        mol.SetProp(f"Reagent_{i}_SMILES", str(comp["smiles"]))
                 writer.write(mol)
                 written += 1
         finally:

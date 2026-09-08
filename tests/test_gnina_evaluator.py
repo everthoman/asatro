@@ -284,3 +284,91 @@ def test_reagent_rankings_keeps_one_hit_wonders_for_best_sort(tmp_path):
     assert "A_lucky" in names          # kept via the best-list, not dropped
     assert names["A_lucky"]["best"] == -9.5
     assert names["A_lucky"]["mean"] == -7.5
+
+
+# --- exported pose titles --------------------------------------------------
+# A docked pose comes back from gnina unnamed. What an exported SDF has to
+# carry is the product name the sampler stamped -- the reagent identifiers the
+# product was built from -- not its SMILES.
+
+def _docked_sdf(tmp_path, smiles, score_field, value, name="docked.sdf"):
+    """A gnina-style output pose: scored, and with no title of its own."""
+    from rdkit.Chem import AllChem
+    m = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.EmbedMolecule(m, randomSeed=7)
+    m = Chem.RemoveHs(m)
+    m.SetProp(score_field, str(value))
+    path = tmp_path / name
+    w = Chem.SDWriter(str(path))
+    w.write(m)
+    w.close()
+    return str(path)
+
+
+def test_docked_pose_is_titled_with_the_product_name(tmp_path):
+    ev = _make_ev(tmp_path)
+    smi = _canon("NCc1ccccc1")
+    ev._name_cache[smi] = "FRAG_150266_ACID_881"
+    _score, pose = ev._best_pose(_docked_sdf(tmp_path, smi, ev.score_field, -8.2), smi)
+    assert pose.GetProp("_Name") == "FRAG_150266_ACID_881"
+    assert pose.GetProp("SMILES") == smi          # SMILES kept, as a property
+
+
+def test_pose_falls_back_to_smiles_only_when_there_is_no_product_name(tmp_path):
+    """A molecule scored through a bare evaluate() has no reagents behind it."""
+    ev = _make_ev(tmp_path)
+    smi = _canon("NCc1ccccc1")
+    _score, pose = ev._best_pose(_docked_sdf(tmp_path, smi, ev.score_field, -8.2), smi)
+    assert pose.GetProp("_Name") == smi
+
+
+def test_exported_sdf_carries_product_names(tmp_path):
+    """The end the user sees: the title line of every record in the exported
+    poses file is the product name, ready to order by."""
+    ev = _make_ev(tmp_path)
+    names = {}
+    for i, smi in enumerate(["NCc1ccccc1", "NCc1ccncc1", "NCc1cccnc1"]):
+        smi = _canon(smi)
+        names[smi] = f"FRAG_15026{i}_ACID_88{i}"
+        ev._name_cache[smi] = names[smi]
+        score, pose = ev._best_pose(
+            _docked_sdf(tmp_path, smi, ev.score_field, -8.0 - i, f"d{i}.sdf"), smi)
+        ev._pose_cache[smi] = (score, pose)
+
+    out = tmp_path / "poses_0.sdf"
+    assert ev.write_top_poses(str(out)) == 3
+    titles = [b.splitlines()[0].strip() for b in out.read_text().split("$$$$\n") if b.strip()]
+    assert set(titles) == set(names.values())
+
+
+def test_exported_sdf_carries_the_reagents_that_built_each_product(tmp_path):
+    """The title concatenates the reagent names; the fields keep them separable
+    so an export drops straight into a spreadsheet or an ordering list."""
+    ev = _make_ev(tmp_path)
+    smi = _canon("NCc1ccccc1")
+    ev._name_cache[smi] = "FRAG_150266_ACID_881"
+    ev._components_cache[smi] = [{"smiles": "NCc1ccccc1", "name": "FRAG_150266"},
+                                 {"smiles": "OC(=O)c1ccncc1", "name": "ACID_881"}]
+    score, pose = ev._best_pose(_docked_sdf(tmp_path, smi, ev.score_field, -8.2), smi)
+    ev._pose_cache[smi] = (score, pose)
+
+    out = tmp_path / "poses_0.sdf"
+    assert ev.write_top_poses(str(out)) == 1
+    written = next(m for m in Chem.SDMolSupplier(str(out)) if m is not None)
+    assert written.GetProp("_Name") == "FRAG_150266_ACID_881"
+    assert written.GetProp("Reagent_1_Name") == "FRAG_150266"
+    assert written.GetProp("Reagent_1_SMILES") == "NCc1ccccc1"
+    assert written.GetProp("Reagent_2_Name") == "ACID_881"
+    assert written.GetProp("Reagent_2_SMILES") == "OC(=O)c1ccncc1"
+
+
+def test_export_without_component_provenance_still_writes(tmp_path):
+    """A molecule scored through a bare evaluate() has no reagents behind it."""
+    ev = _make_ev(tmp_path)
+    smi = _canon("NCc1ccccc1")
+    score, pose = ev._best_pose(_docked_sdf(tmp_path, smi, ev.score_field, -8.2), smi)
+    ev._pose_cache[smi] = (score, pose)
+    out = tmp_path / "poses_0.sdf"
+    assert ev.write_top_poses(str(out)) == 1
+    written = next(m for m in Chem.SDMolSupplier(str(out)) if m is not None)
+    assert not written.HasProp("Reagent_1_Name")
