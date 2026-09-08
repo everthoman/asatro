@@ -41,6 +41,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TOP_N = 48  # hits kept per target in the persisted summary (matches the UI's max "show N" option)
 
 
+def max_poses() -> Optional[int]:
+    """How many docked poses a finished job writes to its poses SDF.
+
+    Unlike ``TOP_N`` (a *gallery* cap on the JSON summary), this bounds what
+    can ever be downloaded: the evaluator's pose cache dies with the job, so
+    the download endpoint can only slice top-N/top-N% out of what reached
+    disk. Default is everything docked -- the poses are already all in memory,
+    so writing them costs disk only (~3 KB/pose, i.e. ~120 MB for the largest
+    run this box has done). Set ``ASATRO_MAX_POSES`` to a positive integer to
+    cap it where disk matters more than completeness."""
+    raw = os.environ.get("ASATRO_MAX_POSES", "").strip()
+    if not raw:
+        return None
+    try:
+        v = int(raw)
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
 def jobs_dir() -> Path:
     """Resolved fresh on every call (not cached at import time) so that setting
     ``ASATRO_JOBS_DIR`` -- including via ``monkeypatch.setenv`` in tests --
@@ -245,8 +265,12 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
                     r["svg"] = mol_svg(r["smiles"])
             if rankings:
                 entry["reagents"] = rankings
-        if job_dir is not None and evaluator.write_top_poses(str(job_dir / "poses_0.sdf"), n=TOP_N) > 0:
-            entry["poses"] = "poses_0.sdf"
+        if job_dir is not None:
+            n_poses = evaluator.write_top_poses(str(job_dir / "poses_0.sdf"),
+                                                n=max_poses())
+            if n_poses > 0:
+                entry["poses"] = "poses_0.sdf"
+                entry["n_poses"] = n_poses
     return {"runs": [entry]}
 
 

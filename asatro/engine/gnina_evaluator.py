@@ -936,14 +936,24 @@ class GninaEvaluator(Evaluator):
             "best_score": self._best_score,
         }
 
-    def write_top_poses(self, path: str, n: int = 100) -> int:
-        """Write the best docked poses (sorted by score) to an SDF file."""
-        poses = list(self._pose_cache.values())
+    def write_top_poses(self, path: str, n: Optional[int] = None) -> int:
+        """Write docked poses (best-scored first) to an SDF file, stamping each
+        with its 1-based ``DockingRank``.
+
+        ``n`` caps how many are written; ``None`` (the default) writes every
+        cached pose. The cap matters beyond disk: the evaluator -- and with it
+        the pose cache -- is gone once a job finishes, so a pose that never
+        reached this file can never be downloaded afterwards, whatever
+        top-N/top-N% slice the user asks for."""
+        with self._lock:
+            poses = list(self._pose_cache.values())
         poses.sort(key=lambda x: x[0], reverse=self.higher_is_better)
+        if n is not None:
+            poses = poses[: max(1, int(n))]
         writer = Chem.SDWriter(path)
         written = 0
         try:
-            for rank, (_score, mol) in enumerate(poses[:n], start=1):
+            for rank, (_score, mol) in enumerate(poses, start=1):
                 mol.SetProp("DockingRank", str(rank))
                 writer.write(mol)
                 written += 1

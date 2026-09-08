@@ -594,15 +594,95 @@ async def job_detail(job_id: str) -> dict:
     raise HTTPException(404, "unknown job")
 
 
+def _iter_sdf_records(path: Path):
+    """Yield the records of an SDF as raw text, each including its ``$$$$``
+    terminator.
+
+    Text rather than RDKit: a finished job's pose file holds every docked pose
+    (tens of thousands on a big combi run), and both slicing a download and
+    pulling one pose out by rank are pure record-selection -- parsing every
+    molecule to do it would cost minutes and risk round-tripping the
+    coordinates/props the caller asked for verbatim."""
+    buf: List[str] = []
+    with open(path) as fh:
+        for line in fh:
+            buf.append(line)
+            if line.rstrip("\r\n") == "$$$$":
+                yield "".join(buf)
+                buf = []
+    if any(chunk.strip() for chunk in buf):   # malformed tail: no final $$$$
+        yield "".join(buf)
+
+
+def _count_sdf_records(path: Path) -> int:
+    with open(path) as fh:
+        return sum(1 for line in fh if line.rstrip("\r\n") == "$$$$")
+
+
+def _record_rank(record: str) -> Optional[int]:
+    """The ``DockingRank`` stamped on one SDF record, if it has one."""
+    lines = record.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith(">") and "<DockingRank>" in line and i + 1 < len(lines):
+            try:
+                return int(lines[i + 1].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _pose_record(poses_path: Path, rank: int) -> Optional[str]:
+    """The docked pose of the given 1-based gallery rank, as SDF text."""
+    for idx, record in enumerate(_iter_sdf_records(poses_path), start=1):
+        stamped = _record_rank(record)
+        if stamped == rank or (stamped is None and idx == rank):
+            return record
+    return None
+
+
 @app.get("/jobs/{job_id}/poses/{filename}")
-async def job_poses(job_id: str, filename: str) -> FileResponse:
-    """Download all docked poses (SDF) for one growth target of a job."""
+async def job_poses(job_id: str, filename: str,
+                    n: Optional[int] = Query(None, ge=1,
+                                             description="download only the top n poses"),
+                    pct: Optional[float] = Query(None, gt=0, le=100,
+                                                 description="download only the top pct% of poses")):
+    """Download the docked poses (SDF) of a job -- all of them by default, or
+    the best ``n`` / best ``pct`` percent.
+
+    Poses are written best-scored first (``DockingRank`` 1 = best), so every
+    slice is just a prefix of the file: no re-scoring, and the ranks in a
+    partial download still match the results gallery."""
     if not re.fullmatch(r"poses_\d+\.sdf", filename):
         raise HTTPException(400, "invalid filename")
+    if n is not None and pct is not None:
+        raise HTTPException(400, "pass either n or pct, not both")
     p = _job_path(job_id, filename)
     if not p.is_file():
         raise HTTPException(404, "poses not found")
-    return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
+    if n is None and pct is None:
+        return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
+
+    total = await run_in_threadpool(_count_sdf_records, p)
+    if pct is not None:
+        keep = -(-total * pct // 100)          # ceil: a non-zero % never rounds down to nothing
+        keep = max(1, int(keep))
+        label = f"top{pct:g}pct".replace(".", "_")
+    else:
+        keep = int(n)
+        label = f"top{keep}"
+    keep = min(keep, total)
+
+    def gen():
+        for i, record in enumerate(_iter_sdf_records(p)):
+            if i >= keep:
+                return
+            yield record
+
+    out_name = f"{filename[:-4]}_{label}.sdf"
+    return StreamingResponse(
+        gen(), media_type="chemical/x-mdl-sdfile",
+        headers={"Content-Disposition": f'attachment; filename="{out_name}"',
+                 "X-Poses-Total": str(total), "X-Poses-Returned": str(keep)})
 
 
 @app.get("/jobs/{job_id}/pose/{rank}")
@@ -610,30 +690,12 @@ async def job_pose(job_id: str, rank: int) -> Response:
     """Download a single docked pose (SDF) by its 1-based gallery rank -- the
     ``DockingRank`` written into ``poses_0.sdf`` (best-scored first), which
     lines up with the results gallery's ``#rank``."""
-    import tempfile
-
     poses_path = _job_path(job_id, "poses_0.sdf")
     if not poses_path.is_file():
         raise HTTPException(404, "no docked poses for this job")
-    target = None
-    for mol in Chem.SDMolSupplier(str(poses_path), sanitize=False, removeHs=False):
-        if mol is None:
-            continue
-        if mol.HasProp("DockingRank") and mol.GetProp("DockingRank") == str(rank):
-            target = mol
-            break
-    if target is None:
+    sdf = await run_in_threadpool(_pose_record, poses_path, rank)
+    if sdf is None:
         raise HTTPException(404, f"no pose with rank {rank}")
-    fd, tmp = tempfile.mkstemp(suffix=".sdf")
-    os.close(fd)
-    try:
-        writer = Chem.SDWriter(tmp)
-        writer.write(target)
-        writer.close()
-        with open(tmp) as fh:
-            sdf = fh.read()
-    finally:
-        os.unlink(tmp)
     return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
                     headers={"Content-Disposition": f'attachment; filename="{job_id}_pose_{rank}.sdf"'})
 
@@ -681,11 +743,8 @@ async def seed_fragment(job_id: str, rank: int = Form(...),
     poses_path = _job_path(job_id, "poses_0.sdf")
     if not poses_path.is_file():
         raise HTTPException(400, "no docked poses available to seed from")
-    pose_mol = None
-    for m in Chem.SDMolSupplier(str(poses_path), sanitize=True, removeHs=False):
-        if m is not None and m.HasProp("DockingRank") and int(m.GetProp("DockingRank")) == rank:
-            pose_mol = m
-            break
+    record = _pose_record(poses_path, rank)
+    pose_mol = Chem.MolFromMolBlock(record, removeHs=False) if record else None
     if pose_mol is None:
         raise HTTPException(404, f"no pose found for rank {rank}")
 

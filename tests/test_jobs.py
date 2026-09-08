@@ -60,7 +60,7 @@ class _FakeEvaluator:
     def components_scored(self):
         return dict(self._components)
 
-    def write_top_poses(self, path, n=100):
+    def write_top_poses(self, path, n=None):
         w = Chem.SDWriter(path)
         written = 0
         for rank, (score, smi, name) in enumerate(sorted(self._rows, key=lambda r: r[0])[:n], start=1):
@@ -872,3 +872,43 @@ def test_grow_refuses_a_fragment_whose_bond_orders_fight_its_geometry(tmp_path, 
         pr = client.post("/prune", files={"fragment": ("f.sdf", frag.read_bytes()),
                                           "receptor": ("r.pdb", rec.read_bytes())})
         assert "bond orders disagree" in (pr.json().get("bond_order_warning") or "")
+
+
+def test_job_writes_every_docked_pose_not_just_the_gallery_top(tmp_path, monkeypatch):
+    """The pose cache dies with the job, so whatever isn't written here can
+    never be downloaded. Poses are therefore *not* capped at TOP_N (the
+    gallery's cap) -- that used to leave only 48 poses on disk, which is what
+    limited pose downloads to the top 48."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    rows = [(-5.0 - i * 0.01, f"C{'C' * (i % 7)}O", f"m{i}") for i in range(120)]
+    ev = _FakeEvaluator(rows)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=lambda **k: ([], ev))
+    _await(job)
+    assert job.status == "done"
+    run = job.result["runs"][0]
+    assert len(run["top"]) == 48                  # gallery summary still capped
+    assert run["n_poses"] == len(rows)            # every pose on disk
+    assert (job.dir / "poses_0.sdf").read_text().count("$$$$") == len(rows)
+
+
+def test_max_poses_env_caps_what_is_written(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setenv("ASATRO_MAX_POSES", "10")
+    sdf = _bound_sdf(tmp_path)
+    rows = [(-5.0 - i * 0.01, f"C{'C' * (i % 7)}O", f"m{i}") for i in range(120)]
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1},
+        runner=lambda **k: ([], _FakeEvaluator(rows)))
+    _await(job)
+    assert job.status == "done"
+    assert job.result["runs"][0]["n_poses"] == 10
