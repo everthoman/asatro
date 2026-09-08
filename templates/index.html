@@ -1259,6 +1259,12 @@ function wirePoseDownload(){
   });
 }
 
+// Scores keep full float precision in results.json -- that's the data. A card
+// only has to be comparable at a glance, and the live gallery already rounds
+// to 3 on the way out, so formatting here also stops the two views disagreeing
+// about how much precision a score has.
+const fmtScore = v => (v == null || v === '' || isNaN(+v)) ? '\u2014' : (+v).toFixed(3);
+
 function galleryCards(items, jobId, poses){
   return items.map((it,i) => {
     const rank = it.rank!=null?it.rank:i+1;
@@ -1266,7 +1272,7 @@ function galleryCards(items, jobId, poses){
     <div class="card">
       ${it.svg || '<div class="muted" style="color:#888">no structure</div>'}
       <div class="meta">
-        <span class="rank">#${rank}</span> &middot; <span class="score">${it.score}</span>
+        <span class="rank">#${rank}</span> &middot; <span class="score">${fmtScore(it.score)}</span>
         <div class="name" title="${esc(it.name)}">${esc(it.name)}</div>
         ${(it.mw!=null||it.logp!=null) ? `<div class="props">MW ${it.mw!=null?it.mw:'–'} &middot; logP ${it.logp!=null?it.logp:'–'}</div>` : ''}
         <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
