@@ -36,7 +36,7 @@ auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 244 passing
+python -m pytest tests/                                # 267 passing
 ```
 
 **Reaction catalog**: the full Hartenfeller et al. reaction SMIRKS set (58
@@ -145,6 +145,7 @@ curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
      http://localhost:5015/grow               # -> {"job_id": ...}
 curl http://localhost:5015/jobs/<id>          # status + top hits
 curl http://localhost:5015/jobs/<id>/stream   # live console (SSE)
+curl -X POST http://localhost:5015/jobs/<id>/cancel   # stop; keeps what docked
 
 # Docked poses (SDF). Written best-scored first, DockingRank 1 = best.
 curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
@@ -159,6 +160,11 @@ curl -X POST -H 'Content-Type: application/json' \
 curl -X POST http://localhost:5015/uploads/sweep                 # drop staged uploads >24h
 ```
 
+Cancelling ends the *search*, not the run's value: everything docked up to that
+point — scores, reagent provenance and poses — is summarised and persisted just
+as a finished run is, and only the status differs. A long run can be stopped
+once its convergence has flattened without losing the GPU time already spent.
+
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
 
@@ -170,6 +176,12 @@ set `ASATRO_MAX_POSES` to a positive integer to cap it where that matters.
 Because the file is score-ordered, every `n`/`pct` slice is just a prefix of it:
 nothing is re-scored, and the ranks in a partial download still line up with the
 results gallery's `#rank`.
+
+Each pose is titled with its **product name** — the reagent names joined by `_`,
+fragment first — and carries `Reagent_N_Name` / `Reagent_N_SMILES` per route
+slot. The title is what a chemist reads; the fields are what survives into a
+spreadsheet, since catalog ids contain `_` too and the title alone can't be
+split back apart.
 
 A **browser UI** (`templates/index.html`, served at `/`) drives the whole flow —
 Fragment growth and Combinatorial search as two modes: upload inputs → *Analyze*
