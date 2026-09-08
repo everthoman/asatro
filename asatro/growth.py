@@ -44,24 +44,68 @@ def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
 
 
 _UNSAFE_IN_NAME = re.compile(r"[^A-Za-z0-9._+-]+")
+_STRUCTURE_EXT = re.compile(r"\.(pdb|pdbqt|sdf|mol2?|smi|smiles|cif|xyz|mae)$", re.I)
+# Staging and prep names that identify nothing.
+_GENERIC_NAMES = {"frag", "fragment", "ligand", "ligand_raw", "ligand_protonated",
+                  "input", "mol", "molecule", "untitled", "unnamed"}
+
+
+def _usable_name(raw: str) -> Optional[str]:
+    """``raw`` as a reagent name, or None if it identifies nothing.
+
+    The name has to survive two hops -- a ``.smi``'s whitespace-delimited name
+    column, then a ``_``-joined product name -- so anything outside
+    ``[A-Za-z0-9._+-]`` collapses to ``_`` and the result is capped."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    # A prep pipeline writes its input's *path* into the molfile title -- a
+    # fragment carved out of a receptor arrives titled
+    # "/tmp/tmpXXXX/ligand_raw.pdb". Reduce that to its basename so the
+    # generic-name check below gets a chance at it. Only when the whole title
+    # reads as a path, though: a title with spaces in it is prose, and its
+    # slashes are punctuation ("UNG2 hit 3 (batch/2)").
+    if not re.search(r"\s", raw) and re.search(r"[\\/]", raw):
+        raw = re.split(r"[\\/]", raw)[-1]
+    raw = _STRUCTURE_EXT.sub("", raw)
+    name = _UNSAFE_IN_NAME.sub("_", raw).strip("._-")[:32].strip("._-")
+    if not name or name.lower() in _GENERIC_NAMES:
+        return None
+    return name
+
+
+def resolve_fragment_name(explicit: Optional[str], fragment_sdf: str) -> str:
+    """What the fragment slot is called in product names.
+
+    The name the user gave wins. Guessing it from the file is the fallback and
+    not a good one: in practice a bound fragment has been through a prep tool,
+    which titles it with the temp file it was converted from, so the SDF
+    usually has nothing a chemist would recognise to offer."""
+    return _usable_name(explicit or "") or fragment_name_from_sdf(fragment_sdf)
 
 
 def fragment_name_from_sdf(fragment_sdf: str, fallback: str = "FRAG") -> str:
-    """The fragment's own title, cleaned up for use as a reagent name.
+    """A name for the fragment slot, for use in product names.
 
-    Product names are the reagent names joined by ``_``, so the fragment's
-    name is what makes a growth hit self-describing across runs: ``TH17144_
-    150266`` says which fragment was grown, where a generic ``FRAG_150266``
-    does not. Taken from the molfile's title line (line 1, always present even
-    if the block won't sanitise). Whitespace and anything that can't sit in a
-    ``.smi``'s name column collapses to ``_``; a titleless SDF falls back."""
+    Product names are the reagent names joined by ``_``, so this is what makes
+    a growth hit self-describing across runs: ``TH17144_150266`` says which
+    fragment was grown, where a generic ``FRAG_150266`` does not.
+
+    Tried in order: the molfile's title line (line 1, present even in a block
+    that won't sanitise), then the file's own stem. Both are skipped when they
+    identify nothing -- a title that is really a source path, or a name like
+    "ligand_raw" that every prepped fragment would share. Worth knowing that
+    the title is the *less* reliable of the two in practice: a fragment carved
+    out of a receptor by a prep tool arrives titled with the temp file it was
+    converted from, not with anything the chemist chose."""
     try:
         with open(fragment_sdf) as fh:
             title = fh.readline()
     except OSError:
-        return fallback
-    name = _UNSAFE_IN_NAME.sub("_", title.strip()).strip("._-")[:32].strip("._-")
-    return name or fallback
+        return fallback          # unreadable: don't name a run after it either
+    return (_usable_name(title)
+            or _usable_name(Path(fragment_sdf).stem)
+            or fallback)
 
 
 def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:
@@ -109,7 +153,7 @@ def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slo
             comp = comps[ci]
             if i == 0 and ci == fragment_slot:
                 f = write_fragment_smi(fragment_smiles, work_dir, name=fragment_name)
-                labels.append(f"{comp['label']} = bound fragment")
+                labels.append(f"{comp['label']} = bound fragment '{fragment_name}'")
             else:
                 f = reactant_files[i].get(ci)
                 if not f:
@@ -255,6 +299,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                search_method: str = "ts", min_cpds_per_core: Optional[int] = None,
                stop: Optional[int] = None,
                max_core_rmsd: float = 1.5, prune_unreachable: bool = True,
+               fragment_name: Optional[str] = None,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
     """Run the full growth search over a user-chosen (possibly multi-step)
@@ -289,7 +334,8 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     work.mkdir(parents=True, exist_ok=True)
     files, route, summary = build_growth_route(
         steps, fragment_smiles_from_sdf(fragment_sdf), fragment_slot,
-        reactant_files, work, fragment_name=fragment_name_from_sdf(fragment_sdf))
+        reactant_files, work,
+        fragment_name=resolve_fragment_name(fragment_name, fragment_sdf))
 
     evaluator = make_evaluator(fragment_sdf=fragment_sdf, receptor_path=receptor_path,
                                core_smarts=core_smarts, work_dir=str(work / "dock"),

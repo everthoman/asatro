@@ -13,7 +13,8 @@ from asatro.chemistry.handles import derive_core
 from asatro.engine.evaluators import MWEvaluator
 from asatro.engine.route_sampler import RouteSampler
 from asatro.growth import (build_growth_route, fragment_name_from_sdf,
-                           fragment_smiles_from_sdf, make_evaluator)
+                           fragment_smiles_from_sdf, make_evaluator,
+                           resolve_fragment_name)
 
 
 def _write_bound_fragment(tmp_path, smiles):
@@ -376,14 +377,38 @@ def test_fragment_name_is_made_safe_for_a_reagent_file(tmp_path):
     a product name, so spaces and separators can't survive as-is."""
     assert fragment_name_from_sdf(
         _titled_sdf(tmp_path, "UNG2 hit 3 (batch/2)")) == "UNG2_hit_3_batch_2"
+    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "TH17144.sdf")) == "TH17144"
     long = fragment_name_from_sdf(_titled_sdf(tmp_path, "x" * 80))
     assert len(long) == 32
 
 
-def test_untitled_fragment_falls_back(tmp_path):
-    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "")) == "FRAG"
+def test_a_prep_tools_temp_path_is_not_a_fragment_name(tmp_path):
+    """What a bound fragment actually arrives with: OpenBabel writes its
+    input's path into the molfile title, so every prepped fragment would
+    otherwise be named after the temp file it was converted from."""
+    for title in ("/tmp/tmp1kmnnxo3/ligand_raw.pdb",
+                  "/tmp/tmpljlsafkv/ligand_protonated.pdb"):
+        assert fragment_name_from_sdf(_titled_sdf(tmp_path, title)) == "FRAG"
+
+
+def test_untitled_fragment_falls_back_to_the_filename_then_to_FRAG(tmp_path):
+    assert fragment_name_from_sdf(
+        _titled_sdf(tmp_path, "", name="TH17144.sdf")) == "TH17144"
+    # ... but not to a filename that identifies nothing either
+    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "", name="frag.sdf")) == "FRAG"
     assert fragment_name_from_sdf(_titled_sdf(tmp_path, "   ")) == "FRAG"
     assert fragment_name_from_sdf(str(tmp_path / "missing.sdf")) == "FRAG"
+
+
+def test_an_explicit_name_beats_whatever_the_file_says(tmp_path):
+    """The field the user fills in is the reliable source; the SDF is only
+    consulted when they leave it blank."""
+    sdf = _titled_sdf(tmp_path, "/tmp/tmpX/ligand_raw.pdb")
+    assert resolve_fragment_name("TH17144", sdf) == "TH17144"
+    assert resolve_fragment_name("UNG2 hit 3", sdf) == "UNG2_hit_3"
+    assert resolve_fragment_name("", sdf) == "FRAG"        # blank -> the file
+    assert resolve_fragment_name(None, sdf) == "FRAG"
+    assert resolve_fragment_name("  ", sdf) == "FRAG"
 
 
 def test_growth_route_names_the_fragment_slot_after_the_sdf(tmp_path):

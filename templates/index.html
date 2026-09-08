@@ -137,6 +137,10 @@
         each, and probes the pocket for room to grow.</div>
       <label>Bound fragment (SDF, in pose)</label>
       <input type="file" id="fragment" accept=".sdf,.mol">
+      <label>Fragment name <span class="muted" style="font-weight:400">— leads every product name
+        (e.g. <code>TH17144_150266</code>); optional</span></label>
+      <input type="text" id="fragmentName" placeholder="FRAG" maxlength="32"
+             title="Used as the fragment's reagent name. Left blank, Asatro tries the SDF title — usually a prep tool's temp filename — and falls back to FRAG.">
       <label>Receptor (PDB)</label>
       <input type="file" id="receptor" accept=".pdb">
       <div class="checkline"><input type="checkbox" id="refine">
@@ -1090,6 +1094,7 @@ el('growBtn').addEventListener('click', async ()=>{
   const cfg = {
     refine: el('refine').checked,
     ignore_bond_order_warning: el('ignoreBondOrder').checked,
+    fragment_name: el('fragmentName').value.trim(),
     steps: [growthStep1.reactionId, ...growthExtendStepDivs.map(d => {
       const { reactionId, slot } = parseExtendChoice(d.querySelector('.growthStepRxn').value);
       return { reaction_id: reactionId, slot };

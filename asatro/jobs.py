@@ -515,6 +515,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             num_warmup=cfg.get("num_warmup"),  # None -> auto-tuned from pool sizes
             num_cycles=cfg.get("num_cycles"),
             num_to_select=cfg.get("num_to_select"),
+            fragment_name=cfg.get("fragment_name"),
             seed=cfg.get("seed"),
             score_field=cfg.get("score_field", "minimizedAffinity"),
             cnn_scoring=cfg.get("cnn_scoring", "none"),

@@ -121,6 +121,10 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose and scored by GNINA, with an adjustable core-RMSD placement guard.
   The accessibility pre-pass validates the chosen route before it runs.
+  Products are named by joining their reagent names, fragment first
+  (`TH17144_150266`), so name the fragment in the UI field — a bound fragment
+  has usually been through a prep tool, which leaves its own temp filename in
+  the SDF title, and the fallback is a bare `FRAG`.
 - **Combinatorial search** (`asatro/combi.py`): the same route-building/search
   machinery with no bound fragment — every slot is a real reagent library,
   freely embedded and docked (matching ts-gnina's own search).
