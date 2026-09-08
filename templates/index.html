@@ -128,6 +128,13 @@
 
     <div class="panel" id="resultsPanel" style="display:none">
       <h2>2 &middot; Handles &amp; accessible reactions</h2>
+      <div id="bondOrderWarning" class="note" style="display:none; margin-bottom:8px">
+        <div id="bondOrderWarningText"></div>
+        <label class="checkline" style="margin-top:6px">
+          <input type="checkbox" id="ignoreBondOrder">
+          <span>Grow from it anyway (I have checked the structure)</span>
+        </label>
+      </div>
       <div id="fgClasses" style="margin-bottom:8px"></div>
       <label>Step 1</label>
       <select id="step1Select">
@@ -520,6 +527,12 @@ let step1Choices = {};
 
 function renderAnalysis(){
   el('resultsPanel').style.display = '';
+  // A fragment whose bond orders contradict its geometry is the wrong molecule
+  // to grow from -- /grow refuses it unless the user overrides here.
+  const boWarn = analysis.bond_order_warning || '';
+  el('bondOrderWarning').style.display = boWarn ? '' : 'none';
+  el('bondOrderWarningText').textContent = boWarn;
+  if (!boWarn) el('ignoreBondOrder').checked = false;
   growthStep1 = null;
   poolAnnotated = false;              // new fragment: require a fresh annotate
   if (el('paramSuggest')) el('paramSuggest').innerHTML = '';
@@ -1053,6 +1066,7 @@ el('growBtn').addEventListener('click', async ()=>{
 
   const cfg = {
     refine: el('refine').checked,
+    ignore_bond_order_warning: el('ignoreBondOrder').checked,
     steps: [growthStep1.reactionId, ...growthExtendStepDivs.map(d => {
       const { reactionId, slot } = parseExtendChoice(d.querySelector('.growthStepRxn').value);
       return { reaction_id: reactionId, slot };

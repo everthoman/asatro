@@ -4,6 +4,7 @@ from rdkit.Chem import AllChem
 
 from asatro.chemistry.handles import (
     analyze_fragment,
+    bond_order_complaint,
     carve_substructure_3d,
     derive_core,
     detect_fg_classes,
@@ -100,3 +101,34 @@ def test_carve_substructure_3d_rejects_ring_cutting_match():
     import pytest
     with pytest.raises(ValueError, match="not a valid fragment"):
         carve_substructure_3d(m, (0, 1, 2))
+
+
+# --- bond orders vs. geometry ---------------------------------------------
+# A PDB-derived ligand carries guessed bond orders; when the guess is wrong the
+# molecule contradicts its own coordinates (see bond_order_complaint).
+
+def _posed(smiles):
+    m = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.EmbedMolecule(m, randomSeed=0xB0)
+    AllChem.MMFFOptimizeMolecule(m)
+    return Chem.RemoveHs(m)
+
+
+def test_self_consistent_fragment_draws_no_complaint():
+    assert bond_order_complaint(_posed("O=C(O)c1ccnc(=O)[nH]1")) is None
+
+
+def test_puckered_ring_with_sp3_atoms_is_fine():
+    """The check keys on flat rings only — a real sp3 ring must pass."""
+    assert bond_order_complaint(_posed("OC(=O)C1CCNCC1")) is None
+
+
+def test_planar_ring_read_as_sp3_is_caught():
+    """The real failure: the planar pyrimidinone pose with the 4H tautomer's
+    bond orders on it — what OpenBabel returns for a ligand extracted from a
+    PDB without CONECT records."""
+    posed = _posed("O=C(O)c1ccnc(=O)[nH]1")
+    wrong = AllChem.AssignBondOrdersFromTemplate(
+        Chem.MolFromSmiles("O=C1N=CCC(C(=O)O)=N1"), posed)   # same pose, 4H bond orders
+    msg = bond_order_complaint(wrong)
+    assert msg and "planar" in msg and "sp3" in msg

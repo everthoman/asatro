@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Sequence, Union
 
+import numpy as np
 from rdkit import Chem
 
 from rdkit.Chem.MolStandardize import rdMolStandardize
@@ -144,6 +145,44 @@ def carve_substructure_3d(mol: Chem.Mol, match: Sequence[int]) -> Chem.Mol:
             f"({e}). This usually means the match excluded an in-ring atom "
             f"-- keep whole aromatic rings intact.") from e
     return core
+
+
+def bond_order_complaint(mol: Chem.Mol, flat_tol: float = 0.1) -> Optional[str]:
+    """Complain when a fragment's bond orders contradict its own geometry.
+
+    A PDB states no bond orders, so a ligand that reaches us through one (a
+    prepared receptor's HETATM block, say) carries whatever a perception tool
+    guessed from coordinates -- and the guess is routinely wrong for tautomeric
+    heterocycles: a planar 2-oxo-pyrimidinone comes back as the 4H form with an
+    sp3 CH2. Growing from that is growing the wrong molecule: wrong H-bond
+    pattern at the ring, wrong ring pucker in every docked product.
+
+    The signature is cheap to spot -- a ring flat to within ``flat_tol`` (an
+    aromatic/conjugated ring, by its coordinates) that nonetheless contains an
+    atom the bond block makes sp3. Returns the message, or None if the fragment
+    is self-consistent.
+    """
+    if mol.GetNumConformers() == 0:
+        return None
+    conf = mol.GetConformer()
+    for ring in mol.GetRingInfo().AtomRings():
+        xyz = np.array([list(conf.GetAtomPosition(i)) for i in ring])
+        centred = xyz - xyz.mean(axis=0)
+        normal = np.linalg.svd(centred)[2][2]
+        if float(np.sqrt(((centred @ normal) ** 2).mean())) > flat_tol:
+            continue                      # genuinely puckered: nothing to say
+        sp3 = [i for i in ring
+               if mol.GetAtomWithIdx(i).GetHybridization() == Chem.HybridizationType.SP3]
+        if sp3:
+            sym = mol.GetAtomWithIdx(sp3[0]).GetSymbol()
+            return (f"the fragment's bond orders disagree with its geometry: a "
+                    f"{len(ring)}-membered ring is planar, yet atom {sp3[0]} ({sym}) "
+                    f"in it is sp3. This is what a PDB-derived ligand looks like when "
+                    f"bond perception guessed the tautomer (a flat pyrimidinone read "
+                    f"as an sp3 CH2). Re-export the SDF with real bond orders — or "
+                    f"re-perceive them from a SMILES with "
+                    f"AllChem.AssignBondOrdersFromTemplate — before growing from it.")
+    return None
 
 
 def analyze_fragment(frag: MolOrSmiles) -> dict:

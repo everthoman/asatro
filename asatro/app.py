@@ -17,14 +17,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from rdkit import Chem
 from starlette.concurrency import run_in_threadpool
 
 from asatro import __version__
 from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
-from asatro.chemistry.handles import analyze_fragment
+from asatro.chemistry.handles import analyze_fragment, bond_order_complaint
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import JOBS, jobs_dir, list_jobs, reap_orphaned_jobs, start_combi_job, start_growth_job
@@ -151,8 +151,14 @@ async def prune(fragment: UploadFile = File(...), receptor: UploadFile = File(..
     # it doesn't stall every other request (SSE streams, job polling) for its
     # duration.
     if refine:
-        return await run_in_threadpool(assess_with_stubs, mol, receptor_atoms)
-    return await run_in_threadpool(assess_fragment, mol, receptor_atoms)
+        result = await run_in_threadpool(assess_with_stubs, mol, receptor_atoms)
+    else:
+        result = await run_in_threadpool(assess_fragment, mol, receptor_atoms)
+    # Surface a fragment whose bond orders don't match its own geometry here,
+    # where the user is still looking at the fragment, rather than after a run
+    # has grown the wrong tautomer (see bond_order_complaint).
+    result["bond_order_warning"] = bond_order_complaint(mol)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +353,16 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     rec_path = stage / "receptor.pdb"
     frag_path.write_bytes(await fragment.read())
     rec_path.write_bytes(await receptor.read())
+
+    # A fragment whose bond orders contradict its geometry is the wrong molecule
+    # to grow from, and the whole run inherits the error -- refuse it here unless
+    # the user has looked and decided otherwise.
+    frag_mol = Chem.MolFromMolFile(str(frag_path), removeHs=True)
+    if frag_mol is not None and not cfg.get("ignore_bond_order_warning"):
+        complaint = bond_order_complaint(frag_mol)
+        if complaint:
+            raise HTTPException(400, complaint + " (set ignore_bond_order_warning "
+                                "in the run config to grow from it anyway)")
 
     pool_path = None
     if pool is not None and pool.filename:

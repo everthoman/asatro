@@ -837,3 +837,38 @@ def test_pool_preview_endpoint(tmp_path, monkeypatch):
         j = r.json()
         assert j["n_total"] == 3 and j["n_untagged"] == 1
         assert j["counts"].get("primary_amine") == 1 and j["counts"].get("boronic") == 1
+
+
+def test_grow_refuses_a_fragment_whose_bond_orders_fight_its_geometry(tmp_path, monkeypatch):
+    """A ligand extracted from a PDB carries guessed bond orders. When the guess
+    contradicts the pose -- a planar ring with an sp3 atom in it, the signature
+    of a mis-perceived tautomer -- growing from it would grow the wrong molecule,
+    so /grow refuses until the user says otherwise."""
+    from starlette.testclient import TestClient
+
+    from asatro.app import app
+
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    posed = Chem.AddHs(Chem.MolFromSmiles("O=C(O)c1ccnc(=O)[nH]1"))
+    AllChem.EmbedMolecule(posed, randomSeed=0xB0)
+    AllChem.MMFFOptimizeMolecule(posed)
+    posed = Chem.RemoveHs(posed)
+    wrong = AllChem.AssignBondOrdersFromTemplate(       # same pose, 4H tautomer
+        Chem.MolFromSmiles("O=C1N=CCC(C(=O)O)=N1"), posed)
+    frag = tmp_path / "frag.sdf"
+    Chem.MolToMolFile(wrong, str(frag))
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+
+    cfg = {"steps": ["schotten_baumann_amide"], "fragment_slot": 0}
+    with TestClient(app) as client:
+        files = {"fragment": ("f.sdf", frag.read_bytes()),
+                 "receptor": ("r.pdb", rec.read_bytes())}
+        r = client.post("/grow", files=files, data={"config": json.dumps(cfg)})
+        assert r.status_code == 400
+        assert "bond orders disagree with its geometry" in r.json()["detail"]
+
+        # /prune reports the same thing while the user is still on the fragment.
+        pr = client.post("/prune", files={"fragment": ("f.sdf", frag.read_bytes()),
+                                          "receptor": ("r.pdb", rec.read_bytes())})
+        assert "bond orders disagree" in (pr.json().get("bond_order_warning") or "")
