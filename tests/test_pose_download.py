@@ -67,6 +67,8 @@ def test_download_poses_all_by_default(tmp_path, monkeypatch):
         r = client.get("/jobs/job1/poses/poses_0.sdf")
         assert r.status_code == 200
         assert r.text.count("$$$$") == 200
+        # saved under the run's name, not the on-disk poses_0.sdf
+        assert "job1_poses.sdf" in r.headers["content-disposition"]
 
 
 def test_download_poses_top_n(tmp_path, monkeypatch):
@@ -77,7 +79,7 @@ def test_download_poses_top_n(tmp_path, monkeypatch):
         assert r.status_code == 200
         assert r.text.count("$$$$") == 12
         assert _ranks(r.text) == list(range(1, 13))      # the *best* 12, in order
-        assert "poses_0_top12.sdf" in r.headers["content-disposition"]
+        assert "job1_poses_top12.sdf" in r.headers["content-disposition"]
         # asking for more than there are is not an error -- you get all of them
         assert client.get("/jobs/job1/poses/poses_0.sdf",
                           params={"n": 5000}).text.count("$$$$") == 200
@@ -91,7 +93,7 @@ def test_download_poses_top_percent(tmp_path, monkeypatch):
         assert r.status_code == 200
         assert r.text.count("$$$$") == 20
         assert _ranks(r.text) == list(range(1, 21))
-        assert "poses_0_top10pct.sdf" in r.headers["content-disposition"]
+        assert "job1_poses_top10pct.sdf" in r.headers["content-disposition"]
         # a percentage too small to reach one whole pose still yields the best one
         assert client.get("/jobs/job1/poses/poses_0.sdf",
                           params={"pct": 0.1}).text.count("$$$$") == 1

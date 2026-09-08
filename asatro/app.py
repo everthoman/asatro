@@ -713,8 +713,16 @@ async def job_poses(job_id: str, filename: str,
     p = _job_path(job_id, filename)
     if not p.is_file():
         raise HTTPException(404, "poses not found")
+    # Saved under the run's own name (the job id *is* the slugified session
+    # name), not the on-disk "poses_0.sdf" -- a few downloads from different
+    # runs otherwise land in ~/Downloads as poses_0(1).sdf, poses_0(2).sdf and
+    # so on, with nothing to say which run each came from. The target index is
+    # kept only when it isn't the usual 0, so two files can't collide.
+    idx = filename[len("poses_"):-len(".sdf")]
+    stem = f"{job_id}_poses" if idx == "0" else f"{job_id}_poses_{idx}"
     if n is None and pct is None:
-        return FileResponse(str(p), media_type="chemical/x-mdl-sdfile", filename=filename)
+        return FileResponse(str(p), media_type="chemical/x-mdl-sdfile",
+                            filename=f"{stem}.sdf")
 
     total = await run_in_threadpool(_count_sdf_records, p)
     if pct is not None:
@@ -732,7 +740,7 @@ async def job_poses(job_id: str, filename: str,
                 return
             yield record
 
-    out_name = f"{filename[:-4]}_{label}.sdf"
+    out_name = f"{stem}_{label}.sdf"
     return StreamingResponse(
         gen(), media_type="chemical/x-mdl-sdfile",
         headers={"Content-Disposition": f'attachment; filename="{out_name}"',
@@ -808,7 +816,9 @@ async def seed_fragment(job_id: str, rank: int = Form(...),
         raise HTTPException(400, str(e))
 
     sdf = Chem.MolToMolBlock(carved) + "$$$$\n"
-    filename = f"fragment_{job_id}_rank{rank}_comp{component_index}.sdf"
+    # Run name first, like the pose downloads, so everything saved out of one
+    # session sorts together in the download folder.
+    filename = f"{job_id}_fragment_rank{rank}_comp{component_index}.sdf"
     return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
