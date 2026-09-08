@@ -12,7 +12,8 @@ from rdkit.Chem import AllChem
 from asatro.chemistry.handles import derive_core
 from asatro.engine.evaluators import MWEvaluator
 from asatro.engine.route_sampler import RouteSampler
-from asatro.growth import build_growth_route, make_evaluator, fragment_smiles_from_sdf
+from asatro.growth import (build_growth_route, fragment_name_from_sdf,
+                           fragment_smiles_from_sdf, make_evaluator)
 
 
 def _write_bound_fragment(tmp_path, smiles):
@@ -349,3 +350,49 @@ def test_anchored_evaluator_builds_the_product_on_the_open_side(tmp_path):
     # the amide N took the open C=O site, not the walled-in -OH site
     assert np.linalg.norm(n_pos - pos(o_carbonyl)) < np.linalg.norm(n_pos - pos(o_h))
     assert min(np.linalg.norm(np.array(w) - n_pos) for w in wall) > 3.0
+
+
+# --- the fragment's own name ----------------------------------------------
+# Product names are the reagent names joined by "_", so what the fragment slot
+# is called is what makes a growth hit self-describing: TH17144_150266 says
+# which fragment was grown; the old generic FRAG_150266 did not.
+
+def _titled_sdf(tmp_path, title, smiles="Brc1ccccc1", name="frag.sdf"):
+    m = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.EmbedMolecule(m, randomSeed=7)
+    m = Chem.RemoveHs(m)
+    m.SetProp("_Name", title)
+    p = tmp_path / name
+    Chem.MolToMolFile(m, str(p))
+    return str(p)
+
+
+def test_fragment_name_comes_from_the_sdf_title(tmp_path):
+    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "TH17144")) == "TH17144"
+
+
+def test_fragment_name_is_made_safe_for_a_reagent_file(tmp_path):
+    """It has to sit in a .smi's whitespace-delimited name column, and then in
+    a product name, so spaces and separators can't survive as-is."""
+    assert fragment_name_from_sdf(
+        _titled_sdf(tmp_path, "UNG2 hit 3 (batch/2)")) == "UNG2_hit_3_batch_2"
+    long = fragment_name_from_sdf(_titled_sdf(tmp_path, "x" * 80))
+    assert len(long) == 32
+
+
+def test_untitled_fragment_falls_back(tmp_path):
+    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "")) == "FRAG"
+    assert fragment_name_from_sdf(_titled_sdf(tmp_path, "   ")) == "FRAG"
+    assert fragment_name_from_sdf(str(tmp_path / "missing.sdf")) == "FRAG"
+
+
+def test_growth_route_names_the_fragment_slot_after_the_sdf(tmp_path):
+    """End to end: the one-entry reagent file the fragment fills carries the
+    title, so every product built on it leads with that name."""
+    boronic = tmp_path / "boronic.smi"
+    boronic.write_text("OB(O)c1ccccc1\tBORON_1\n")
+    files, _route, _summary = build_growth_route(
+        ["suzuki"], "Brc1ccccc1", 1, [{0: str(boronic)}], tmp_path,
+        fragment_name=fragment_name_from_sdf(_titled_sdf(tmp_path, "TH17144")))
+    frag_file = next(f for f in files if f.endswith("fragment.smi"))
+    assert open(frag_file).read().split() == ["Brc1ccccc1", "TH17144"]

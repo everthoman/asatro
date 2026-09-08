@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -42,6 +43,27 @@ def fragment_smiles_from_sdf(fragment_sdf: str) -> str:
     return Chem.MolToSmiles(neutralize(mol))  # neutral so reaction templates match
 
 
+_UNSAFE_IN_NAME = re.compile(r"[^A-Za-z0-9._+-]+")
+
+
+def fragment_name_from_sdf(fragment_sdf: str, fallback: str = "FRAG") -> str:
+    """The fragment's own title, cleaned up for use as a reagent name.
+
+    Product names are the reagent names joined by ``_``, so the fragment's
+    name is what makes a growth hit self-describing across runs: ``TH17144_
+    150266`` says which fragment was grown, where a generic ``FRAG_150266``
+    does not. Taken from the molfile's title line (line 1, always present even
+    if the block won't sanitise). Whitespace and anything that can't sit in a
+    ``.smi``'s name column collapses to ``_``; a titleless SDF falls back."""
+    try:
+        with open(fragment_sdf) as fh:
+            title = fh.readline()
+    except OSError:
+        return fallback
+    name = _UNSAFE_IN_NAME.sub("_", title.strip()).strip("._-")[:32].strip("._-")
+    return name or fallback
+
+
 def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:
     """The fixed fragment as a one-line reagent file (single-entry component)."""
     p = Path(work_dir) / "fragment.smi"
@@ -50,7 +72,8 @@ def write_fragment_smi(smiles: str, work_dir: Path, name: str = "FRAG") -> str:
 
 
 def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slot: int,
-                       reactant_files: List[Dict[int, str]], work_dir: Path
+                       reactant_files: List[Dict[int, str]], work_dir: Path,
+                       fragment_name: str = "FRAG"
                        ) -> Tuple[List[str], List[Tuple[str, int, Optional[int]]], List[str]]:
     """Reagent-file list (route order) + the multi-step route + a human-readable
     summary, mirroring ``combi.build_combi_route`` — except step 0's fragment
@@ -85,7 +108,7 @@ def build_growth_route(steps: List[StepSpec], fragment_smiles: str, fragment_slo
         for ci in info["fresh_indices"]:
             comp = comps[ci]
             if i == 0 and ci == fragment_slot:
-                f = write_fragment_smi(fragment_smiles, work_dir)
+                f = write_fragment_smi(fragment_smiles, work_dir, name=fragment_name)
                 labels.append(f"{comp['label']} = bound fragment")
             else:
                 f = reactant_files[i].get(ci)
@@ -188,7 +211,8 @@ def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
     frag_smiles = fragment_smiles_from_sdf(fragment_sdf)
     reactant_files = resolve_reactant_files(steps, fragment_slot, resolver)
     files, route, _summary = build_growth_route(
-        steps, frag_smiles, fragment_slot, reactant_files, work)
+        steps, frag_smiles, fragment_slot, reactant_files, work,
+        fragment_name=fragment_name_from_sdf(fragment_sdf))
     files = prune_unreachable_reagents(route, files, work_dir=str(work / "reachability"))
     sizes = [sum(1 for _ in open(f)) for f in files]
     variable = [s for s in sizes if s > 1]
@@ -265,7 +289,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     work.mkdir(parents=True, exist_ok=True)
     files, route, summary = build_growth_route(
         steps, fragment_smiles_from_sdf(fragment_sdf), fragment_slot,
-        reactant_files, work)
+        reactant_files, work, fragment_name=fragment_name_from_sdf(fragment_sdf))
 
     evaluator = make_evaluator(fragment_sdf=fragment_sdf, receptor_path=receptor_path,
                                core_smarts=core_smarts, work_dir=str(work / "dock"),
@@ -290,7 +314,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     sampler.set_route(route)
     sampler.set_evaluator(evaluator)
     # Lead product names with the fragment (flat index == its step-0 slot), so a
-    # hit reads FRAG_<step1 reagent>_<step2 reagent>… in route order.
+    # hit reads <fragment title>_<step1 reagent>_<step2 reagent>… in route order.
     sampler.name_lead_index = fragment_slot
     n_variable = sum(1 for rl in sampler.reagent_lists if len(rl) > 1)
     if n_variable <= 1:
