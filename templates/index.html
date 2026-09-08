@@ -14,13 +14,19 @@
     --text:#e6ecf5; --muted:#8b97ad; --border:#2a3550; --border2:#2f3a57; --field-bg:#0d121d;
     --inset-bg:#070a11; --step-bg:#131a29; --ghost-bg:#28324c; --del-bg:#3a2330; --bar-from:#234a7a;
     --header-grad:linear-gradient(90deg,#162038,#0f1420); --chart-grid:#1c2740;
+    --card-bg:#151d2e;
   }
   :root[data-theme="light"] {
     --bg:#eef1f7; --panel:#ffffff; --accent:#1f6fd0; --ok:#1f9d57; --warn:#b9740f; --err:#d83b3b;
     --text:#1b2230; --muted:#586577; --border:#d6dce8; --border2:#c6cee0; --field-bg:#f6f8fc;
     --inset-bg:#eef1f7; --step-bg:#f7f9fc; --ghost-bg:#e4eaf5; --del-bg:#f6e0e6; --bar-from:#7fb0ee;
     --header-grad:linear-gradient(90deg,#e8eef9,#f4f6fb); --chart-grid:#e6ebf4;
+    --card-bg:#ffffff;
   }
+  /* Structure colours, generated from RDKit's own light and SetDarkMode
+     palettes (asatro/svg.py). Stored SVGs reference these, so switching
+     theme recolours every depiction without re-rendering. */
+  __MOL_PALETTE__
   * { box-sizing:border-box; }
   body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
   header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:18px 26px; border-bottom:1px solid var(--border); background:var(--header-grad); }
@@ -76,14 +82,14 @@
   .target-block h3 { font-size:13px; margin:0 0 2px; }
   .sub { font-size:11.5px; color:var(--muted); }
   .topgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:12px; margin-top:10px; }
-  .card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:8px; }
+  .card { background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:8px; }
   .card svg { width:100%; height:auto; display:block; }
-  .card .meta { margin-top:6px; font-size:11px; color:#222; line-height:1.45; }
-  .card .rank { font-weight:700; color:#234a7a; }
+  .card .meta { margin-top:6px; font-size:11px; color:var(--text); line-height:1.45; }
+  .card .rank { font-weight:700; color:var(--accent); }
   .card .score { font-weight:700; }
-  .card .name { color:#555; word-break:break-all; }
-  .card .props { color:#666; font-size:0.85em; margin-top:2px; }
-  .card .smi { color:#999; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
+  .card .name { color:var(--muted); word-break:break-all; }
+  .card .props { color:var(--muted); font-size:0.85em; margin-top:2px; }
+  .card .smi { color:var(--muted); opacity:.75; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
   .card .poseLink { display:inline-block; margin-top:6px; font-size:11px; }
   .poseDl select, .poseDl input { font-size:11.5px; padding:1px 2px; vertical-align:baseline; }
   .poseDl input { width:5.5em; }

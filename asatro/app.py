@@ -30,7 +30,7 @@ from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import (JOBS, delete_job, jobs_dir, list_jobs, reap_orphaned_jobs,
                          staged_uploads, start_combi_job, start_growth_job, sweep_staged_uploads)
 from asatro.seed import carve_fragment, component_route_meta
-from asatro.svg import mol_props, mol_svg
+from asatro.svg import mol_props, mol_svg, palette_css, retheme_svg
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_HTML = (BASE_DIR / "templates" / "index.html").read_text()
@@ -103,6 +103,7 @@ app = FastAPI(title="Asatro", version=__version__, lifespan=_lifespan)
 async def index() -> HTMLResponse:
     html = (INDEX_HTML
             .replace("__VERSION__", __version__)
+            .replace("__MOL_PALETTE__", palette_css())
             .replace("__CATALOG_JSON__", json.dumps(CATALOG)))
     return HTMLResponse(html)
 
@@ -499,16 +500,24 @@ def _top_items(rows) -> list:
 
 
 def _enrich_top_props(result: Optional[dict]) -> Optional[dict]:
-    """Fill in per-structure ``mw``/``logp`` for any persisted top-hit that
-    predates those fields, so finished jobs (including ones run before this
-    feature) show them in the gallery. Computed on the fly from the stored
-    SMILES; idempotent."""
+    """Bring a persisted run's gallery data up to date on read: fill in
+    ``mw``/``logp`` for top-hits that predate those fields, and re-theme any
+    structure drawn before the depictions became theme-aware (otherwise a run
+    finished under the old renderer shows white boxes on a dark card forever --
+    its SVGs are frozen in results.json). Both are computed from what's already
+    stored, and both are idempotent."""
     if not result:
         return result
     for run in result.get("runs", []):
         for it in run.get("top", []) or []:
             if it.get("mw") is None and it.get("logp") is None:
                 it.update(mol_props(str(it.get("smiles", ""))))
+            if it.get("svg"):
+                it["svg"] = retheme_svg(it["svg"])
+        for slot in run.get("reagents", []) or []:
+            for r in slot.get("reagents", []) or []:
+                if r.get("svg"):
+                    r["svg"] = retheme_svg(r["svg"])
     return result
 
 

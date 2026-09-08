@@ -172,7 +172,10 @@ Fragment growth and Combinatorial search as two modes: upload inputs → *Analyz
 (fragment growth) or build a route (combi) → configure reagents/filters/search →
 launch, with a live SSE console, structure gallery + convergence chart, and a
 job-history picker. Finished results carry a per-hit pose download and an
-all / top-N / top-N% selector for the whole pose set. Dark/light theme.
+all / top-N / top-N% selector for the whole pose set. Dark/light theme —
+structures are stored once per run and recoloured client-side from RDKit's
+own default and `SetDarkMode` palettes, so every atom stays readable on
+either ground without redrawing them (`asatro/svg.py`).
 
 *Manage* next to the history picker lists every run with its status, date and
 size on disk, and deletes any selection of them. A running job can't be
