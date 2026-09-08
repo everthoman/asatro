@@ -36,7 +36,7 @@ auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 233 passing
+python -m pytest tests/                                # 244 passing
 ```
 
 **Reaction catalog**: the full Hartenfeller et al. reaction SMIRKS set (58
@@ -147,6 +147,12 @@ curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?n=250'   # best 250
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?pct=5'   # best 5%
 curl http://localhost:5015/jobs/<id>/pose/7                      # one, by gallery rank
+
+# Housekeeping
+curl -X DELETE http://localhost:5015/jobs/<id>                   # delete one run
+curl -X POST -H 'Content-Type: application/json' \
+     -d '{"ids":["run_a","run_b"]}' http://localhost:5015/jobs/delete
+curl -X POST http://localhost:5015/uploads/sweep                 # drop staged uploads >24h
 ```
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
@@ -167,6 +173,17 @@ Fragment growth and Combinatorial search as two modes: upload inputs → *Analyz
 launch, with a live SSE console, structure gallery + convergence chart, and a
 job-history picker. Finished results carry a per-hit pose download and an
 all / top-N / top-N% selector for the whole pose set. Dark/light theme.
+
+*Manage* next to the history picker lists every run with its status, date and
+size on disk, and deletes any selection of them. A running job can't be
+selected — its thread would go on writing into a deleted directory, so cancel
+it first. Deletion always names the runs explicitly (the ids the panel just
+listed), never "everything on the server", so a job launched while the panel is
+open can't be swept up by a stale *select all*. The same panel reclaims the
+staged-upload area: every launch stages its fragment/receptor/pool under
+`jobs/_uploads/` and nothing links a job back to its staging dir, so that
+cleanup is age-based and skips anything a still-live run may still be
+reading.
 
 Still open: conflict-aware pool tagging (a difunctional block currently lands in
 every matching class) and persisted/curated pools. See [DESIGN.md](DESIGN.md).

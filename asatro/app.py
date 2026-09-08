@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from rdkit import Chem
 from starlette.concurrency import run_in_threadpool
@@ -27,7 +27,8 @@ from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment, bond_order_complaint
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
-from asatro.jobs import JOBS, jobs_dir, list_jobs, reap_orphaned_jobs, start_combi_job, start_growth_job
+from asatro.jobs import (JOBS, delete_job, jobs_dir, list_jobs, reap_orphaned_jobs,
+                         staged_uploads, start_combi_job, start_growth_job, sweep_staged_uploads)
 from asatro.seed import carve_fragment, component_route_meta
 from asatro.svg import mol_props, mol_svg
 
@@ -565,7 +566,60 @@ async def job_reagents(job_id: str) -> dict:
 
 @app.get("/jobs")
 async def jobs() -> dict:
-    return {"jobs": list_jobs()}
+    return {"jobs": await run_in_threadpool(list_jobs)}
+
+
+def _delete_one(job_id: str) -> dict:
+    """Delete one run, mapping the job layer's refusals onto HTTP codes."""
+    try:
+        return delete_job(job_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))     # running: cancel it first
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.delete("/jobs/{job_id}")
+async def delete_one_job(job_id: str) -> dict:
+    """Delete a finished run and everything under its job directory."""
+    return await run_in_threadpool(_delete_one, job_id)
+
+
+@app.post("/jobs/delete")
+async def delete_many_jobs(ids: List[str] = Body(..., embed=True)) -> dict:
+    """Delete several runs by explicit id.
+
+    The caller always names every run to delete -- there is deliberately no
+    "delete everything" verb, so a job launched between the client listing the
+    jobs and confirming the delete can never be swept up in it. Failures are
+    reported per id rather than aborting the batch: one running job in the
+    selection shouldn't stop the rest being cleaned up."""
+    def run() -> dict:
+        deleted, failed, freed = [], {}, 0
+        for job_id in ids:
+            try:
+                freed += delete_job(job_id)["freed"]
+                deleted.append(job_id)
+            except (ValueError, RuntimeError, FileNotFoundError) as e:
+                failed[job_id] = str(e)
+        return {"deleted": deleted, "failed": failed, "freed": freed}
+    return await run_in_threadpool(run)
+
+
+@app.get("/uploads")
+async def uploads() -> dict:
+    """Size of the staged-upload area (fragments/receptors/pools kept from
+    every launch), so the UI can say what a sweep would reclaim."""
+    return await run_in_threadpool(staged_uploads)
+
+
+@app.post("/uploads/sweep")
+async def uploads_sweep(max_age_hours: float = Body(24.0, embed=True)) -> dict:
+    """Delete staged uploads older than ``max_age_hours`` (see
+    ``sweep_staged_uploads`` for what it refuses to touch)."""
+    return await run_in_threadpool(sweep_staged_uploads, max_age_hours)
 
 
 def _job_path(job_id: str, *parts: str) -> Path:

@@ -18,6 +18,7 @@ import functools
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -135,6 +136,88 @@ def _prune_finished_jobs() -> None:
     finished.sort()  # oldest-finished first
     for _, jid in finished[:len(finished) - MAX_FINISHED_JOBS_IN_MEMORY]:
         JOBS.pop(jid, None)
+
+
+def _dir_size(path: Path) -> int:
+    """Bytes on disk under ``path`` (files only, missing entries skipped)."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def _job_dir_checked(job_id: str) -> Path:
+    """Resolve one job's directory, rejecting anything that escapes the jobs
+    root or names one of the shared ``_``-prefixed internals (``_uploads``
+    staging, ``_suggest`` scratch) -- those are no job's to delete."""
+    base = jobs_dir().resolve()
+    d = (base / job_id).resolve()
+    if d == base or base not in d.parents or d.name.startswith("_"):
+        raise ValueError(f"invalid job id {job_id!r}")
+    return d
+
+
+def delete_job(job_id: str) -> dict:
+    """Delete one finished run: its directory and its in-memory record.
+
+    Refuses a queued/running job. Its thread would go on writing into a
+    directory that no longer exists, and the run is lost either way -- cancel
+    it first, then delete. (A *persisted* job.json claiming "running" with no
+    live entry is an orphan from a previous process; ``reap_orphaned_jobs``
+    rewrites those at startup, so it is safe to delete.)"""
+    d = _job_dir_checked(job_id)
+    live = JOBS.get(job_id)
+    if live is not None and live.status in ("queued", "running"):
+        raise RuntimeError(f"job {job_id} is {live.status} -- cancel it before deleting")
+    if not d.is_dir():
+        raise FileNotFoundError(f"unknown job {job_id}")
+    freed = _dir_size(d)
+    shutil.rmtree(d)
+    JOBS.pop(job_id, None)
+    return {"id": job_id, "freed": freed}
+
+
+def staged_uploads() -> dict:
+    """What ``jobs/_uploads`` is holding: every launch stages its fragment,
+    receptor and pool there, and nothing deletes them afterwards."""
+    stage = jobs_dir() / "_uploads"
+    dirs = [d for d in stage.iterdir() if d.is_dir()] if stage.is_dir() else []
+    oldest = min((d.stat().st_mtime for d in dirs), default=None)
+    return {"n": len(dirs), "bytes": sum(_dir_size(d) for d in dirs), "oldest": oldest}
+
+
+def sweep_staged_uploads(max_age_hours: float = 24.0) -> dict:
+    """Delete staged upload dirs older than ``max_age_hours``.
+
+    Age-based because nothing links a job back to the staging dir it was
+    launched from, so there is no per-job cleanup to do instead. Two things
+    are never touched: anything younger than the cutoff, and anything from at
+    or after the oldest still-live run started -- a long run is still reading
+    its staged receptor/pool, and its staging dir would otherwise age past the
+    cutoff mid-run."""
+    stage = jobs_dir() / "_uploads"
+    if not stage.is_dir():
+        return {"deleted": 0, "freed": 0, "kept": 0}
+    cutoff = time.time() - max(0.0, float(max_age_hours)) * 3600
+    live_since = min((j.started for j in JOBS.values()
+                      if j.status in ("queued", "running")), default=None)
+    if live_since is not None:
+        cutoff = min(cutoff, live_since - 60)   # a minute of slack around launch
+    deleted = freed = kept = 0
+    for d in stage.iterdir():
+        if not d.is_dir():
+            continue
+        if d.stat().st_mtime >= cutoff:
+            kept += 1
+            continue
+        freed += _dir_size(d)
+        shutil.rmtree(d, ignore_errors=True)
+        deleted += 1
+    return {"deleted": deleted, "freed": freed, "kept": kept}
 
 
 def reap_orphaned_jobs() -> List[str]:
@@ -671,15 +754,21 @@ def list_jobs() -> List[dict]:
     for d in jobs_dir().iterdir():
         if not d.is_dir():
             continue
+        if d.name.startswith("_"):     # _uploads staging, _suggest scratch
+            continue
         live = JOBS.get(d.name)
         if live is not None:
-            rows.append((live.status in ("queued", "running"), d.stat().st_mtime, live.meta()))
-        else:
+            meta = live.meta()
+        else:                                   # persisted run, read from disk
             f = d / "job.json"
-            if f.is_file():
-                try:
-                    rows.append((False, d.stat().st_mtime, json.loads(f.read_text())))
-                except Exception:
-                    pass
+            if not f.is_file():
+                continue
+            try:
+                meta = json.loads(f.read_text())
+            except Exception:
+                continue
+        meta["size"] = _dir_size(d)   # what deleting this run would reclaim
+        rows.append((live is not None and live.status in ("queued", "running"),
+                     d.stat().st_mtime, meta))
     rows.sort(key=lambda r: (not r[0], -r[1]))
     return [meta for _, _, meta in rows]
