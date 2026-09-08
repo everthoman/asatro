@@ -8,6 +8,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 
 import asatro.jobs as jobs
+from asatro.engine.gnina_evaluator import DockingCancelled
 from asatro.jobs import JOBS, start_combi_job, start_growth_job
 
 
@@ -912,3 +913,93 @@ def test_max_poses_env_caps_what_is_written(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     assert job.result["runs"][0]["n_poses"] == 10
+
+
+# --- cancelling keeps the work ---------------------------------------------
+# A cancel ends the search; the docking already paid for is not thrown away.
+
+def test_cancelled_growth_job_keeps_what_it_docked(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    ev = _FakeEvaluator([(-9.5, "c1ccccc1", "a"), (-7.0, "CCO", "b")])
+
+    def runner(**kwargs):
+        kwargs["on_evaluator"](ev)          # docking got this far, then cancel
+        raise DockingCancelled()
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
+    _await(job)
+
+    assert job.status == "cancelled" and job.error is None
+    run = job.result["runs"][0]
+    assert run["n_docked"] == 2
+    assert run["top"][0]["smiles"] == "c1ccccc1"
+    assert json.loads((job.dir / "results.json").read_text())["runs"][0]["n_docked"] == 2
+    assert (job.dir / "poses_0.sdf").is_file()      # poses too, not just scores
+    assert any("saving what was docked" in ln for ln in job.lines)
+
+
+def test_cancelled_combi_job_keeps_what_it_docked(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    rec = tmp_path / "receptor.pdb"; rec.write_text("")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
+    boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    ev = _FakeEvaluator([(-7.5, "c1ccc(-c2ccccc2)cc1", "phB_phBr")])
+
+    def runner(**kwargs):
+        kwargs["on_evaluator"](ev)
+        raise DockingCancelled()
+
+    job = start_combi_job(
+        receptor_path=str(rec), steps=["suzuki"],
+        reagent_files=[[str(halide), str(boronic)]],
+        center=(0.0, 0.0, 0.0), size=(20.0, 20.0, 20.0),
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
+    _await(job)
+
+    assert job.status == "cancelled" and job.error is None
+    assert job.result["runs"][0]["n_docked"] == 1
+    assert (job.dir / "results.json").is_file()
+
+
+def test_cancelling_before_any_docking_is_not_an_error(tmp_path, monkeypatch):
+    """Cancelled during setup, before an evaluator exists: still a cancelled
+    job with an (empty) result, not a failed one."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+
+    def runner(**kwargs):
+        raise DockingCancelled()
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
+    _await(job)
+
+    assert job.status == "cancelled" and job.error is None
+    assert job.result["runs"][0]["n_docked"] == 0
+
+
+def test_a_setup_failure_is_still_an_error_not_a_cancel(tmp_path, monkeypatch):
+    """Guard for the restructure: only DockingCancelled takes the keep-results
+    path; anything else must still surface as a failed job."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+
+    def runner(**kwargs):
+        raise RuntimeError("gnina exploded")
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1}, runner=runner)
+    _await(job)
+
+    assert job.status == "error" and "gnina exploded" in job.error

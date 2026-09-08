@@ -33,7 +33,7 @@ from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_re
 from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
-from asatro.engine.gnina_evaluator import DOCK_CPU, MolFilters
+from asatro.engine.gnina_evaluator import DOCK_CPU, DockingCancelled, MolFilters
 from asatro.growth import resolve_reactant_files, run_growth
 from asatro.svg import mol_props, mol_svg
 
@@ -508,33 +508,44 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
             job.evaluator = ev
             job.current_target = " -> ".join(step_ids)
 
-        rows, evaluator = runner(
-            fragment_sdf=fragment_path, receptor_path=receptor_path,
-            steps=steps, fragment_slot=fragment_slot, core_smarts=core_smarts,
-            reactant_files=reactant_files, work_dir=str(job.dir / "run"),
-            num_warmup=cfg.get("num_warmup"),  # None -> auto-tuned from pool sizes
-            num_cycles=cfg.get("num_cycles"),
-            num_to_select=cfg.get("num_to_select"),
-            fragment_name=cfg.get("fragment_name"),
-            seed=cfg.get("seed"),
-            score_field=cfg.get("score_field", "minimizedAffinity"),
-            cnn_scoring=cfg.get("cnn_scoring", "none"),
-            filters=mol_filters if mol_filters.active else None,
-            search_method=search_method,
-            min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
-            stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-            max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
-            prune_unreachable=bool(cfg.get("prune_unreachable", True)),
-            concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
-            progress_callback=job.log, cancel_event=job.cancel_event,
-            on_evaluator=_on_evaluator,
-        )
+        try:
+            rows, evaluator = runner(
+                fragment_sdf=fragment_path, receptor_path=receptor_path,
+                steps=steps, fragment_slot=fragment_slot, core_smarts=core_smarts,
+                reactant_files=reactant_files, work_dir=str(job.dir / "run"),
+                num_warmup=cfg.get("num_warmup"),  # None -> auto-tuned from pool sizes
+                num_cycles=cfg.get("num_cycles"),
+                num_to_select=cfg.get("num_to_select"),
+                fragment_name=cfg.get("fragment_name"),
+                seed=cfg.get("seed"),
+                score_field=cfg.get("score_field", "minimizedAffinity"),
+                cnn_scoring=cfg.get("cnn_scoring", "none"),
+                filters=mol_filters if mol_filters.active else None,
+                search_method=search_method,
+                min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
+                stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
+                max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
+                prune_unreachable=bool(cfg.get("prune_unreachable", True)),
+                concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
+                progress_callback=job.log, cancel_event=job.cancel_event,
+                on_evaluator=_on_evaluator,
+            )
+            cancelled = False
+        except DockingCancelled:
+            # Cancelling ends the *search*; it doesn't discard the docking
+            # already paid for. Every scored product and its pose live in the
+            # evaluator, so summarise and persist them exactly as a finished
+            # run does -- only the status differs. Left to propagate, this
+            # reached the generic handler below and a cancelled run was
+            # recorded as an error with no results at all.
+            rows, evaluator, cancelled = [], job.evaluator, True
+            job.log("Cancelled — saving what was docked so far")
         job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
         job.result["fg_classes"] = assessment["fg_classes"]
         job.result["accessible_reactions"] = assessment["accessible_reactions"]
         job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
-        job.status = "cancelled" if job.cancel_event.is_set() else "done"
+        job.status = "cancelled" if (cancelled or job.cancel_event.is_set()) else "done"
         job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
@@ -575,29 +586,35 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
                 if search_method == "rws" else "Selection: standard Thompson Sampling (argmax)")
         concurrency, cpu, gpu_ids = _dock_resources(cfg, job)
 
-        rows, evaluator = runner(
-            receptor_path=receptor_path, steps=steps, reagent_files=reagent_files,
-            work_dir=str(job.dir / "run"), reference_path=reference_path,
-            center=center, size=size,
-            num_warmup=cfg.get("num_warmup"),  # None -> auto-tuned from pool sizes
-            num_cycles=cfg.get("num_cycles"),
-            num_to_select=cfg.get("num_to_select"),
-            seed=cfg.get("seed"),
-            score_field=cfg.get("score_field", "minimizedAffinity"),
-            cnn_scoring=cfg.get("cnn_scoring", "none"),
-            filters=mol_filters if mol_filters.active else None,
-            search_method=search_method,
-            min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
-            stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-            prune_unreachable=bool(cfg.get("prune_unreachable", True)),
-            concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
-            progress_callback=job.log, cancel_event=job.cancel_event,
-            on_evaluator=_on_evaluator,
-        )
+        try:
+            rows, evaluator = runner(
+                receptor_path=receptor_path, steps=steps, reagent_files=reagent_files,
+                work_dir=str(job.dir / "run"), reference_path=reference_path,
+                center=center, size=size,
+                num_warmup=cfg.get("num_warmup"),  # None -> auto-tuned from pool sizes
+                num_cycles=cfg.get("num_cycles"),
+                num_to_select=cfg.get("num_to_select"),
+                seed=cfg.get("seed"),
+                score_field=cfg.get("score_field", "minimizedAffinity"),
+                cnn_scoring=cfg.get("cnn_scoring", "none"),
+                filters=mol_filters if mol_filters.active else None,
+                search_method=search_method,
+                min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
+                stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
+                prune_unreachable=bool(cfg.get("prune_unreachable", True)),
+                concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
+                progress_callback=job.log, cancel_event=job.cancel_event,
+                on_evaluator=_on_evaluator,
+            )
+            cancelled = False
+        except DockingCancelled:
+            # See _run: a cancel keeps whatever has already been docked.
+            rows, evaluator, cancelled = [], job.evaluator, True
+            job.log("Cancelled — saving what was docked so far")
         job.result = _summarize_combi(rows, evaluator, higher_is_better=False, job_dir=job.dir)
         job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
-        job.status = "cancelled" if job.cancel_event.is_set() else "done"
+        job.status = "cancelled" if (cancelled or job.cancel_event.is_set()) else "done"
         job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
