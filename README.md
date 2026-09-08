@@ -36,7 +36,7 @@ auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 155 passing
+python -m pytest tests/                                # 233 passing
 ```
 
 **Reaction catalog**: the full Hartenfeller et al. reaction SMIRKS set (58
@@ -103,6 +103,16 @@ curl -F fragment=@hit.sdf -F receptor=@receptor.pdb -F refine=true \
      http://localhost:5015/prune          # + stub-growth refinement
 ```
 
+`/prune` also checks the fragment's bond orders against its own geometry, and
+`/grow` refuses a run that fails it (override with `"ignore_bond_order_warning":
+true`). A PDB states no bond orders, so a ligand that reaches Asatro through one
+carries whatever a perception tool guessed from coordinates — routinely the
+wrong tautomer for heterocycles, e.g. a planar 2-oxo-pyrimidinone read back as
+the 4H form with an sp3 CH2. That is the wrong molecule to grow from, and every
+docked product inherits the error, so it's worth catching while the fragment is
+still on screen: the signature is a ring flat by its coordinates that
+nonetheless holds an atom the bond block makes sp3.
+
 Two search paths share the same lifted Thompson-Sampling + GNINA stack
 (`asatro/engine/`: `AnchoredFragmentEvaluator`, `GninaEvaluator`, `RouteSampler`, …):
 
@@ -131,16 +141,32 @@ curl -F fragment=@hit.sdf -F receptor=@receptor.pdb \
      http://localhost:5015/grow               # -> {"job_id": ...}
 curl http://localhost:5015/jobs/<id>          # status + top hits
 curl http://localhost:5015/jobs/<id>/stream   # live console (SSE)
+
+# Docked poses (SDF). Written best-scored first, DockingRank 1 = best.
+curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
+curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?n=250'   # best 250
+curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?pct=5'   # best 5%
+curl http://localhost:5015/jobs/<id>/pose/7                      # one, by gallery rank
 ```
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
 
+A finished job writes **every** docked pose, not just the ones the gallery
+shows — the evaluator's pose cache dies with the job, so a pose that never
+reached disk can never be downloaded afterwards. They're all in memory anyway,
+so this costs disk only (~3 KB/pose, i.e. ~120 MB for a 37k-product combi run);
+set `ASATRO_MAX_POSES` to a positive integer to cap it where that matters.
+Because the file is score-ordered, every `n`/`pct` slice is just a prefix of it:
+nothing is re-scored, and the ranks in a partial download still line up with the
+results gallery's `#rank`.
+
 A **browser UI** (`templates/index.html`, served at `/`) drives the whole flow —
 Fragment growth and Combinatorial search as two modes: upload inputs → *Analyze*
 (fragment growth) or build a route (combi) → configure reagents/filters/search →
 launch, with a live SSE console, structure gallery + convergence chart, and a
-job-history picker. Dark/light theme.
+job-history picker. Finished results carry a per-hit pose download and an
+all / top-N / top-N% selector for the whole pose set. Dark/light theme.
 
 Still open: conflict-aware pool tagging (a difunctional block currently lands in
 every matching class) and persisted/curated pools. See [DESIGN.md](DESIGN.md).
