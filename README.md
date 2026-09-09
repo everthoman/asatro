@@ -169,9 +169,10 @@ once its convergence has flattened without losing the GPU time already spent.
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
 
-Every job also writes its console to `run.log` as it goes, downloadable from
-the **log ↓** button in the Run panel (during the run too -- it serves whatever
-has been logged so far). It holds what `results.json` doesn't: the pool's
+Every job also writes its console to `run.log` as it goes. Reopening a past run
+from the history replays that log into the console pane, and the **log ↓**
+button downloads it (during the run too -- it serves whatever has been logged
+so far). It holds what `results.json` doesn't: the pool's
 tagged-block census, which filters were active and what each one rejected, the
 auto-tuned TS budget, prep/dock failure counts, and where the run stopped.
 

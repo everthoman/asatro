@@ -1154,6 +1154,41 @@ el('growBtn').addEventListener('click', async ()=>{
   el('growBtn').disabled = false;
 });
 
+// A finished run's console comes back from run.log. A running one doesn't need
+// this: its SSE stream replays job.lines from the start, so attachStream fills
+// the pane on its own.
+//
+// The tail, not the whole file, when a run is long: a 37k-product combi run
+// logs a progress line every few docks, and dropping megabytes of text into
+// the pane is slow exactly on the run whose log you most want to read. The
+// note says so and points at the download, which is always the entire file.
+const LOG_PANE_MAX_LINES = 2000;
+async function showRunLog(jobId, status){
+  const L = el('log');
+  L.classList.remove('muted');
+  let text = '';
+  try {
+    const r = await fetch(`/jobs/${encodeURIComponent(jobId)}/log`);
+    if (r.ok) text = await r.text();
+  } catch(e){ /* fall through to the one-liner below */ }
+  const body = text.replace(/\s+$/, '');           // no dangling blank line in the pane
+  const lines = body.split('\n');
+  if (!body){
+    L.textContent = `Loaded job ${jobId} (${status}) — no console log was kept for this run.`;
+  } else if (lines.length > LOG_PANE_MAX_LINES){
+    L.textContent = `… showing the last ${LOG_PANE_MAX_LINES} of ${lines.length} lines`
+      + ` — use “log ↓” for the whole file.\n\n`
+      + lines.slice(-LOG_PANE_MAX_LINES).join('\n');
+  } else {
+    L.textContent = body;
+  }
+  // Top, not bottom: a live run scrolls to its newest line because that's the
+  // one you're waiting on, but a run you've reopened is a document -- the
+  // handles, pool census, active filters and tuned budget are all in the first
+  // few lines, and how it ended is already on the status pill and in Results.
+  L.scrollTop = 0;
+}
+
 // The run log is written to disk line by line as the job emits it, so the link
 // works mid-run too -- it just serves however much has been logged so far.
 function setLogLink(jobId){
@@ -1624,8 +1659,9 @@ el('history').addEventListener('change', async e=>{
   catch(err){ logLine('Error loading job ' + id + ': ' + err.message); return; }
   setStatus(d.status);
   el('log').classList.remove('muted');
-  el('log').textContent = `Loaded job ${id} (${d.status}).`;
+  el('log').textContent = `Loading job ${id} (${d.status})…`;
   if (d.status === 'running' || d.status === 'queued') {
+    el('log').textContent = '';
     attachStream(id);
   } else {
     // A previously-attached running job's stream/Cancel button must not be
@@ -1635,6 +1671,7 @@ el('history').addEventListener('change', async e=>{
     if (evtSource){ evtSource.close(); evtSource = null; }
     el('cancelBtn').style.display = 'none';
     stopLivePanels();
+    await showRunLog(id, d.status);
   }
   renderHits(d.result);
 });
