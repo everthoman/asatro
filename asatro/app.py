@@ -27,8 +27,9 @@ from asatro.chemistry.accessibility import assess_fragment, load_receptor_atoms
 from asatro.chemistry.handles import analyze_fragment, bond_order_complaint
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
-from asatro.jobs import (JOBS, delete_job, jobs_dir, list_jobs, reap_orphaned_jobs,
-                         staged_uploads, start_combi_job, start_growth_job, sweep_staged_uploads)
+from asatro.jobs import (JOBS, _slugify, delete_job, jobs_dir, list_jobs,
+                         reap_orphaned_jobs, staged_uploads, start_combi_job,
+                         start_growth_job, sweep_staged_uploads)
 from asatro.seed import carve_fragment, component_route_meta
 from asatro.svg import mol_props, mol_svg, palette_css, retheme_svg
 
@@ -694,6 +695,19 @@ def _record_rank(record: str) -> Optional[int]:
     return None
 
 
+def _record_title(record: str) -> str:
+    """The molecule title (line 1) of one SDF record, slugified for use as a
+    filename. Empty when the record has no usable title.
+
+    ``GninaEvaluator._best_pose`` stamps each pose with the product name the
+    sampler built it from (``TH17145_12559`` -- fragment plus reagent id), so
+    this is the name that identifies the pose everywhere else; slugifying
+    guards the one case where that name is absent and the title falls back to
+    the product SMILES, which is full of characters a filename can't carry."""
+    lines = record.splitlines()
+    return _slugify(lines[0]) if lines else ""
+
+
 def _pose_record(poses_path: Path, rank: int) -> Optional[str]:
     """The docked pose of the given 1-based gallery rank, as SDF text."""
     for idx, record in enumerate(_iter_sdf_records(poses_path), start=1):
@@ -767,8 +781,14 @@ async def job_pose(job_id: str, rank: int) -> Response:
     sdf = await run_in_threadpool(_pose_record, poses_path, rank)
     if sdf is None:
         raise HTTPException(404, f"no pose with rank {rank}")
+    # Save under the pose's *own* name (TH17145_12559), not its rank: a single
+    # pose is downloaded to be opened next to the fragment and the other hits,
+    # where "which product is this" matters and "#10 of that run" does not --
+    # and the rank alone collides as soon as two runs' #10 land in the same
+    # folder. Falls back to the rank-based name for a pose with no title.
+    stem = _record_title(sdf) or f"{job_id}_pose_{rank}"
     return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
-                    headers={"Content-Disposition": f'attachment; filename="{job_id}_pose_{rank}.sdf"'})
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.sdf"'})
 
 
 @app.post("/jobs/{job_id}/seed")

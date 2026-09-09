@@ -151,7 +151,7 @@ curl -X POST http://localhost:5015/jobs/<id>/cancel   # stop; keeps what docked
 curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?n=250'   # best 250
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?pct=5'   # best 5%
-curl http://localhost:5015/jobs/<id>/pose/7                      # one, by gallery rank
+curl -OJ http://localhost:5015/jobs/<id>/pose/7                  # one, by gallery rank
 
 # Housekeeping
 curl -X DELETE http://localhost:5015/jobs/<id>                   # delete one run
@@ -167,6 +167,11 @@ once its convergence has flattened without losing the GPU time already spent.
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
+
+A slice download keeps the run's name (`<id>_poses_top250.sdf`); a single pose
+is saved under its own product name instead (`TH17145_12559.sdf`, the same title
+the record carries), because that file gets opened next to the fragment and the
+other hits, where *which product* matters and *#7 of that run* does not.
 
 A finished job writes **every** docked pose, not just the ones the gallery
 shows — the evaluator's pose cache dies with the job, so a pose that never

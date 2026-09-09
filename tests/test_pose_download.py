@@ -7,13 +7,16 @@ from asatro.app import app
 from asatro.jobs import jobs_dir
 
 
-def _make_poses(jobdir):
+def _make_poses(jobdir, named=True):
     jobdir.mkdir(parents=True, exist_ok=True)
     w = Chem.SDWriter(str(jobdir / "poses_0.sdf"))
     for rank, smi in [(1, "c1ccccc1"), (2, "CCO")]:
         m = Chem.AddHs(Chem.MolFromSmiles(smi))
         AllChem.EmbedMolecule(m, randomSeed=1)
         m = Chem.RemoveHs(m)
+        if named:
+            # As the evaluator titles a pose: fragment name + reagent id.
+            m.SetProp("_Name", f"TH17145_{rank}0000")
         m.SetProp("DockingRank", str(rank))
         m.SetProp("SMILES", smi)
         w.write(m)
@@ -29,8 +32,41 @@ def test_download_single_pose_by_rank(tmp_path, monkeypatch):
         assert r.text.count("$$$$") == 1                 # exactly one SDF record
         assert "DockingRank" in r.text                   # props preserved
         assert "attachment" in r.headers.get("content-disposition", "")
-        assert "job1_pose_2.sdf" in r.headers.get("content-disposition", "")
+        # Saved under the pose's own product name, not its rank.
+        assert "TH17145_20000.sdf" in r.headers.get("content-disposition", "")
         assert client.get("/jobs/job1/pose/99").status_code == 404  # no such rank
+
+
+def test_untitled_pose_falls_back_to_the_rank_name(tmp_path, monkeypatch):
+    """A pose with no title (nothing named it) still downloads under a name
+    that says which run and rank it came from."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    _make_poses(jobs_dir() / "job1", named=False)
+    with TestClient(app) as client:
+        r = client.get("/jobs/job1/pose/2")
+        assert r.status_code == 200
+        assert "job1_pose_2.sdf" in r.headers.get("content-disposition", "")
+
+
+def test_pose_title_is_never_taken_raw_as_a_filename(tmp_path, monkeypatch):
+    """An unnamed molecule falls back to its SMILES as the title, which is full
+    of characters (and, in the worst case, path separators) a filename cannot
+    carry -- so the title is slugified, never used as-is."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    jobdir = jobs_dir() / "job1"
+    jobdir.mkdir(parents=True)
+    m = Chem.AddHs(Chem.MolFromSmiles("CCO"))
+    AllChem.EmbedMolecule(m, randomSeed=1)
+    m = Chem.RemoveHs(m)
+    m.SetProp("_Name", "../../O=C(N)c1ccccc1")
+    m.SetProp("DockingRank", "1")
+    w = Chem.SDWriter(str(jobdir / "poses_0.sdf"))
+    w.write(m)
+    w.close()
+    with TestClient(app) as client:
+        cd = client.get("/jobs/job1/pose/1").headers.get("content-disposition", "")
+        assert "/" not in cd and ".." not in cd
+        assert "O_C_N_c1ccccc1.sdf" in cd
 
 
 def test_download_pose_without_poses_file_404(tmp_path, monkeypatch):
