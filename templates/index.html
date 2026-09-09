@@ -47,6 +47,12 @@
   .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   button { cursor:pointer; border:none; border-radius:7px; padding:9px 14px; font-size:13px; font-weight:600; }
   .btn { background:var(--accent); color:#fff; } .btn:hover{ filter:brightness(1.1); }
+  /* Links are the page's download/seed actions. Without this they fall back to
+     the UA's default link blue, which on the dark theme is near-invisible
+     navy-on-navy -- the actions read as absent rather than merely dim.
+     .btn's own colour is a class rule and still wins for the header link. */
+  a { color:var(--accent); }
+  a:hover { filter:brightness(1.15); }
   .btn.ghost { background:var(--ghost-bg); color:var(--text); }
   .btn.danger { background:var(--err); color:#fff; }
   .btn:disabled { opacity:.45; cursor:not-allowed; }
@@ -91,7 +97,12 @@
   .card .props { color:var(--muted); font-size:0.85em; margin-top:2px; }
   .card .smi { color:var(--muted); opacity:.75; word-break:break-all; font-family:ui-monospace,Menlo,monospace; }
   .card .poseLink { display:inline-block; margin-top:6px; font-size:11px; }
-  .poseDl select, .poseDl input { font-size:11.5px; padding:1px 2px; vertical-align:baseline; }
+  /* The global rule above stretches every select to width:100%, which is right
+     for the form panels but breaks this one: it sits inline at the end of a
+     .sub line, so full width pushes it (and the download link after it) onto
+     lines of their own and the control stops reading as one widget. */
+  .poseDl { white-space:nowrap; }
+  .poseDl select, .poseDl input { width:auto; font-size:11.5px; padding:1px 2px; vertical-align:baseline; }
   .poseDl input { width:5.5em; }
   .conv-chart svg { width:100%; height:auto; display:block; }
   .conv-chart .axis { stroke:var(--border2); stroke-width:1; }
