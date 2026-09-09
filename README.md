@@ -152,6 +152,7 @@ curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?n=250'   # best 250
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?pct=5'   # best 5%
 curl -OJ http://localhost:5015/jobs/<id>/pose/7                  # one, by gallery rank
+curl -OJ http://localhost:5015/jobs/<id>/log                     # the run's console log
 
 # Housekeeping
 curl -X DELETE http://localhost:5015/jobs/<id>                   # delete one run
@@ -167,6 +168,12 @@ once its convergence has flattened without losing the GPU time already spent.
 
 (The dock needs the `gnina` binary at `/opt/gnina/gnina.1.3.2` + a GPU; everything
 else runs anywhere.)
+
+Every job also writes its console to `run.log` as it goes, downloadable from
+the **log ↓** button in the Run panel (during the run too -- it serves whatever
+has been logged so far). It holds what `results.json` doesn't: the pool's
+tagged-block census, which filters were active and what each one rejected, the
+auto-tuned TS budget, prep/dock failure counts, and where the run stopped.
 
 A slice download keeps the run's name (`<id>_poses_top250.sdf`); a single pose
 is saved under its own product name instead (`TH17145_12559.sdf`, the same title

@@ -717,6 +717,26 @@ def _pose_record(poses_path: Path, rank: int) -> Optional[str]:
     return None
 
 
+@app.get("/jobs/{job_id}/log")
+async def job_log(job_id: str) -> Response:
+    """Download a run's console log (``run.log``) as a text file.
+
+    Every job already writes each console line to disk as it emits it (see
+    ``GrowthJob._append``) -- the same lines the live console and the SSE
+    stream show. Only the way out was missing: the console is replaced when
+    you load another run, and the terminal scrollback isn't the record of a
+    run that finished days ago. The log carries what the results file cannot
+    -- the pool's tagged-block census, which filters were active and what each
+    rejected, the auto-tuned TS budget, prep/dock failure counts, and where the
+    run stopped -- so it is what you reach for when asking why a run behaved
+    the way it did."""
+    p = _job_path(job_id, "run.log")
+    if not p.is_file():
+        raise HTTPException(404, "no log for this job")
+    return FileResponse(str(p), media_type="text/plain",
+                        filename=f"{job_id}.log")
+
+
 @app.get("/jobs/{job_id}/poses/{filename}")
 async def job_poses(job_id: str, filename: str,
                     n: Optional[int] = Query(None, ge=1,
