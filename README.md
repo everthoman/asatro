@@ -36,7 +36,7 @@ auto-derived for each handle.
 ```bash
 python -m asatro.chemistry.handles "OC(=O)c1ccncc1"   # CLI
 curl 'http://localhost:5015/analyze?smiles=OC(=O)c1ccncc1'
-python -m pytest tests/                                # 267 passing
+python -m pytest tests/                                # 273 passing
 ```
 
 **Reaction catalog**: the full Hartenfeller et al. reaction SMIRKS set (58
@@ -170,11 +170,12 @@ once its convergence has flattened without losing the GPU time already spent.
 else runs anywhere.)
 
 Every job also writes its console to `run.log` as it goes. Reopening a past run
-from the history replays that log into the console pane, and the **log ↓**
-button downloads it (during the run too -- it serves whatever has been logged
-so far). It holds what `results.json` doesn't: the pool's
-tagged-block census, which filters were active and what each one rejected, the
-auto-tuned TS budget, prep/dock failure counts, and where the run stopped.
+from the history replays that log into the console pane (its tail, past 2000
+lines), and the **log ↓** button in the Run panel downloads the whole file —
+during the run too, where it serves whatever has been logged so far. The log
+holds what `results.json` doesn't: the pool's tagged-block census, which
+filters were active and what each one rejected, the auto-tuned TS budget,
+prep/dock failure counts, and where the run stopped.
 
 A slice download keeps the run's name (`<id>_poses_top250.sdf`); a single pose
 is saved under its own product name instead (`TH17145_12559.sdf`, the same title
