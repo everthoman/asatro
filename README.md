@@ -120,11 +120,11 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   step 1 — the bound fragment fills that slot — and optionally chain further
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
-  candidate's own anchored conformer, and guarded afterwards on both placement
-  (core-RMSD against the bound fragment) and geometry (no atom jammed into the
-  receptor, no repulsive score). Each guard is separately adjustable and can be
-  switched off, in which case what it measures is still annotated onto every
-  pose (`core_rmsd`, `min_receptor_dist`) rather than lost.
+  candidate's own anchored conformer, and guarded afterwards on placement
+  (core-RMSD against the bound fragment). The guard is adjustable and can be
+  switched off; either way every pose is annotated with `core_rmsd` and
+  `min_receptor_dist` (closest heavy-atom approach to the receptor), so what
+  isn't rejected can still be filtered on afterwards.
   The accessibility pre-pass validates the chosen route before it runs.
   Products are named by joining their reagent names, fragment first
   (`TH17144_150266`), so name the fragment in the UI field — a bound fragment
@@ -211,6 +211,18 @@ protocol — local-only was removed rather than left as an option, since a pose
 it produces isn't one you would act on. The core-RMSD default moved 1.5 → 2.0 Å
 with it, because a pose that was never allowed to move sits closer to the
 reference than a correctly docked one.
+
+A clash guard briefly sat alongside the placement guard, rejecting poses with a
+heavy atom within 1.8 Å of the receptor or a positive score. It never fired: over
+a 278-product run no pose came within 2.5 Å or scored above −5.2, because the
+search optimises the very term such a pose violates. It was removed rather than
+kept as dead weight — `min_receptor_dist` on each pose is what remains of it.
+
+Growth asks gnina for one mode (`--num_modes 1`), since only the best pose per
+product is ever kept. That makes the placement guard all-or-nothing per product:
+a rejected pose is a rejected product, with no lower-ranked mode to fall back on.
+Combi still asks for nine, because it picks among them by the configured score
+field, which is not the order gnina returns them in.
 
 Distances are heavy-atom to heavy-atom throughout (`load_receptor_atoms` skips
 hydrogens) — worth stating because a protonated receptor puts H-bonded

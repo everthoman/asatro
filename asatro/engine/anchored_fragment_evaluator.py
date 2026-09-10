@@ -25,15 +25,10 @@ subclass overrides just those two steps:
    anchored conformer (see ``_box_flags``), so the search is confined to the
    fragment's own site instead of the whole protein.
 
-Plus two post-dock guards, applied per docked mode (``_pose_acceptable``):
-
-* the conserved-core atoms must not have drifted more than ``max_core_rmsd`` A
-  from the reference -- this is what holds the binding mode, since the search
-  itself is free; ``None`` switches it off (drift is still measured and
-  annotated, never rejected).
-* the pose must not be jammed into the receptor: no heavy atom within
-  ``clash_radius`` A of a receptor atom, and ``minimizedAffinity`` (gnina's
-  empirical score, always computed) not above ``max_affinity``.
+Plus one post-dock guard (``_pose_acceptable``): the conserved-core atoms must
+not have drifted more than ``max_core_rmsd`` A from the reference. That is what
+holds the binding mode, since the search itself is free. ``None`` switches it
+off, and the drift is still measured and annotated either way.
 
 Why this protocol, measured rather than assumed. The constrained embed places
 the grown arm without ever seeing the receptor, so its starting pose is usually
@@ -57,12 +52,13 @@ on all of them, where local-only drifted past 2 A on three; over a full
 heavy-atom contact at 2.70-3.06 A. It costs ~7x the time per dock (2.4 s ->
 15-40 s), which is the price of a pose worth looking at.
 
-Note what this means for the clash guard: under a real search it is close to
-inert (zero rejections over that 278-product run, no pose within 2.5 A), since
-the search optimises the very term a clash violates. It is kept as the backstop
-for the one case a search cannot signal -- gnina answers "here is the best pose
-I found", never "this ligand does not fit", so a product with nowhere to go
-still comes back with a pose and a score.
+There was briefly a second guard here, rejecting poses jammed into the receptor
+(a heavy atom within 1.8 A) or scoring positive. Under a real search it never
+fired -- zero rejections over a 278-product run, in which no pose came within
+2.5 A of the receptor or scored above -5.2 -- because the search optimises the
+very term such a pose violates. It was removed rather than kept as dead weight;
+what it measured is still annotated on every pose as ``min_receptor_dist``, so
+a run can be filtered on it afterwards if a pocket ever does misbehave.
 
 ``num_modes`` is 1 here (9 in the unanchored evaluator): only the best pose is
 ever kept, so further modes were written and discarded. That makes the guards
@@ -267,13 +263,6 @@ _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 # where the old local-only protocol left it under 1.0 A by construction -- the
 # same 1.5 A that once meant "drifted" would now reject good poses.
 DEFAULT_MAX_CORE_RMSD = 2.0
-# A heavy atom this close to a receptor atom is through the surface, not in
-# contact with it (a real H-bond heavy-atom pair sits at ~2.7-3.2 A).
-DEFAULT_CLASH_RADIUS = 1.8
-# minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
-# pose whatever the score field is. Above zero the steric term has won: the
-# pose is repulsive on the physics the CNN does not see.
-DEFAULT_MAX_AFFINITY = 0.0
 
 # ``forkserver``, not the platform default ``fork`` or ``spawn``:
 # - ``fork`` from a process that has other live threads (the concurrent-dock
@@ -467,12 +456,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      ``None`` turns the guard off: drift is
                                      still measured and annotated on the pose,
                                      but never rejects it.
-        clash_radius : float (1.8) - reject a pose with any heavy atom this
-                                     close to a receptor atom. 0/None: off.
-        max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
-                                     above this (positive = net repulsion, i.e.
-                                     a clash the score itself reports).
-                                     ``None`` turns it off.
         embed_timeout: float (60) - give up on one candidate's ConstrainedEmbed
                                      after this many seconds (see
                                      ``_run_constrained_embed`` -- RDKit's
@@ -499,10 +482,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                                    input_dict.get("core_smarts"))
         guard = input_dict.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         self.max_core_rmsd = None if guard is None else float(guard)
-        radius = input_dict.get("clash_radius", DEFAULT_CLASH_RADIUS)
-        self.clash_radius = float(radius) if radius else 0.0
-        max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
-        self.max_affinity = None if max_aff is None else float(max_aff)
         # Post-dock rejects, by reason -- reported in stats() so a run can say
         # how much of its library the pose guards threw away, and why.
         self.pose_rejections: Dict[str, int] = {}
@@ -561,25 +540,17 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     # --- override hook 3: which docked modes count -----------------------------
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:
-        """Reject a docked mode that broke the binding mode or is jammed into
-        the receptor. Applied to every mode of the search, so a bad top-scored
-        mode costs that mode, not the product.
+        """Reject a docked mode whose conserved core left its bound position:
+        the search is free, so this is what holds the binding mode.
 
         A rejected product ends up ``nan`` -- the same as a filtered one -- so
         Thompson Sampling is not rewarded for reaching it."""
+        if self.max_core_rmsd is None:
+            return True
         drift = self._core_drift(pose)
-        if self.max_core_rmsd is not None and (drift is None or drift > self.max_core_rmsd):
+        if drift is None or drift > self.max_core_rmsd:
             self._count_pose_rejection("core drift")
             return False
-        if self.clash_radius and self._receptor_xyz is not None:
-            if _receptor_clashes(pose, self._receptor_xyz, self.clash_radius):
-                self._count_pose_rejection("clash")
-                return False
-        if self.max_affinity is not None:
-            aff = self._parse_prop(pose, "minimizedAffinity")
-            if aff is not None and np.isfinite(aff) and aff > self.max_affinity:
-                self._count_pose_rejection("repulsive score")
-                return False
         return True
 
     def _count_pose_rejection(self, reason: str) -> None:
@@ -603,9 +574,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         score, pose = super()._best_pose(sdf_path, smiles)
         if pose is None:
             return score, pose
-        # Everything the guards judged the pose on, recorded on the pose: with a
-        # guard switched off these are the only way to filter for it after the
-        # run, and with it on they say how much margin the pose had.
+        # What the pose would be judged on, recorded on the pose: the drift the
+        # guard measured (how much margin it had), and how close it came to the
+        # receptor -- nothing rejects on that any more, so the annotation is the
+        # only way to filter for it after a run.
         drift = self._core_drift(pose)
         if drift is not None:
             pose.SetProp("core_rmsd", f"{drift:.2f}")

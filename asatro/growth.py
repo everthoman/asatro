@@ -316,9 +316,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     With the docking a real search (not a local optimisation of the built pose),
     this guard is what holds the anchor. ``None`` switches it off -- every
     docked pose counts, whatever it did to the binding mode, and the drift is
-    only annotated (``core_rmsd``) for inspection afterwards. ``clash_radius``
-    and ``max_affinity`` (passed through ``gnina_opts``) reject poses built into
-    the receptor; see ``AnchoredFragmentEvaluator``.
+    only annotated (``core_rmsd``) for inspection afterwards.
 
     If at most one reagent component actually varies across the whole route
     (true of a single-step start reaction: the fragment fixes one slot, one

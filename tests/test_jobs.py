@@ -1061,10 +1061,9 @@ def test_growth_job_logs_all_filters(tmp_path, monkeypatch):
     assert captured == [0.8]
 
 
-def test_growth_job_logs_and_wires_the_pose_guards(tmp_path, monkeypatch):
-    """The clash guards and the docking protocol decide which poses a run keeps,
-    so they are recorded in the run log with the molecule filters, and reach the
-    engine as given."""
+def test_growth_job_logs_and_wires_the_placement_guard(tmp_path, monkeypatch):
+    """The placement guard decides which poses a run keeps, so it is recorded in
+    the run log with the molecule filters, and reaches the engine as given."""
     monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
     sdf = _bound_sdf(tmp_path)
     captured = {}
@@ -1082,34 +1081,8 @@ def test_growth_job_logs_and_wires_the_pose_guards(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    # Defaults: a real search, both pose guards on, at the documented values.
     assert "core-RMSD guard 2 A" in line
-    assert "clash guard 1.8 A" in line and "max affinity 0" in line
-    assert (captured["max_core_rmsd"], captured["clash_radius"],
-            captured["max_affinity"]) == (2.0, 1.8, 0.0)
-
-
-def test_growth_job_can_switch_the_pose_guards_off(tmp_path, monkeypatch):
-    """Each guard is separately switchable, and the log says which ran."""
-    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
-    sdf = _bound_sdf(tmp_path)
-    captured = {}
-
-    def runner(**k):
-        captured.update(k)
-        return _fake_runner(**k)
-
-    job = start_growth_job(
-        fragment_path=sdf, receptor_path="",
-        steps=["suzuki"], fragment_slot=1,
-        reactant_by_class={"boronic": _boronic(tmp_path)},
-        cfg={"num_cycles": 1, "num_warmup": 1, "clash_radius": 0,
-             "max_affinity": None},
-        runner=runner)
-    _await(job)
-    line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    assert "clash guard off" in line and "affinity guard off" in line
-    assert (captured["clash_radius"], captured["max_affinity"]) == (0.0, None)
+    assert captured["max_core_rmsd"] == 2.0
 
 
 def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):

@@ -536,59 +536,44 @@ def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
     1.5 that suited the local-only protocol."""
     ev = _ev_with_receptor(tmp_path)
     assert ev.max_core_rmsd == 2.0
-    assert (ev.clash_radius, ev.max_affinity) == (1.8, 0.0)
 
 
-def test_pose_jammed_into_the_receptor_is_rejected(tmp_path):
-    """The guard the old protocol never had: geometry, not score. This pose is
-    sitting on a receptor atom while scoring well on both fields."""
-    ev = _ev_with_receptor(tmp_path)
+def test_receptor_distance_is_annotated_even_though_nothing_rejects_on_it(tmp_path):
+    """The clash guard is gone -- a real search never tripped it (zero
+    rejections over a 278-product run, nothing within 2.5 A of the receptor).
+    What it measured is still written onto every pose, so a run can be filtered
+    on it afterwards if a pocket ever does misbehave."""
+    ev = _ev_with_receptor(tmp_path, max_core_rmsd=None)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
-    path = _clashing_pose_sdf(tmp_path, smi, ev._receptor_xyz, ev.score_field, -9.0)
-    assert ev._best_pose(path, smi) == (None, None)
-    assert ev.stats()["pose_rejections"] == {"clash": 1}
-    # Guard off -> the same pose is kept, and still measured.
-    off = _ev_with_receptor(tmp_path, clash_radius=0)
-    _score, pose = off._best_pose(path, smi)
-    assert pose is not None and float(pose.GetProp("min_receptor_dist")) < 1.8
-
-
-def test_pose_with_a_repulsive_score_is_rejected(tmp_path):
-    """minimizedAffinity above zero means the steric term won -- the physics a
-    CNN score field does not see. Rejected even though CNN_VS looks great."""
-    # Core guard off, so the affinity guard is what has to fire.
-    ev = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS",
-                           max_core_rmsd=None)
-    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
-    path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
-    pose = next(m for m in Chem.SDMolSupplier(path))
-    pose.SetProp("CNN_VS", "4.31"); pose.SetProp("minimizedAffinity", "32.51")
-    w = Chem.SDWriter(path); w.write(pose); w.close()
-    assert ev._best_pose(path, smi) == (None, None)
-    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
-    kept = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS",
-                             max_core_rmsd=None, max_affinity=None)
-    assert kept._best_pose(path, smi)[1] is not None
+    # score_field is minimizedAffinity here, so the helper's affinity is the score
+    path = _clashing_pose_sdf(tmp_path, smi, ev._receptor_xyz, ev.score_field, -9.0,
+                              affinity=-8.0)
+    score, pose = ev._best_pose(path, smi)
+    assert pose is not None and score == -8.0          # kept, not rejected
+    assert float(pose.GetProp("min_receptor_dist")) < 1.8
+    assert ev.stats()["pose_rejections"] == {}
 
 
 def test_a_rejected_mode_does_not_cost_the_whole_product(tmp_path):
-    """A search returns num_modes poses. The top-scored one being unusable says
-    nothing about the rest, so the guards run per mode and the best *acceptable*
-    mode wins -- only a product whose every mode is rejected scores nan."""
-    ev = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS")
+    """Growth asks for one mode, but the selection is still per mode: given
+    several (num_modes raised deliberately), the top-scored one being unusable
+    says nothing about the rest, and the best *acceptable* mode wins. Only a
+    product whose every mode is rejected scores nan."""
+    ev = _ev_with_receptor(tmp_path, score_field="CNN_VS", num_modes=9)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     good = next(m for m in Chem.SDMolSupplier(
         _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 0.0, name="a.sdf")))
-    bad = Chem.Mol(good)
-    bad.SetProp("CNN_VS", "9.99"); bad.SetProp("minimizedAffinity", "40.0")   # best score, clashing
-    good.SetProp("CNN_VS", "3.10"); good.SetProp("minimizedAffinity", "-7.5")
+    drifted = next(m for m in Chem.SDMolSupplier(
+        _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0, name="b.sdf")))
+    drifted.SetProp("CNN_VS", "9.99")      # best-scoring mode, off its anchor
+    good.SetProp("CNN_VS", "3.10")
     path = str(tmp_path / "modes.sdf")
-    w = Chem.SDWriter(path); w.write(bad); w.write(good); w.close()
+    w = Chem.SDWriter(path); w.write(drifted); w.write(good); w.close()
 
     score, pose = ev._best_pose(path, smi)
-    assert score == 3.10                                   # not the 9.99 clash
-    assert float(pose.GetProp("minimizedAffinity")) == -7.5
-    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
+    assert score == 3.10                                   # not the 9.99 escapee
+    assert float(pose.GetProp("core_rmsd")) < 2.0
+    assert ev.stats()["pose_rejections"] == {"core drift": 1}
 
 
 def test_anchored_docking_asks_for_one_mode(tmp_path):

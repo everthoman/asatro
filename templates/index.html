@@ -245,21 +245,12 @@
           <input type="number" id="maxCoreRmsd" step="0.1" value="2.0" min="0"></div>
         <div></div>
       </div>
-      <div class="checkline"><input type="checkbox" id="clashOn" checked><label style="margin:0">Clash guard &mdash;
-        reject poses built into the receptor</label></div>
-      <div class="row">
-        <div><label>Clash radius (&Aring;)</label>
-          <input type="number" id="clashRadius" step="0.1" value="1.8" min="0"></div>
-        <div><label>Max affinity (kcal/mol)</label>
-          <input type="number" id="maxAffinity" step="0.5" value="0"></div>
-      </div>
       <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to
         disable. Core RMSD guard: reject any docked pose whose placed fragment core drifts more than this from the
         bound reference (MCS match to the conserved core) &mdash; this is what holds the fragment's binding mode now
-        that the dock is a real search. Clash guard: reject a pose with any heavy atom closer than the clash radius
-        to a receptor atom, or whose <code>minimizedAffinity</code> is above the max (positive = the pose is
-        repulsive). Untick either and nothing is rejected on it &mdash; <code>core_rmsd</code> and
-        <code>min_receptor_dist</code> are still measured and written to every pose, so you can filter afterwards.</div>
+        that the dock is a real search. Untick it and nothing is rejected on placement; either way
+        <code>core_rmsd</code> and <code>min_receptor_dist</code> (closest heavy-atom approach to the receptor) are
+        measured and written to every pose, so you can filter on them afterwards.</div>
     </div>
 
     <div class="panel" id="growPanel" style="display:none">
@@ -547,16 +538,10 @@ function syncScoreFieldOptions(cnnScoringId, scoreFieldId){
   }
 }
 
-// ---- guards: a cutoff box is meaningless with its guard switched off ----
+// ---- the cutoff box is meaningless with the guard switched off ----
 function toggleCoreRmsd(){ el('maxCoreRmsd').disabled = !el('coreRmsdOn').checked; }
 el('coreRmsdOn').addEventListener('change', toggleCoreRmsd);
 toggleCoreRmsd();
-function toggleClash(){
-  const on = el('clashOn').checked;
-  el('clashRadius').disabled = !on; el('maxAffinity').disabled = !on;
-}
-el('clashOn').addEventListener('change', toggleClash);
-toggleClash();
 
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
@@ -1156,9 +1141,6 @@ el('growBtn').addEventListener('click', async ()=>{
     // Unticked -> null, which the server reads as "no placement guard at all"
     // (distinct from a numeric cutoff, however large).
     max_core_rmsd: el('coreRmsdOn').checked ? (parseFloat(el('maxCoreRmsd').value) || 2.0) : null,
-    clash_radius: el('clashOn').checked ? (parseFloat(el('clashRadius').value) || 1.8) : 0,
-    max_affinity: el('clashOn').checked ? (isNaN(parseFloat(el('maxAffinity').value)) ? 0
-                                           : parseFloat(el('maxAffinity').value)) : null,
     filters: {
       pains: el('pains').checked, reos: el('reos').checked,
       mw: [numOrNull(el('mwLo')), numOrNull(el('mwHi'))],
