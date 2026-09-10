@@ -772,8 +772,9 @@ class GninaEvaluator(Evaluator):
 
         Poses ``_pose_acceptable`` rejects are skipped before either pool, so
         the winner is the best *acceptable* mode rather than the best mode --
-        a global search returns ``num_modes`` of them, and the top-scored one
-        being unusable says nothing about the rest."""
+        where a search returns several (``num_modes``), the top-scored one being
+        unusable says nothing about the rest. At ``num_modes`` 1 there is
+        nothing to fall back on and a rejected pose rejects the product."""
         best_score: Optional[float] = None
         best_mol: Optional[Chem.Mol] = None
         fallback_score: Optional[float] = None

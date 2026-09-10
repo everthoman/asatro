@@ -589,3 +589,26 @@ def test_a_rejected_mode_does_not_cost_the_whole_product(tmp_path):
     assert score == 3.10                                   # not the 9.99 clash
     assert float(pose.GetProp("minimizedAffinity")) == -7.5
     assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
+
+
+def test_anchored_docking_asks_for_one_mode(tmp_path):
+    """Only the best pose is ever kept (one per product in the pose cache), so
+    gnina is asked for one. The cost is that the pose guards become
+    all-or-nothing: a rejected pose is a rejected product, with no lower-ranked
+    mode left to fall back on."""
+    ev = _ev_with_receptor(tmp_path)
+    assert ev.num_modes == 1
+    # Still overridable for a deliberate multi-mode run.
+    assert _ev_with_receptor(tmp_path, num_modes=9).num_modes == 9
+
+
+def test_unanchored_docking_keeps_its_nine_modes(tmp_path):
+    """Combi has no pose guards; its _best_pose picks the best of gnina's modes
+    by the configured score field, which is not gnina's own ordering -- so the
+    extra modes there do change which pose wins."""
+    from asatro.combi import make_evaluator as combi_evaluator
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    ev = combi_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
+                         work_dir=str(tmp_path / "dock"))
+    assert ev.num_modes == 9

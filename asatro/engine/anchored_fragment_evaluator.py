@@ -60,8 +60,14 @@ heavy-atom contact at 2.70-3.06 A. It costs ~7x the time per dock (2.4 s ->
 Note what this means for the clash guard: under a real search it is close to
 inert (zero rejections over that 278-product run, no pose within 2.5 A), since
 the search optimises the very term a clash violates. It is kept as the backstop
-for the one case a search cannot signal -- a product that fits nowhere still
-comes back as ``num_modes`` best-effort poses, never as "no pose".
+for the one case a search cannot signal -- gnina answers "here is the best pose
+I found", never "this ligand does not fit", so a product with nowhere to go
+still comes back with a pose and a score.
+
+``num_modes`` is 1 here (9 in the unanchored evaluator): only the best pose is
+ever kept, so further modes were written and discarded. That makes the guards
+all-or-nothing per product -- a rejected pose is a rejected product, with no
+lower-ranked mode to fall back on.
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
@@ -481,6 +487,12 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
     def __init__(self, input_dict: dict):
         # Default the docking box to the fragment itself if no other site given.
         input_dict.setdefault("reference_path", input_dict.get("fragment_sdf"))
+        # One mode: only the best pose is ever kept (``_pose_cache`` holds one
+        # per product), so the extra modes were written and thrown away. The
+        # trade is that the guards below have no second mode to fall back on --
+        # a product whose one pose is rejected scores nan and drops out, where
+        # nine modes gave it eight more chances.
+        input_dict.setdefault("num_modes", 1)
         super().__init__(input_dict)
         self.fragment_sdf = input_dict["fragment_sdf"]
         self.core, self._core_movable = _load_core(self.fragment_sdf,
