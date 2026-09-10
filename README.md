@@ -192,22 +192,30 @@ other hits, where *which product* matters and *#7 of that run* does not.
 ### Why the dock is a search, not a local optimisation
 
 Growth used to pass `--local_only`: gnina minimised the pose the constrained
-embed had built, with no search, at ~2.4 s per dock. The embed places the grown
-arm without ever seeing the receptor, so its starting pose routinely has a third
-of its heavy atoms inside the protein — and a local minimisation cannot repair
-that. Measured over a real 877-product run and reproduced exactly by re-docking
-its own hits: poses came back with 8–17 heavy atoms within 2.2 Å of the receptor
-and `minimizedAffinity` of +10 to +32 kcal/mol, or with the whole ligand shoved
-12 Å out of the site. A CNN score field hides it — CNN_VS and `minimizedAffinity`
-were uncorrelated (r = 0.03), and 39 of that run's top 50 by CNN_VS scored
-positive.
+embed had built, with no search, at ~2.4 s per dock. The embed never sees the
+receptor, so the pose it hands over is usually inside the protein — measured
+over ten products, closest heavy-atom approach 0.57–2.22 Å, up to seven atoms
+under 1.8 Å. A local optimisation has only two ways out of that, and a real
+877-product run showed both: settle into the clash (356 of its poses scored
+positive `minimizedAffinity`, up to +32 kcal/mol) or slide out of the site
+(its top-ranked pose sat 12.5 Å off the anchor). A CNN score field hides both —
+CNN_VS and `minimizedAffinity` were uncorrelated there (r = 0.03), and 39 of
+that run's top 50 by CNN_VS scored positive.
 
-The same products, full search in the same box: −4.9 to −8.0 kcal/mol, closest
-receptor approach 2.8–3.0 Å, anchored core 1.2–1.8 Å off the reference, for
-15–40 s per dock. That is the default now; `local_only` in the growth config
-(and the *Local-only docking* tickbox) brings the fast protocol back for a rough
-sweep. The core-RMSD default moved 1.5 → 2.0 Å with it, because a pose that was
-never allowed to move sits closer to the reference than a correctly docked one.
+A search in the same box wins on every axis measured: on ten products it beat
+local-only's affinity on nine, by 0.3–4.0 kcal/mol, and stayed anchored on all
+ten where local-only drifted past 2 Å on three; across a full 278-product run
+every pose came back at −5.2 to −8.4 kcal/mol with its closest heavy-atom
+contact at 2.70–3.06 Å. It costs 15–40 s per dock. That is the default now;
+`local_only` in the growth config (and the *Local-only docking* tickbox) brings
+the fast protocol back for a rough sweep. The core-RMSD default moved 1.5 → 2.0 Å
+with it, because a pose that was never allowed to move sits closer to the
+reference than a correctly docked one.
+
+Distances are heavy-atom to heavy-atom throughout (`load_receptor_atoms` skips
+hydrogens) — worth stating because a protonated receptor puts H-bonded
+hydrogens 1.8–2.0 Å from ligand heavy atoms, which any all-atom distance check
+will read as clashes.
 
 A pose can also be pulled **while the run is still going**, straight from the
 evaluator's live cache — every card in the live gallery carries the same

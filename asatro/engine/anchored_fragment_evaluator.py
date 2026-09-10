@@ -35,19 +35,33 @@ Plus two post-dock guards, applied per docked mode (``_pose_acceptable``):
   ``clash_radius`` A of a receptor atom, and ``minimizedAffinity`` (gnina's
   empirical score, always computed) not above ``max_affinity``.
 
-Why the clash guard exists (measured, not theoretical): the constrained embed
-places the grown arm without ever seeing the receptor, so its starting pose
-routinely has a third of its atoms inside the protein. Under the old
-``--local_only`` protocol -- a local optimisation of exactly that pose, no
-search -- gnina could not repair it: docked poses came back with 8-17 heavy
-atoms within 2.2 A of the receptor and ``minimizedAffinity`` of +10 to +32
-kcal/mol (physically impossible), or with the whole ligand shoved 12 A out of
-the site. A CNN score field ranks those poses top perfectly happily -- CNN_VS
-and minimizedAffinity were uncorrelated (r = 0.03) over a real 877-product run,
-39 of whose top 50 by CNN_VS scored positive. A full search in the same box
-resolves the same products to 0-2 contacts and -4.9 to -8.0 kcal/mol, for ~7x
-the time per dock (2.4 s -> 15-40 s). Set ``local_only=True`` to get the old
-fast protocol back, clash guard included.
+Why this protocol, measured rather than assumed. The constrained embed places
+the grown arm without ever seeing the receptor, so its starting pose is usually
+inside the protein: over ten products, the closest heavy-atom approach of the
+built pose was 0.57-2.22 A, with up to seven atoms under 1.8 A. The old
+protocol handed exactly that pose to ``--local_only`` -- a local optimisation,
+no search -- and asked it to cope. Sometimes it does (on a small anchor it
+pushed all ten of those back out to 2.3-3.4 A), but it has only two ways out of
+a bad start, and both were seen in production: settle into the clash, which on
+one 877-product run left 356 poses at positive ``minimizedAffinity`` (up to
++32 kcal/mol, physically impossible), or slide the whole ligand out of the site,
+which is what that run's top-ranked pose did -- 12.5 A off its anchor. Neither
+is visible through a CNN score field: CNN_VS and minimizedAffinity were
+uncorrelated there (r = 0.03) and 39 of its top 50 by CNN_VS scored positive.
+
+A real search in the same box is better on every axis measured: on ten products
+it beat local-only's affinity on nine (by 0.3-4.0 kcal/mol) and stayed anchored
+on all of them, where local-only drifted past 2 A on three; over a full
+278-product run every pose came back at -5.2 to -8.4 kcal/mol with its closest
+heavy-atom contact at 2.70-3.06 A. It costs ~7x the time per dock (2.4 s ->
+15-40 s). ``local_only=True`` brings the fast protocol back for a rough sweep.
+
+Note what this means for the clash guard: under a real search it is close to
+inert (zero rejections over that 278-product run, no pose within 2.5 A), since
+the search optimises the very term a clash violates. It is kept as the backstop
+for the case a search cannot signal -- a product that fits nowhere still comes
+back as ``num_modes`` best-effort poses, never as "no pose" -- and for
+``local_only`` runs, where it does fire.
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
