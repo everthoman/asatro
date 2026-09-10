@@ -25,11 +25,12 @@ subclass overrides just those two steps:
    anchored conformer (see ``_box_flags``), so the search is confined to the
    fragment's own site instead of the whole protein.
 
-Plus two post-dock guards (``_pose_acceptable``): the conserved-core atoms
-must not have drifted more than ``max_core_rmsd`` A from the reference -- that
-is what holds the binding mode, since the search itself is free -- and
-``minimizedAffinity`` must not exceed ``max_affinity``. Either can be switched
-off with ``None``; the drift is measured and annotated either way.
+Plus two post-dock guards (``_pose_acceptable``), applied to every docked mode:
+the conserved-core atoms must not have drifted more than ``max_core_rmsd`` A
+from the reference -- that is what holds the binding mode, since the search
+itself is free -- and ``minimizedAffinity`` must not exceed ``max_affinity``.
+Either can be switched off with ``None``; the drift is measured and annotated
+either way.
 
 Why this protocol, measured rather than assumed. The constrained embed places
 the grown arm without ever seeing the receptor, so its starting pose is usually
@@ -65,10 +66,10 @@ only carried risk once ``num_modes`` dropped to 1. What it measured is still
 annotated on every pose as ``min_receptor_dist``, so a misbehaving pocket can
 still be found afterwards.
 
-``num_modes`` is 1 here (9 in the unanchored evaluator): only the best pose is
-ever kept, so further modes were written and discarded. That makes the guards
-all-or-nothing per product -- a rejected pose is a rejected product, with no
-lower-ranked mode to fall back on.
+Only one pose per product is kept, but nine modes are asked for: they are what
+the guard chooses between, and they are free (one search reports them all). The
+guard's threshold and ``num_modes`` are coupled -- at one mode, a 0.5 A guard
+passed no product at all out of twelve; at nine, three, and a 0.7 A guard eight.
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
@@ -267,15 +268,14 @@ _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 # to 1.8 A off the reference core (measured over a re-docked production run),
 # where the old local-only protocol left it under 1.0 A by construction -- the
 # same 1.5 A that once meant "drifted" would now reject good poses.
-DEFAULT_MAX_CORE_RMSD = 2.0
-# ...and no single core atom further than this from where it sits in the bound
-# pose. A mean cannot see a core that turned over in place: rotating this core
-# 90 A about its own in-plane axis moves its worst atom 2.43 A but averages to
-# only 1.45 A, so a mean-RMSD guard at any usable threshold passes a
-# perpendicular core (observed: docked poses at 72 and 81 degrees, RMSD 1.92 and
-# 1.99, both accepted). The worst atom is what says "this part of the fragment
-# is not where it was".
-DEFAULT_MAX_CORE_DEV = 1.5
+# Core RMSD against the bound pose, and tight, because the point of anchored
+# growth is that the fragment keeps the pose it was solved in. The threshold has
+# to be this low to mean anything: the core is rigid, so its RMSD tracks how far
+# it has turned almost exactly (r = 0.95 over a 162-pose run, worst atom a
+# near-constant 1.6x the mean), and a core turned 90 degrees in place still
+# averages only ~1.45 A. At 2.0 A the guard admitted poses sitting 81 degrees off
+# the bound core; 0.5 A admits about 20 degrees.
+DEFAULT_MAX_CORE_RMSD = 0.5
 # minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
 # pose whatever the score field is. Above zero the steric term has won: whatever
 # else the pose is, it is not a binding one. A search rarely returns such a pose
@@ -478,10 +478,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      leaving handle). Strongly recommended.
         max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
                                      above this. ``None`` turns it off.
-        max_core_dev : float (1.5) - reject if any single core atom is further
-                                     than this from its bound position. Catches
-                                     a core that turned over in place, which a
-                                     mean RMSD cannot. ``None`` turns it off.
         max_core_rmsd: float (2.0)- reject if core drifts more than this (A).
                                      ``None`` turns the guard off: drift is
                                      still measured and annotated on the pose,
@@ -500,12 +496,15 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
     def __init__(self, input_dict: dict):
         # Default the docking box to the fragment itself if no other site given.
         input_dict.setdefault("reference_path", input_dict.get("fragment_sdf"))
-        # One mode: only the best pose is ever kept (``_pose_cache`` holds one
-        # per product), so the extra modes were written and thrown away. The
-        # trade is that the guards below have no second mode to fall back on --
-        # a product whose one pose is rejected scores nan and drops out, where
-        # nine modes gave it eight more chances.
-        input_dict.setdefault("num_modes", 1)
+        # Nine modes, though only the best pose is kept: the extra modes are what
+        # the placement guard chooses between. gnina finds them in the same
+        # search either way -- reporting more of them costs nothing but the
+        # writing -- and at one mode the guard has to judge whichever pose the
+        # score field happened to rank first. Measured over twelve products, the
+        # best-anchored of nine modes sits 0.63 A off the bound core against
+        # 1.08 A for the single mode, and the share with a pose inside the 0.5 A
+        # guard goes from 0/12 to 3/12 (inside 0.7 A: 2/12 -> 8/12).
+        input_dict.setdefault("num_modes", 9)
         super().__init__(input_dict)
         self.fragment_sdf = input_dict["fragment_sdf"]
         self.core, self._core_movable = _load_core(self.fragment_sdf,
@@ -514,8 +513,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.max_core_rmsd = None if guard is None else float(guard)
         max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
         self.max_affinity = None if max_aff is None else float(max_aff)
-        max_dev = input_dict.get("max_core_dev", DEFAULT_MAX_CORE_DEV)
-        self.max_core_dev = None if max_dev is None else float(max_dev)
         # Post-dock rejects, by reason -- reported in stats() so a run can say
         # how much of its library the pose guards threw away, and why.
         self.pose_rejections: Dict[str, int] = {}
@@ -580,18 +577,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
         A rejected product ends up ``nan`` -- the same as a filtered one -- so
         Thompson Sampling is not rewarded for reaching it."""
-        if self.max_core_rmsd is not None or self.max_core_dev is not None:
+        if self.max_core_rmsd is not None:
             dev = self._core_deviations(pose)
-            if dev is None:
+            if dev is None or _rmsd(dev) > self.max_core_rmsd:
                 self._count_pose_rejection("core drift")
-                return False
-            if self.max_core_rmsd is not None and _rmsd(dev) > self.max_core_rmsd:
-                self._count_pose_rejection("core drift")
-                return False
-            if self.max_core_dev is not None and dev.max() > self.max_core_dev:
-                # The core is in roughly the right place but not in the right
-                # orientation -- turned over, or one end swung away.
-                self._count_pose_rejection("core turned")
                 return False
         if self.max_affinity is not None:
             aff = self._parse_prop(pose, "minimizedAffinity")

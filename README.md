@@ -121,12 +121,11 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
   candidate's own anchored conformer, and guarded afterwards on placement
-  (against the bound fragment's core: mean RMSD *and* worst single atom) and on
-  energy (`minimizedAffinity` above zero isn't a binding pose). All are
-  adjustable and can be switched off; either way every pose is annotated with
-  `core_rmsd`, `core_max_dev` and `min_receptor_dist` (closest heavy-atom
-  approach to the receptor), so what isn't rejected can still be filtered on
-  afterwards.
+  (core RMSD against the bound fragment, 0.5 Å) and on energy
+  (`minimizedAffinity` above zero isn't a binding pose). Both are adjustable and
+  can be switched off; either way every pose is annotated with `core_rmsd`,
+  `core_max_dev` and `min_receptor_dist` (closest heavy-atom approach to the
+  receptor), so what isn't rejected can still be filtered on afterwards.
   The accessibility pre-pass validates the chosen route before it runs.
   Products are named by joining their reagent names, fragment first
   (`TH17144_150266`), so name the fragment in the UI field — a bound fragment
@@ -222,21 +221,23 @@ it likewise rarely fires under a search (nothing above −5.2 in that run), but 
 is the one check that catches a pose which isn't binding at all, and a CNN score
 field cannot show that, since it doesn't see the empirical term.
 
-**The placement guard tests the worst core atom, not just the mean.** A mean
-RMSD cannot see a core that turned over in place: rotating a 9-atom core 90°
-about its own in-plane axis moves its worst atom 2.43 Å but averages to 1.45 Å,
-so *no* usable mean threshold rejects a perpendicular core. Not hypothetical — a
-run's top hits included docked poses whose fragment core sat 72° and 81° off the
-bound one, at RMSD 1.92 and 1.99, both accepted by a 2.0 Å mean guard. The
-`max_core_dev` limit (1.5 Å) is what rejects those; the mean stays as a second,
-looser check on the core as a whole, and rejections are logged separately as
-`core turned`.
+**The placement guard has to be tight, and it is coupled to `num_modes`.** The
+core is rigid, so its RMSD against the bound pose tracks how far it has *turned*
+almost exactly (r = 0.95 over a 162-pose run; the worst atom is a near-constant
+1.6× the mean). That also means a core turned fully perpendicular *in place*
+still averages only ~1.45 Å — so a loose threshold is not a lenient guard, it is
+no guard: at 2.0 Å a run's top hits included poses sitting 72° and 81° off the
+bound core. 0.5 Å admits about 20°, 0.7 Å about 27°.
 
-Growth asks gnina for one mode (`--num_modes 1`), since only the best pose per
-product is ever kept. That makes the placement guard all-or-nothing per product:
-a rejected pose is a rejected product, with no lower-ranked mode to fall back on.
-Combi still asks for nine, because it picks among them by the configured score
-field, which is not the order gnina returns them in.
+A threshold that tight needs poses to choose from, which is why growth asks
+gnina for nine modes and keeps the best *acceptable* one. The modes are free —
+one search finds them all, reporting more only costs the writing — and they
+matter: over twelve products the best-anchored of nine sat 0.63 Å off the core
+against 1.08 Å for the single top-ranked mode, and the share with a pose inside
+0.5 Å went from 0/12 to 3/12 (inside 0.7 Å, 2/12 → 8/12). Expect a tight guard
+to reject products outright, though: that is the guard working — a product whose
+core cannot stay put is not a growth of your fragment — but it is why the
+threshold is worth choosing deliberately against `core_rmsd` from a real run.
 
 Distances are heavy-atom to heavy-atom throughout (`load_receptor_atoms` skips
 hydrogens) — worth stating because a protonated receptor puts H-bonded

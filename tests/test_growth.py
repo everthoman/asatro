@@ -458,7 +458,7 @@ def _anchored_ev(tmp_path, **kw):
 def test_anchored_evaluator_rejects_a_drifted_pose_when_the_guard_is_on(tmp_path):
     """Baseline for the switch below: a core sitting 5 A off its bound position
     is a broken binding mode, and the guard throws the pose away."""
-    ev = _anchored_ev(tmp_path, max_core_rmsd=1.5, max_core_dev=None)
+    ev = _anchored_ev(tmp_path, max_core_rmsd=1.5)
     path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
     score, pose = ev._best_pose(path, Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1"))
     assert (score, pose) == (None, None)
@@ -468,8 +468,8 @@ def test_anchored_evaluator_keeps_a_drifted_pose_when_the_guard_is_off(tmp_path)
     """Both placement thresholds off: the same drifted pose is kept and scored,
     and the drift is still annotated on it so the run can be filtered on
     core_rmsd afterwards rather than during the search."""
-    ev = _anchored_ev(tmp_path, max_core_rmsd=None, max_core_dev=None)
-    assert ev.max_core_rmsd is None and ev.max_core_dev is None
+    ev = _anchored_ev(tmp_path, max_core_rmsd=None)
+    assert ev.max_core_rmsd is None
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
     score, pose = ev._best_pose(path, smi)
@@ -530,12 +530,12 @@ def test_anchored_docking_is_a_real_search(tmp_path):
 
 
 def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
-    """A correctly anchored pose from a free search sits further off the
-    reference core than one that was never allowed to move -- re-docking a real
-    run put clean poses at 1.2-1.8 A -- so the default guard is 2.0, not the
-    1.5 that suited the local-only protocol."""
+    """The guard is tight (0.5 A) because the core is rigid: its RMSD tracks how
+    far it turned, and a core turned perpendicular in place still averages only
+    ~1.45 A. Nine modes are asked for so the guard has poses to choose between --
+    at one mode a 0.5 A guard passed none of twelve products, at nine, three."""
     ev = _ev_with_receptor(tmp_path)
-    assert (ev.max_core_rmsd, ev.max_affinity) == (2.0, 0.0)
+    assert (ev.max_core_rmsd, ev.max_affinity) == (0.5, 0.0)
 
 
 def test_pose_with_a_repulsive_score_is_rejected(tmp_path):
@@ -596,15 +596,13 @@ def test_a_rejected_mode_does_not_cost_the_whole_product(tmp_path):
     assert ev.stats()["pose_rejections"] == {"core drift": 1}
 
 
-def test_anchored_docking_asks_for_one_mode(tmp_path):
-    """Only the best pose is ever kept (one per product in the pose cache), so
-    gnina is asked for one. The cost is that the pose guards become
-    all-or-nothing: a rejected pose is a rejected product, with no lower-ranked
-    mode left to fall back on."""
+def test_anchored_docking_asks_for_several_modes(tmp_path):
+    """Only one pose per product is kept, but the guard needs alternatives to
+    keep the best-anchored one rather than whichever the score field ranked
+    first -- and gnina finds them in the same search either way."""
     ev = _ev_with_receptor(tmp_path)
-    assert ev.num_modes == 1
-    # Still overridable for a deliberate multi-mode run.
-    assert _ev_with_receptor(tmp_path, num_modes=9).num_modes == 9
+    assert ev.num_modes == 9
+    assert _ev_with_receptor(tmp_path, num_modes=1).num_modes == 1
 
 
 def test_unanchored_docking_keeps_its_nine_modes(tmp_path):
@@ -654,30 +652,28 @@ def _turned_pose_sdf(tmp_path, ev, product_smiles, degrees, name="turned.sdf"):
     return str(path)
 
 
-def test_core_turned_perpendicular_is_rejected_though_its_rmsd_passes(tmp_path):
+def test_core_turned_perpendicular_is_rejected(tmp_path):
     ev = _anchored_ev(tmp_path)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 90.0)
 
-    # The mean is exactly what used to be checked, and it sails through.
+    # This is why the threshold has to be tight: a core turned right over in
+    # place still averages well under the 2.0 A the guard once used.
     pose = next(m for m in Chem.SDMolSupplier(path))
-    dev = ev._core_deviations(pose)
-    assert _rmsd_of(dev) < ev.max_core_rmsd          # mean says "fine"
-    assert dev.max() > ev.max_core_dev               # worst atom says otherwise
-
+    assert _rmsd_of(ev._core_deviations(pose)) < 2.0
     assert ev._best_pose(path, smi) == (None, None)
-    assert ev.stats()["pose_rejections"] == {"core turned": 1}
+    assert ev.stats()["pose_rejections"] == {"core drift": 1}
 
 
 def test_a_core_left_in_place_still_passes(tmp_path):
-    """The counterpart: the guard has to admit a pose that kept its anchor, or
-    it rejects everything -- with num_modes 1 that would empty a whole run."""
+    """The counterpart: the guard has to admit a pose that kept its anchor, or a
+    tight threshold just empties the run."""
     ev = _anchored_ev(tmp_path)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 0.0, name="flat.sdf")
     score, pose = ev._best_pose(path, smi)
     assert pose is not None and score == -8.2
-    assert float(pose.GetProp("core_max_dev")) < 1.5
+    assert float(pose.GetProp("core_rmsd")) < 0.5
     assert ev.stats()["pose_rejections"] == {}
 
 
