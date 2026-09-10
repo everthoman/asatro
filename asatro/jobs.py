@@ -310,14 +310,17 @@ def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
     return f"{lo_s}..{hi_s}{unit}"
 
 
-def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None) -> str:
+def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None,
+                     *, anchored: bool = False) -> str:
     """One-line census of every hard filter a job applies, for the run log.
 
     Always names all filters -- including the ones that are switched off -- so a
     finished run's log records the full criteria it ran under, and an absent
     cutoff can never be mistaken for a cutoff that simply wasn't recorded.
     ``max_core_rmsd`` is the post-dock placement guard (growth only); pass None
-    for combi jobs, which have no anchored core to drift.
+    with ``anchored=True`` for a growth job that switched the guard off, and
+    leave both at their defaults for combi jobs, which have no anchored core to
+    drift and so no guard to report either way.
     """
     parts = [
         f"PAINS {len(mol_filters.pains_patterns)} pattern(s)" if mol_filters.pains_patterns else "PAINS off",
@@ -327,6 +330,8 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
     ]
     if max_core_rmsd is not None:
         parts.append(f"core-RMSD guard {max_core_rmsd:g} A")
+    elif anchored:
+        parts.append("core-RMSD guard off")
     return "Filters: " + ", ".join(parts)
 
 
@@ -526,8 +531,11 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         reactant_files = resolve_reactant_files(steps, fragment_slot, resolver)
 
         mol_filters = make_filters(cfg)
-        max_core_rmsd = float(cfg.get("max_core_rmsd", 1.5))
-        job.log(describe_filters(mol_filters, max_core_rmsd))
+        # An explicit null means "no placement guard": dock and keep every pose,
+        # however far the anchored core drifted. Absent key -> the default guard.
+        guard = cfg.get("max_core_rmsd", 1.5)
+        max_core_rmsd = None if guard is None else float(guard)
+        job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"

@@ -1059,3 +1059,28 @@ def test_growth_job_logs_all_filters(tmp_path, monkeypatch):
     # What was logged is what the engine actually enforced.
     assert "core-RMSD guard 0.8 A" in line
     assert captured == [0.8]
+
+
+def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):
+    """A null max_core_rmsd means no placement guard at all: the engine is
+    handed None (keep every pose), and the log says the guard is off rather
+    than quietly omitting it, so a finished run still records the criteria."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = []
+
+    def runner(**k):
+        captured.append(k.get("max_core_rmsd"))
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1, "max_core_rmsd": None},
+        runner=runner)
+    _await(job)
+    assert job.status == "done"
+    line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
+    assert "core-RMSD guard off" in line
+    assert captured == [None]

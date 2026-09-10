@@ -119,7 +119,8 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
 - **Fragment growth** (`asatro/growth.py`): pick one accessible reaction/slot as
   step 1 — the bound fragment fills that slot — and optionally chain further
   "extend" steps onto it; each final product is constrained-placed onto the
-  bound pose and scored by GNINA, with an adjustable core-RMSD placement guard.
+  bound pose and scored by GNINA, with an adjustable core-RMSD placement guard
+  that can also be switched off (drift is then only annotated, never rejected).
   The accessibility pre-pass validates the chosen route before it runs.
   Products are named by joining their reagent names, fragment first
   (`TH17144_150266`), so name the fragment in the UI field — a bound fragment

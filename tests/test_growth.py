@@ -421,3 +421,57 @@ def test_growth_route_names_the_fragment_slot_after_the_sdf(tmp_path):
         fragment_name=fragment_name_from_sdf(_titled_sdf(tmp_path, "TH17144")))
     frag_file = next(f for f in files if f.endswith("fragment.smi"))
     assert open(frag_file).read().split() == ["Brc1ccccc1", "TH17144"]
+
+
+def _displaced_pose_sdf(tmp_path, ev, product_smiles, shift, name="docked.sdf"):
+    """A gnina-style output pose for ``product_smiles``: built anchored on the
+    fragment, then rigidly translated ``shift`` A away, so its conserved core
+    has drifted from the bound reference. The measured drift is smaller than
+    ``shift`` itself: with a symmetric core the measure takes the best-matching
+    mapping, so sliding the product along puts its far ring nearer the
+    reference than the shift suggests -- what matters here is only that the
+    drift lands far outside any sane guard."""
+    block, err = ev._prepare_pose(product_smiles)
+    assert err is None, err
+    mol = Chem.MolFromMolBlock(block)
+    conf = mol.GetConformer()
+    for i in range(mol.GetNumAtoms()):
+        p = conf.GetAtomPosition(i)
+        conf.SetAtomPosition(i, (p.x + shift, p.y, p.z))
+    mol.SetProp(ev.score_field, "-8.2")
+    path = tmp_path / name
+    w = Chem.SDWriter(str(path))
+    w.write(mol)
+    w.close()
+    return str(path)
+
+
+def _anchored_ev(tmp_path, **kw):
+    sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    return make_evaluator(fragment_sdf=sdf, receptor_path=str(rec),
+                          core_smarts=derive_core("Brc1ccccc1", "aryl_halide"),
+                          work_dir=str(tmp_path / "dock"), **kw)
+
+
+def test_anchored_evaluator_rejects_a_drifted_pose_when_the_guard_is_on(tmp_path):
+    """Baseline for the switch below: a core sitting 5 A off its bound position
+    is a broken binding mode, and the guard throws the pose away."""
+    ev = _anchored_ev(tmp_path, max_core_rmsd=1.5)
+    path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
+    score, pose = ev._best_pose(path, Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1"))
+    assert (score, pose) == (None, None)
+
+
+def test_anchored_evaluator_keeps_a_drifted_pose_when_the_guard_is_off(tmp_path):
+    """max_core_rmsd=None switches the placement filter off: the same drifted
+    pose is kept and scored, and the drift is still annotated on it so the run
+    can be filtered on core_rmsd afterwards rather than during the search."""
+    ev = _anchored_ev(tmp_path, max_core_rmsd=None)
+    assert ev.max_core_rmsd is None
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
+    score, pose = ev._best_pose(path, smi)
+    assert pose is not None and score == -8.2
+    assert float(pose.GetProp("core_rmsd")) > 5.0

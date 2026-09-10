@@ -330,7 +330,8 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     fills), plus the same run knobs as ``/combi`` (refine, num_warmup,
     num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
     [``"ts"``|``"rws"``], min_cpds_per_core, stop, max_core_rmsd — the core-
-    drift placement guard, in Å — ``concurrency``, ``cpu``). Returns the job id."""
+    drift placement guard, in Å, or ``null`` to switch the guard off —
+    ``concurrency``, ``cpu``). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
     except json.JSONDecodeError as e:

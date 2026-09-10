@@ -275,7 +275,7 @@ def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
 
 def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Optional[str],
                    work_dir: str, score_field: str = "minimizedAffinity",
-                   cnn_scoring: str = "none", max_core_rmsd: float = 1.5,
+                   cnn_scoring: str = "none", max_core_rmsd: Optional[float] = 1.5,
                    local_only: bool = True, filters: Optional[MolFilters] = None,
                    **extra) -> AnchoredFragmentEvaluator:
     """Build the anchored evaluator. The fragment SDF doubles as the autobox
@@ -298,7 +298,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                hide_progress: bool = True,
                search_method: str = "ts", min_cpds_per_core: Optional[int] = None,
                stop: Optional[int] = None,
-               max_core_rmsd: float = 1.5, prune_unreachable: bool = True,
+               max_core_rmsd: Optional[float] = 1.5, prune_unreachable: bool = True,
                fragment_name: Optional[str] = None,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
@@ -309,7 +309,9 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     ``max_core_rmsd`` (A) is the placement guard: ``AnchoredFragmentEvaluator``
     rejects any docked pose whose conserved-core atoms drift more than this
     from the bound reference -- the fragment's known binding mode has to
-    survive the grow, however many steps it took, or the product doesn't count.
+    survive the grow, however many steps it took, or the product doesn't count. ``None`` switches the guard off -- every docked pose counts, whatever it
+    did to the binding mode, and the drift is only annotated (``core_rmsd``) for
+    inspection afterwards.
 
     If at most one reagent component actually varies across the whole route
     (true of a single-step start reaction: the fragment fixes one slot, one

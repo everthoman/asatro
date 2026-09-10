@@ -26,7 +26,9 @@ subclass overrides just those two steps:
 
 Plus a guard: after docking, the conserved-core atoms must not have drifted more
 than ``max_core_rmsd`` A from the reference; if the grow broke the binding mode,
-the product is rejected (``nan``) exactly like a filtered molecule.
+the product is rejected (``nan``) exactly like a filtered molecule. Setting
+``max_core_rmsd`` to ``None`` switches the guard off: drift is still measured and
+annotated onto every pose, but no pose is rejected for it.
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
@@ -389,6 +391,9 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         core_smarts  : str        - the conserved sub-fragment (exclude the
                                      leaving handle). Strongly recommended.
         max_core_rmsd: float (1.5)- reject if core drifts more than this (A).
+                                     ``None`` turns the guard off: drift is
+                                     still measured and annotated on the pose,
+                                     but never rejects it.
         local_only   : bool (True)- pass --local_only to gnina (no global search).
         embed_timeout: float (60) - give up on one candidate's ConstrainedEmbed
                                      after this many seconds (see
@@ -408,7 +413,8 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.fragment_sdf = input_dict["fragment_sdf"]
         self.core, self._core_movable = _load_core(self.fragment_sdf,
                                                    input_dict.get("core_smarts"))
-        self.max_core_rmsd = float(input_dict.get("max_core_rmsd", 1.5))
+        guard = input_dict.get("max_core_rmsd", 1.5)
+        self.max_core_rmsd = None if guard is None else float(guard)
         self.local_only = bool(input_dict.get("local_only", True))
         self.embed_timeout = float(input_dict.get("embed_timeout", _EMBED_TIMEOUT_DEFAULT))
         # The handle can turn about the bond into the core, so the product may be
@@ -474,6 +480,12 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         if pose is None:
             return score, pose
         drift = self._core_drift(pose)
+        if self.max_core_rmsd is None:
+            # Guard off: keep every pose, but still record the drift it would
+            # have been judged on, so a run can be filtered on it afterwards.
+            if drift is not None:
+                pose.SetProp("core_rmsd", f"{drift:.2f}")
+            return score, pose
         if drift is None or drift > self.max_core_rmsd:
             # The grow broke the binding mode: treat as a reject (nan score) so
             # TS does not reward it. Returning (None, None) makes _dock yield nan.
