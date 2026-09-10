@@ -314,8 +314,7 @@ def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
 
 def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None,
                      *, anchored: bool = False, clash_radius: Optional[float] = None,
-                     max_affinity: Optional[float] = None,
-                     local_only: bool = False) -> str:
+                     max_affinity: Optional[float] = None) -> str:
     """One-line census of every hard filter a job applies, for the run log.
 
     Always names all filters -- including the ones that are switched off -- so a
@@ -325,9 +324,8 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
     with ``anchored=True`` for a growth job that switched the guard off, and
     leave both at their defaults for combi jobs, which have no anchored core to
     drift and so no guard to report either way. ``clash_radius`` /
-    ``max_affinity`` are the pose clash guards, and ``local_only`` says which
-    docking protocol ran -- all three decide which poses a growth run kept, so
-    they belong on the same line as the molecule filters.
+    ``max_affinity`` are the pose clash guards -- they decide which poses a
+    growth run kept, so they belong on the same line as the molecule filters.
     """
     parts = [
         f"PAINS {len(mol_filters.pains_patterns)} pattern(s)" if mol_filters.pains_patterns else "PAINS off",
@@ -344,8 +342,6 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
                      else "clash guard off")
         parts.append(f"max affinity {max_affinity:g}" if max_affinity is not None
                      else "affinity guard off")
-        parts.append("docking local-only (no search)" if local_only
-                     else "docking full search")
     return "Filters: " + ", ".join(parts)
 
 
@@ -556,10 +552,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         clash_radius = float(radius) if radius else 0.0
         max_aff = cfg.get("max_affinity", DEFAULT_MAX_AFFINITY)
         max_affinity = None if max_aff is None else float(max_aff)
-        local_only = bool(cfg.get("local_only", False))
         job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True,
-                                 clash_radius=clash_radius, max_affinity=max_affinity,
-                                 local_only=local_only))
+                                 clash_radius=clash_radius, max_affinity=max_affinity))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -587,7 +581,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
                 max_core_rmsd=max_core_rmsd, clash_radius=clash_radius,
-                max_affinity=max_affinity, local_only=local_only,
+                max_affinity=max_affinity,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,

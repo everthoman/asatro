@@ -297,12 +297,6 @@
           </select></div>
         <div><label>Seed</label><input type="number" id="seed" placeholder="random"></div>
       </div>
-      <div class="checkline"><input type="checkbox" id="localOnly"><label style="margin:0">Local-only docking
-        <span class="chip">fast, no search</span></label></div>
-      <div class="muted" style="margin-top:-2px">Off: gnina searches inside a box sized to each candidate's own
-        anchored conformer (~15&ndash;40 s/dock). On: it only minimises the pose the constrained embed built
-        (~2 s/dock) &mdash; which cannot pull a grown arm back out of the protein, so most poses come back clashing.
-        Use it to sweep a library fast, not to judge one.</div>
       <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
       <input type="text" id="sessionName" placeholder="e.g. NUDT15_frag1">
       <div class="row" style="margin-top:12px">
@@ -1165,7 +1159,6 @@ el('growBtn').addEventListener('click', async ()=>{
     clash_radius: el('clashOn').checked ? (parseFloat(el('clashRadius').value) || 1.8) : 0,
     max_affinity: el('clashOn').checked ? (isNaN(parseFloat(el('maxAffinity').value)) ? 0
                                            : parseFloat(el('maxAffinity').value)) : null,
-    local_only: el('localOnly').checked,
     filters: {
       pains: el('pains').checked, reos: el('reos').checked,
       mw: [numOrNull(el('mwLo')), numOrNull(el('mwHi'))],

@@ -278,13 +278,13 @@ def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Option
                    work_dir: str, score_field: str = "minimizedAffinity",
                    cnn_scoring: str = "none",
                    max_core_rmsd: Optional[float] = DEFAULT_MAX_CORE_RMSD,
-                   local_only: bool = False, filters: Optional[MolFilters] = None,
+                   filters: Optional[MolFilters] = None,
                    **extra) -> AnchoredFragmentEvaluator:
     """Build the anchored evaluator. The fragment SDF doubles as the autobox
     reference, so no separate binding site is needed."""
     d = dict(receptor_path=receptor_path, fragment_sdf=fragment_sdf,
              core_smarts=core_smarts, work_dir=work_dir, score_field=score_field,
-             cnn_scoring=cnn_scoring, max_core_rmsd=max_core_rmsd, local_only=local_only)
+             cnn_scoring=cnn_scoring, max_core_rmsd=max_core_rmsd)
     if filters is not None:
         d["filters"] = filters
     d.update(extra)

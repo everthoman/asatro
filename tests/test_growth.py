@@ -519,13 +519,14 @@ def _ev_with_receptor(tmp_path, **kw):
                           work_dir=str(tmp_path / "dock"), **kw)
 
 
-def test_anchored_docking_is_a_real_search_by_default(tmp_path):
-    """--local_only is off unless asked for: a local optimisation cannot undo a
-    grown arm the (receptor-blind) constrained embed built into the protein."""
+def test_anchored_docking_is_a_real_search(tmp_path):
+    """No --local_only: a local optimisation of the constrained embed cannot
+    undo a grown arm the (receptor-blind) embed built into the protein, so the
+    dock is a search, boxed to the candidate. There is no flag to opt back
+    out -- the fast protocol was removed, not made optional."""
     ev = _ev_with_receptor(tmp_path)
-    assert ev.local_only is False
     assert ev._extra_flags() == []
-    assert _ev_with_receptor(tmp_path, local_only=True)._extra_flags() == ["--local_only"]
+    assert not hasattr(ev, "local_only")
 
 
 def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):

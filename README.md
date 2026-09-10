@@ -206,9 +206,9 @@ A search in the same box wins on every axis measured: on ten products it beat
 local-only's affinity on nine, by 0.3–4.0 kcal/mol, and stayed anchored on all
 ten where local-only drifted past 2 Å on three; across a full 278-product run
 every pose came back at −5.2 to −8.4 kcal/mol with its closest heavy-atom
-contact at 2.70–3.06 Å. It costs 15–40 s per dock. That is the default now;
-`local_only` in the growth config (and the *Local-only docking* tickbox) brings
-the fast protocol back for a rough sweep. The core-RMSD default moved 1.5 → 2.0 Å
+contact at 2.70–3.06 Å. It costs 15–40 s per dock, and it is now the only
+protocol — local-only was removed rather than left as an option, since a pose
+it produces isn't one you would act on. The core-RMSD default moved 1.5 → 2.0 Å
 with it, because a pose that was never allowed to move sits closer to the
 reference than a correctly docked one.
 

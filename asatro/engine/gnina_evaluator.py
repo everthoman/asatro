@@ -605,8 +605,9 @@ class GninaEvaluator(Evaluator):
         return prepare_ligand_3d(smiles, self.ph, "ligand")
 
     def _extra_flags(self) -> List[str]:
-        """Extra gnina command-line flags. Default: none. Subclasses can add
-        e.g. ``--local_only`` for anchored docking."""
+        """Extra gnina command-line flags. Default: none, and both evaluators
+        currently want none -- the hook is here so a subclass can add flags
+        without reimplementing the command line."""
         return []
 
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:

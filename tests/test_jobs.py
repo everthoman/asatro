@@ -1085,9 +1085,8 @@ def test_growth_job_logs_and_wires_the_pose_guards(tmp_path, monkeypatch):
     # Defaults: a real search, both pose guards on, at the documented values.
     assert "core-RMSD guard 2 A" in line
     assert "clash guard 1.8 A" in line and "max affinity 0" in line
-    assert "docking full search" in line
     assert (captured["max_core_rmsd"], captured["clash_radius"],
-            captured["max_affinity"], captured["local_only"]) == (2.0, 1.8, 0.0, False)
+            captured["max_affinity"]) == (2.0, 1.8, 0.0)
 
 
 def test_growth_job_can_switch_the_pose_guards_off(tmp_path, monkeypatch):
@@ -1105,14 +1104,12 @@ def test_growth_job_can_switch_the_pose_guards_off(tmp_path, monkeypatch):
         steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
         cfg={"num_cycles": 1, "num_warmup": 1, "clash_radius": 0,
-             "max_affinity": None, "local_only": True},
+             "max_affinity": None},
         runner=runner)
     _await(job)
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
     assert "clash guard off" in line and "affinity guard off" in line
-    assert "docking local-only (no search)" in line
-    assert (captured["clash_radius"], captured["max_affinity"],
-            captured["local_only"]) == (0.0, None, True)
+    assert (captured["clash_radius"], captured["max_affinity"]) == (0.0, None)
 
 
 def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):

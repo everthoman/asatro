@@ -48,20 +48,20 @@ one 877-product run left 356 poses at positive ``minimizedAffinity`` (up to
 which is what that run's top-ranked pose did -- 12.5 A off its anchor. Neither
 is visible through a CNN score field: CNN_VS and minimizedAffinity were
 uncorrelated there (r = 0.03) and 39 of its top 50 by CNN_VS scored positive.
+That protocol is gone rather than optional: it was never worth its speed.
 
 A real search in the same box is better on every axis measured: on ten products
 it beat local-only's affinity on nine (by 0.3-4.0 kcal/mol) and stayed anchored
 on all of them, where local-only drifted past 2 A on three; over a full
 278-product run every pose came back at -5.2 to -8.4 kcal/mol with its closest
 heavy-atom contact at 2.70-3.06 A. It costs ~7x the time per dock (2.4 s ->
-15-40 s). ``local_only=True`` brings the fast protocol back for a rough sweep.
+15-40 s), which is the price of a pose worth looking at.
 
 Note what this means for the clash guard: under a real search it is close to
 inert (zero rejections over that 278-product run, no pose within 2.5 A), since
 the search optimises the very term a clash violates. It is kept as the backstop
-for the case a search cannot signal -- a product that fits nowhere still comes
-back as ``num_modes`` best-effort poses, never as "no pose" -- and for
-``local_only`` runs, where it does fire.
+for the one case a search cannot signal -- a product that fits nowhere still
+comes back as ``num_modes`` best-effort poses, never as "no pose".
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
@@ -447,7 +447,8 @@ def _constrained_pose_block(
 class AnchoredFragmentEvaluator(GninaEvaluator):
     """
     GninaEvaluator that grows from a *bound* fragment: constrained embed onto the
-    fragment pose + local-only gnina + a core-drift guard.
+    fragment pose, a gnina search boxed to that candidate, and post-dock guards
+    on core drift and receptor clash.
 
     Extra ``input_dict`` keys (on top of GninaEvaluator's)
         fragment_sdf : str        - fragment in its bound pose (3D SDF). REQUIRED.
@@ -466,10 +467,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      above this (positive = net repulsion, i.e.
                                      a clash the score itself reports).
                                      ``None`` turns it off.
-        local_only   : bool (False)- pass --local_only to gnina: optimise the
-                                     supplied pose only, no search. Fast, and
-                                     unable to fix a starting pose built into
-                                     the receptor -- see the module docstring.
         embed_timeout: float (60) - give up on one candidate's ConstrainedEmbed
                                      after this many seconds (see
                                      ``_run_constrained_embed`` -- RDKit's
@@ -494,7 +491,6 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.clash_radius = float(radius) if radius else 0.0
         max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
         self.max_affinity = None if max_aff is None else float(max_aff)
-        self.local_only = bool(input_dict.get("local_only", False))
         # Post-dock rejects, by reason -- reported in stats() so a run can say
         # how much of its library the pose guards threw away, and why.
         self.pose_rejections: Dict[str, int] = {}
@@ -524,15 +520,7 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                        self.embed_timeout, self._alt_cores,
                                        self._receptor_xyz)
 
-    # --- override hook 2: docking flags ---------------------------------------
-    def _extra_flags(self) -> List[str]:
-        # Off by default: --local_only optimises the supplied pose without
-        # searching, which cannot undo a grown arm the blind embed built into
-        # the protein. The anchoring comes from the per-candidate box plus the
-        # core-RMSD guard instead of from refusing to search.
-        return ["--local_only"] if self.local_only else []
-
-    # --- override hook 3: per-candidate box ------------------------------------
+    # --- override hook 2: per-candidate box ------------------------------------
     def _box_flags(self, sdf_block: str) -> List[str]:
         """Size the box from *this candidate's own* just-built conformer
         (core pinned to the bound pose, the rest freely embedded by
@@ -559,7 +547,7 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
             "--size_x", f"{size[0]:.3f}", "--size_y", f"{size[1]:.3f}", "--size_z", f"{size[2]:.3f}",
         ]
 
-    # --- override hook 4: which docked modes count -----------------------------
+    # --- override hook 3: which docked modes count -----------------------------
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:
         """Reject a docked mode that broke the binding mode or is jammed into
         the receptor. Applied to every mode of the search, so a bad top-scored
