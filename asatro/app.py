@@ -491,13 +491,20 @@ async def combi(receptor: UploadFile = File(...),
     return {"job_id": job.id, "status": job.status}
 
 
-def _top_items(rows) -> list:
-    """Render ``(score, smiles, name)`` rows (best-first) into gallery items."""
+def _top_items(rows, has_pose=None) -> list:
+    """Render ``(score, smiles, name)`` rows (best-first) into gallery items.
+
+    ``has_pose``, when given, is asked per row whether a docked pose can be
+    handed out for that product right now, so the gallery only offers a
+    download where there is something to download."""
     items = []
     for rank, (score, smiles, name) in enumerate(rows, start=1):
-        items.append({"rank": rank, "score": round(float(score), 3),
-                      "smiles": str(smiles), "name": str(name),
-                      "svg": mol_svg(str(smiles)), **mol_props(str(smiles))})
+        item = {"rank": rank, "score": round(float(score), 3),
+                "smiles": str(smiles), "name": str(name),
+                "svg": mol_svg(str(smiles)), **mol_props(str(smiles))}
+        if has_pose is not None:
+            item["pose"] = bool(has_pose(str(smiles)))
+        items.append(item)
     return items
 
 
@@ -535,7 +542,7 @@ async def job_top(job_id: str, n: int = 12) -> dict:
         rows = job.evaluator.top_scored(n)
         total = job.evaluator.stats()["unique_scored"]
         return {"ready": bool(rows), "live": True, "target": job.current_target,
-                "items": _top_items(rows), "total": total}
+                "items": _top_items(rows, job.evaluator.has_pose), "total": total}
     return {"ready": False, "live": False, "items": []}
 
 
@@ -808,6 +815,34 @@ async def job_pose(job_id: str, rank: int) -> Response:
     # and the rank alone collides as soon as two runs' #10 land in the same
     # folder. Falls back to the rank-based name for a pose with no title.
     stem = _record_title(sdf) or f"{job_id}_pose_{rank}"
+    return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
+                    headers={"Content-Disposition": f'attachment; filename="{stem}.sdf"'})
+
+
+@app.get("/jobs/{job_id}/live-pose")
+async def job_live_pose(job_id: str, smiles: str) -> Response:
+    """Download one docked pose (SDF) of a **running** job, straight from its
+    evaluator's live pose cache.
+
+    A run's poses only reach disk (``poses_0.sdf``) when it finishes, so until
+    then the gallery could show a promising hit with no way to open it -- on a
+    long run that is hours of waiting to look at a pose that has already been
+    docked. This serves that pose now.
+
+    Addressed by the product SMILES the live gallery card carries, not by rank:
+    the leaderboard reorders with every dock that lands, so by the time a
+    click arrives, rank #3 may be a different molecule -- and the point of the
+    download is *that* molecule."""
+    job = JOBS.get(job_id)
+    if job is None or job.evaluator is None or job.status != "running":
+        # Finished (or never started): the poses file is the way in, and it has
+        # the full set rather than whatever was cached at one moment.
+        raise HTTPException(404, "no live pose cache for this job — download poses from the results panel")
+    sdf = await run_in_threadpool(job.evaluator.pose_sdf, smiles)
+    if sdf is None:
+        raise HTTPException(404, "no docked pose for that product (yet)")
+    # Same naming as the finished-run download: the pose's own product name.
+    stem = _record_title(sdf) or f"{job_id}_pose"
     return Response(content=sdf, media_type="chemical/x-mdl-sdfile",
                     headers={"Content-Disposition": f'attachment; filename="{stem}.sdf"'})
 

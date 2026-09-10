@@ -50,6 +50,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from io import StringIO
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -944,6 +945,67 @@ class GninaEvaluator(Evaluator):
             "best_score": self._best_score,
         }
 
+    def has_pose(self, smiles: str) -> bool:
+        """Whether a docked pose is cached for this product -- i.e. whether it
+        can be handed out right now, mid-run, without waiting for the poses
+        file the job only writes when it finishes."""
+        with self._lock:
+            return smiles in self._pose_cache
+
+    def _ranked_poses(self) -> List[Tuple[str, Tuple[float, Chem.Mol]]]:
+        """Cached ``smiles -> (score, pose)`` entries, best-scored first: the
+        order ``DockingRank`` counts in."""
+        with self._lock:
+            poses = list(self._pose_cache.items())
+        poses.sort(key=lambda kv: kv[1][0], reverse=self.higher_is_better)
+        return poses
+
+    @staticmethod
+    def _stamp_pose(mol: Chem.Mol, rank: int, components) -> None:
+        """Stamp a pose with its rank and the reagents that built it.
+
+        Which building block filled each route slot: the title already
+        concatenates their names, but as fields they survive into a spreadsheet
+        or an ordering list without being re-split. Slots are in route-component
+        order (the order the reaction consumes them), which is not the
+        fragment-first order the reagent rankings panel displays."""
+        mol.SetProp("DockingRank", str(rank))
+        for i, comp in enumerate(components or (), start=1):
+            if comp.get("name"):
+                mol.SetProp(f"Reagent_{i}_Name", str(comp["name"]))
+            if comp.get("smiles"):
+                mol.SetProp(f"Reagent_{i}_SMILES", str(comp["smiles"]))
+
+    def pose_sdf(self, smiles: str) -> Optional[str]:
+        """One cached docked pose as SDF text, or ``None`` if this product has
+        none. Carries the same title and fields ``write_top_poses`` writes.
+
+        Addressed by product SMILES, not by rank, because this is what serves a
+        download made *while the run is still going*: ranks shift with every
+        dock that lands, so a rank picked off the live gallery can be a
+        different molecule by the time the request arrives -- the SMILES on the
+        card cannot. The ``DockingRank`` stamped in is the rank the pose holds
+        at this moment, a snapshot rather than the final standing.
+
+        Works on a copy, so a mid-run download never mutates the cached pose
+        the final ``write_top_poses`` is about to stamp for real."""
+        with self._lock:
+            entry = self._pose_cache.get(smiles)
+            components = self._components_cache.get(smiles)
+        if entry is None:
+            return None
+        rank = next((i for i, (smi, _e) in enumerate(self._ranked_poses(), start=1)
+                     if smi == smiles), 1)
+        mol = Chem.Mol(entry[1])
+        self._stamp_pose(mol, rank, components)
+        sio = StringIO()
+        writer = Chem.SDWriter(sio)
+        try:
+            writer.write(mol)
+        finally:
+            writer.close()
+        return sio.getvalue()
+
     def write_top_poses(self, path: str, n: Optional[int] = None) -> int:
         """Write docked poses (best-scored first) to an SDF file, stamping each
         with its 1-based ``DockingRank``.
@@ -954,27 +1016,15 @@ class GninaEvaluator(Evaluator):
         reached this file can never be downloaded afterwards, whatever
         top-N/top-N% slice the user asks for."""
         with self._lock:
-            poses = list(self._pose_cache.items())
             components = dict(self._components_cache)
-        poses.sort(key=lambda kv: kv[1][0], reverse=self.higher_is_better)
+        poses = self._ranked_poses()
         if n is not None:
             poses = poses[: max(1, int(n))]
         writer = Chem.SDWriter(path)
         written = 0
         try:
             for rank, (smiles, (_score, mol)) in enumerate(poses, start=1):
-                mol.SetProp("DockingRank", str(rank))
-                # Which building block filled each route slot. The title already
-                # concatenates their names, but as fields they survive into a
-                # spreadsheet or an ordering list without being re-split. Slots
-                # are in route-component order (the order the reaction consumes
-                # them), which is not the fragment-first order the reagent
-                # rankings panel displays.
-                for i, comp in enumerate(components.get(smiles) or (), start=1):
-                    if comp.get("name"):
-                        mol.SetProp(f"Reagent_{i}_Name", str(comp["name"]))
-                    if comp.get("smiles"):
-                        mol.SetProp(f"Reagent_{i}_SMILES", str(comp["smiles"]))
+                self._stamp_pose(mol, rank, components.get(smiles))
                 writer.write(mol)
                 written += 1
         finally:

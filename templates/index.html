@@ -1337,9 +1337,17 @@ function wirePoseDownload(){
 // about how much precision a score has.
 const fmtScore = v => (v == null || v === '' || isNaN(+v)) ? '\u2014' : (+v).toFixed(3);
 
-function galleryCards(items, jobId, poses){
+// `poses` offers the finished-run download (by rank, out of poses_0.sdf);
+// `live` offers the same for a run still going, addressing the pose by SMILES
+// out of the evaluator's cache -- ranks reorder under you mid-run, names don't.
+function galleryCards(items, jobId, poses, live){
   return items.map((it,i) => {
     const rank = it.rank!=null?it.rank:i+1;
+    const href = live
+      ? (it.pose ? `/jobs/${jobId}/live-pose?smiles=${encodeURIComponent(it.smiles)}` : '')
+      : ((jobId && poses) ? `/jobs/${jobId}/pose/${rank}` : '');
+    const hint = live ? 'Download this docked pose (SDF) — already docked, run still going'
+                      : 'Download this docked pose (SDF)';
     return `
     <div class="card">
       ${it.svg || '<div class="muted" style="color:#888">no structure</div>'}
@@ -1349,7 +1357,7 @@ function galleryCards(items, jobId, poses){
         ${(it.mw!=null||it.logp!=null) ? `<div class="props">MW ${it.mw!=null?it.mw:'–'} &middot; logP ${it.logp!=null?it.logp:'–'}</div>` : ''}
         <div class="smi" title="${esc(it.smiles)}">${esc(it.smiles)}</div>
       </div>
-      ${(jobId && poses) ? `<a class="poseLink" href="/jobs/${jobId}/pose/${rank}" download title="Download this docked pose (SDF)">Download pose ↓</a>` : ''}
+      ${href ? `<a class="poseLink" href="${href}" download title="${hint}">Download pose ↓</a>` : ''}
     </div>`;
   }).join('');
 }
@@ -1385,7 +1393,7 @@ async function pollLiveTop(){
     return;
   }
   el('liveMeta').textContent = `${d.target||''} · live · ${d.total} scored`;
-  grid.innerHTML = galleryCards(d.items);
+  grid.innerHTML = galleryCards(d.items, currentJob, false, true);
 }
 el('liveTopN').addEventListener('change', pollLiveTop);
 async function pollLiveConvergence(){

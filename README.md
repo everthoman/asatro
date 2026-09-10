@@ -153,6 +153,8 @@ curl http://localhost:5015/jobs/<id>/poses/poses_0.sdf           # all of them
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?n=250'   # best 250
 curl 'http://localhost:5015/jobs/<id>/poses/poses_0.sdf?pct=5'   # best 5%
 curl -OJ http://localhost:5015/jobs/<id>/pose/7                  # one, by gallery rank
+curl -OJG --data-urlencode 'smiles=O=C(Nc1ccccc1)c1ccncc1' \
+     http://localhost:5015/jobs/<id>/live-pose                   # one, mid-run, by product
 curl -OJ http://localhost:5015/jobs/<id>/log                     # the run's console log
 
 # Housekeeping
@@ -183,6 +185,17 @@ is saved under its own product name instead (`TH17145_12559.sdf`, the same title
 the record carries), because that file gets opened next to the fragment and the
 other hits, where *which product* matters and *#7 of that run* does not.
 
+A pose can also be pulled **while the run is still going**, straight from the
+evaluator's live cache — every card in the live gallery carries the same
+*Download pose ↓* link as a finished one, for hits that have already docked. A
+long run is hours of docking before `poses_0.sdf` exists, and a promising hit
+usually shows up in the first minutes; there's no reason to wait to look at it.
+The live download names the molecule (`?smiles=`) rather than a rank, because
+the leaderboard reorders with every dock that lands: `#3` can be a different
+product by the time the click arrives, the SMILES on the card cannot. The
+`DockingRank` stamped into a mid-run download is therefore a snapshot of where
+that pose stood, not its final standing.
+
 A finished job writes **every** docked pose, not just the ones the gallery
 shows — the evaluator's pose cache dies with the job, so a pose that never
 reached disk can never be downloaded afterwards. They're all in memory anyway,
@@ -203,7 +216,8 @@ Fragment growth and Combinatorial search as two modes: upload inputs → *Analyz
 (fragment growth) or build a route (combi) → configure reagents/filters/search →
 launch, with a live SSE console, structure gallery + convergence chart, and a
 job-history picker. Finished results carry a per-hit pose download and an
-all / top-N / top-N% selector for the whole pose set. Dark/light theme —
+all / top-N / top-N% selector for the whole pose set; the live gallery carries
+the same per-hit download for anything already docked. Dark/light theme —
 structures are stored once per run and recoloured client-side from RDKit's
 own default and `SetDarkMode` palettes, so every atom stays readable on
 either ground without redrawing them (`asatro/svg.py`).

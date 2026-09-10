@@ -143,3 +143,102 @@ def test_download_poses_rejects_bad_slice_args(tmp_path, monkeypatch):
                           params={"n": 1, "pct": 10}).status_code == 400
         assert client.get("/jobs/job1/poses/poses_0.sdf", params={"n": 0}).status_code == 422
         assert client.get("/jobs/job1/poses/poses_0.sdf", params={"pct": 101}).status_code == 422
+
+
+# --- mid-run downloads -----------------------------------------------------
+# A run's poses only reach poses_0.sdf when it finishes. Until then the live
+# gallery can show a promising hit, so it must also be able to hand it over --
+# out of the evaluator's own pose cache, keyed by SMILES rather than by rank.
+
+def _live_job(job_id="live"):
+    """A running job whose evaluator holds two docked poses, best first."""
+    from asatro.combi import make_evaluator
+    from asatro.jobs import GrowthJob, JOBS
+
+    d = jobs_dir() / job_id
+    d.mkdir(parents=True, exist_ok=True)
+    rec = d / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    ev = make_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
+                        work_dir=str(d / "dock"))
+    for score, smi, name in [(-9.1, "c1ccccc1", "TH17145_10000"),
+                             (-7.4, "CCO", "TH17145_20000")]:
+        m = Chem.AddHs(Chem.MolFromSmiles(smi))
+        AllChem.EmbedMolecule(m, randomSeed=1)
+        m = Chem.RemoveHs(m)
+        m.SetProp("_Name", name)
+        m.SetProp("SMILES", smi)
+        ev._score_cache[smi] = score
+        ev._pose_cache[smi] = (score, m)
+        ev._name_cache[smi] = name
+        ev._components_cache[smi] = [{"smiles": smi, "name": name}]
+    job = GrowthJob(id=job_id, dir=d, status="running")
+    job.evaluator = ev
+    JOBS[job_id] = job
+    return job, ev
+
+
+def test_live_pose_downloads_while_the_run_is_still_going(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    _live_job()
+    with TestClient(app) as client:
+        r = client.get("/jobs/live/live-pose", params={"smiles": "c1ccccc1"})
+        assert r.status_code == 200
+        assert r.text.count("$$$$") == 1
+        assert "TH17145_10000" in r.text
+        # Stamped like the final file: rank now, and the reagents behind it.
+        assert "DockingRank" in r.text and "Reagent_1_Name" in r.text
+        # Saved under the product's own name, as the finished-run download is.
+        assert "TH17145_10000.sdf" in r.headers.get("content-disposition", "")
+
+
+def test_live_pose_is_addressed_by_smiles_not_rank(tmp_path, monkeypatch):
+    """The leaderboard reorders with every dock that lands, so a rank clicked
+    off the gallery can name a different molecule by the time the request
+    arrives. The SMILES on the card cannot -- asking for the runner-up gets the
+    runner-up, and the rank it is stamped with follows the score."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    _live_job()
+    with TestClient(app) as client:
+        r = client.get("/jobs/live/live-pose", params={"smiles": "CCO"})
+        assert r.status_code == 200
+        assert "TH17145_20000" in r.text
+        rank = r.text.split("<DockingRank>")[1].splitlines()[1].strip()
+        assert rank == "2"
+
+
+def test_live_pose_download_does_not_disturb_the_cached_pose(tmp_path, monkeypatch):
+    """Downloading mid-run works on a copy: the pose still in the cache is
+    untouched, so the final write_top_poses stamps the real ranks onto poses
+    that carry nothing from a passing download."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    _job, ev = _live_job()
+    with TestClient(app) as client:
+        assert client.get("/jobs/live/live-pose", params={"smiles": "CCO"}).status_code == 200
+    assert not ev._pose_cache["CCO"][1].HasProp("DockingRank")
+
+
+def test_live_pose_404s_for_an_unscored_product_and_a_finished_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    job, _ev = _live_job()
+    with TestClient(app) as client:
+        assert client.get("/jobs/live/live-pose",
+                          params={"smiles": "CCCCN"}).status_code == 404
+        job.status = "done"
+        # Finished: the poses file is the way in, and it holds the full set.
+        assert client.get("/jobs/live/live-pose",
+                          params={"smiles": "c1ccccc1"}).status_code == 404
+
+
+def test_live_gallery_marks_which_hits_have_a_pose_to_download(tmp_path, monkeypatch):
+    """The card only offers a download when there is one: a product that scored
+    but has no cached pose is flagged, rather than given a dead link."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    _job, ev = _live_job()
+    ev._score_cache["CCCCN"] = -8.0          # scored, but no pose came back
+    ev._name_cache["CCCCN"] = "TH17145_30000"
+    with TestClient(app) as client:
+        items = client.get("/jobs/live/top").json()["items"]
+    by_smiles = {it["smiles"]: it for it in items}
+    assert by_smiles["c1ccccc1"]["pose"] is True
+    assert by_smiles["CCCCN"]["pose"] is False
