@@ -25,10 +25,11 @@ subclass overrides just those two steps:
    anchored conformer (see ``_box_flags``), so the search is confined to the
    fragment's own site instead of the whole protein.
 
-Plus one post-dock guard (``_pose_acceptable``): the conserved-core atoms must
-not have drifted more than ``max_core_rmsd`` A from the reference. That is what
-holds the binding mode, since the search itself is free. ``None`` switches it
-off, and the drift is still measured and annotated either way.
+Plus two post-dock guards (``_pose_acceptable``): the conserved-core atoms
+must not have drifted more than ``max_core_rmsd`` A from the reference -- that
+is what holds the binding mode, since the search itself is free -- and
+``minimizedAffinity`` must not exceed ``max_affinity``. Either can be switched
+off with ``None``; the drift is measured and annotated either way.
 
 Why this protocol, measured rather than assumed. The constrained embed places
 the grown arm without ever seeing the receptor, so its starting pose is usually
@@ -52,13 +53,17 @@ on all of them, where local-only drifted past 2 A on three; over a full
 heavy-atom contact at 2.70-3.06 A. It costs ~7x the time per dock (2.4 s ->
 15-40 s), which is the price of a pose worth looking at.
 
-There was briefly a second guard here, rejecting poses jammed into the receptor
-(a heavy atom within 1.8 A) or scoring positive. Under a real search it never
-fired -- zero rejections over a 278-product run, in which no pose came within
-2.5 A of the receptor or scored above -5.2 -- because the search optimises the
-very term such a pose violates. It was removed rather than kept as dead weight;
-what it measured is still annotated on every pose as ``min_receptor_dist``, so
-a run can be filtered on it afterwards if a pocket ever does misbehave.
+``max_affinity`` rejects a pose whose ``minimizedAffinity`` is above zero: net
+repulsion, so whatever the pose is, it is not a binding one. A search rarely
+produces that -- none of a 278-product run's poses scored above -5.2 -- because
+it optimises that very term. It is the sanity check for the case it does, which
+a CNN score field would not show, since it does not see that term at all.
+
+A geometric clash guard sat here too (reject any heavy atom within 1.8 A of the
+receptor) and was removed: over the same run no pose came within 2.5 A, so it
+only carried risk once ``num_modes`` dropped to 1. What it measured is still
+annotated on every pose as ``min_receptor_dist``, so a misbehaving pocket can
+still be found afterwards.
 
 ``num_modes`` is 1 here (9 in the unanchored evaluator): only the best pose is
 ever kept, so further modes were written and discarded. That makes the guards
@@ -263,6 +268,12 @@ _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 # where the old local-only protocol left it under 1.0 A by construction -- the
 # same 1.5 A that once meant "drifted" would now reject good poses.
 DEFAULT_MAX_CORE_RMSD = 2.0
+# minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
+# pose whatever the score field is. Above zero the steric term has won: whatever
+# else the pose is, it is not a binding one. A search rarely returns such a pose
+# (none in a 278-product run) -- this is the sanity check for when it does, and
+# for a CNN score field, which does not see that term at all.
+DEFAULT_MAX_AFFINITY = 0.0
 
 # ``forkserver``, not the platform default ``fork`` or ``spawn``:
 # - ``fork`` from a process that has other live threads (the concurrent-dock
@@ -452,6 +463,8 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      no longer sized from it -- see _box_flags.
         core_smarts  : str        - the conserved sub-fragment (exclude the
                                      leaving handle). Strongly recommended.
+        max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
+                                     above this. ``None`` turns it off.
         max_core_rmsd: float (2.0)- reject if core drifts more than this (A).
                                      ``None`` turns the guard off: drift is
                                      still measured and annotated on the pose,
@@ -482,6 +495,8 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                                    input_dict.get("core_smarts"))
         guard = input_dict.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         self.max_core_rmsd = None if guard is None else float(guard)
+        max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
+        self.max_affinity = None if max_aff is None else float(max_aff)
         # Post-dock rejects, by reason -- reported in stats() so a run can say
         # how much of its library the pose guards threw away, and why.
         self.pose_rejections: Dict[str, int] = {}
@@ -540,17 +555,22 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     # --- override hook 3: which docked modes count -----------------------------
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:
-        """Reject a docked mode whose conserved core left its bound position:
-        the search is free, so this is what holds the binding mode.
+        """Reject a docked mode whose conserved core left its bound position
+        (the search is free, so this is what holds the binding mode), or whose
+        empirical score says it is not a binding pose at all.
 
         A rejected product ends up ``nan`` -- the same as a filtered one -- so
         Thompson Sampling is not rewarded for reaching it."""
-        if self.max_core_rmsd is None:
-            return True
-        drift = self._core_drift(pose)
-        if drift is None or drift > self.max_core_rmsd:
-            self._count_pose_rejection("core drift")
-            return False
+        if self.max_core_rmsd is not None:
+            drift = self._core_drift(pose)
+            if drift is None or drift > self.max_core_rmsd:
+                self._count_pose_rejection("core drift")
+                return False
+        if self.max_affinity is not None:
+            aff = self._parse_prop(pose, "minimizedAffinity")
+            if aff is not None and np.isfinite(aff) and aff > self.max_affinity:
+                self._count_pose_rejection("repulsive score")
+                return False
         return True
 
     def _count_pose_rejection(self, reason: str) -> None:

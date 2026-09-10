@@ -535,7 +535,25 @@ def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
     run put clean poses at 1.2-1.8 A -- so the default guard is 2.0, not the
     1.5 that suited the local-only protocol."""
     ev = _ev_with_receptor(tmp_path)
-    assert ev.max_core_rmsd == 2.0
+    assert (ev.max_core_rmsd, ev.max_affinity) == (2.0, 0.0)
+
+
+def test_pose_with_a_repulsive_score_is_rejected(tmp_path):
+    """minimizedAffinity above zero is net repulsion: whatever the pose is, it
+    is not a binding one. Rejected even when the score field (a CNN one, which
+    does not see that term) looks excellent."""
+    ev = _ev_with_receptor(tmp_path, score_field="CNN_VS", max_core_rmsd=None)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 0.0)
+    pose = next(m for m in Chem.SDMolSupplier(path))
+    pose.SetProp("CNN_VS", "4.31"); pose.SetProp("minimizedAffinity", "32.51")
+    w = Chem.SDWriter(path); w.write(pose); w.close()
+    assert ev._best_pose(path, smi) == (None, None)
+    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
+    # Off -> the same pose is kept and scored.
+    off = _ev_with_receptor(tmp_path, score_field="CNN_VS", max_core_rmsd=None,
+                            max_affinity=None)
+    assert off._best_pose(path, smi)[0] == 4.31
 
 
 def test_receptor_distance_is_annotated_even_though_nothing_rejects_on_it(tmp_path):
@@ -545,7 +563,9 @@ def test_receptor_distance_is_annotated_even_though_nothing_rejects_on_it(tmp_pa
     on it afterwards if a pocket ever does misbehave."""
     ev = _ev_with_receptor(tmp_path, max_core_rmsd=None)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
-    # score_field is minimizedAffinity here, so the helper's affinity is the score
+    # A pose right on top of a receptor atom, but scoring as if it binds: only
+    # the geometry was ever objectionable, and nothing measures that any more.
+    # score_field is minimizedAffinity here, so the helper's affinity is the score.
     path = _clashing_pose_sdf(tmp_path, smi, ev._receptor_xyz, ev.score_field, -9.0,
                               affinity=-8.0)
     score, pose = ev._best_pose(path, smi)

@@ -30,7 +30,8 @@ from typing import Callable, Dict, List, Optional
 from rdkit import Chem
 
 from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
-from asatro.engine.anchored_fragment_evaluator import DEFAULT_MAX_CORE_RMSD
+from asatro.engine.anchored_fragment_evaluator import (
+    DEFAULT_MAX_AFFINITY, DEFAULT_MAX_CORE_RMSD)
 from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
@@ -312,7 +313,8 @@ def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
 
 
 def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None,
-                     *, anchored: bool = False) -> str:
+                     *, anchored: bool = False,
+                     max_affinity: Optional[float] = None) -> str:
     """One-line census of every hard filter a job applies, for the run log.
 
     Always names all filters -- including the ones that are switched off -- so a
@@ -321,7 +323,8 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
     ``max_core_rmsd`` is the post-dock placement guard (growth only); pass None
     with ``anchored=True`` for a growth job that switched the guard off, and
     leave both at their defaults for combi jobs, which have no anchored core to
-    drift and so no guard to report either way.
+    drift and so no guard to report either way. ``max_affinity`` is the pose
+    energy filter, growth only and reported the same way.
     """
     parts = [
         f"PAINS {len(mol_filters.pains_patterns)} pattern(s)" if mol_filters.pains_patterns else "PAINS off",
@@ -333,6 +336,9 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
         parts.append(f"core-RMSD guard {max_core_rmsd:g} A")
     elif anchored:
         parts.append("core-RMSD guard off")
+    if anchored:
+        parts.append(f"max affinity {max_affinity:g}" if max_affinity is not None
+                     else "affinity guard off")
     return "Filters: " + ", ".join(parts)
 
 
@@ -538,7 +544,10 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         # however far the anchored core drifted. Absent key -> the default guard.
         guard = cfg.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         max_core_rmsd = None if guard is None else float(guard)
-        job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True))
+        max_aff = cfg.get("max_affinity", DEFAULT_MAX_AFFINITY)
+        max_affinity = None if max_aff is None else float(max_aff)
+        job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True,
+                                 max_affinity=max_affinity))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -565,7 +574,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 search_method=search_method,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-                max_core_rmsd=max_core_rmsd,
+                max_core_rmsd=max_core_rmsd, max_affinity=max_affinity,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,

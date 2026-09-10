@@ -245,12 +245,22 @@
           <input type="number" id="maxCoreRmsd" step="0.1" value="2.0" min="0"></div>
         <div></div>
       </div>
+      <div class="checkline"><input type="checkbox" id="maxAffOn" checked><label style="margin:0">Energy filter
+        &mdash; reject poses that don't bind</label></div>
+      <div class="row">
+        <div><label>Max affinity (kcal/mol)</label>
+          <input type="number" id="maxAffinity" step="0.5" value="0"></div>
+        <div></div>
+      </div>
       <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to
         disable. Core RMSD guard: reject any docked pose whose placed fragment core drifts more than this from the
         bound reference (MCS match to the conserved core) &mdash; this is what holds the fragment's binding mode now
         that the dock is a real search. Untick it and nothing is rejected on placement; either way
         <code>core_rmsd</code> and <code>min_receptor_dist</code> (closest heavy-atom approach to the receptor) are
-        measured and written to every pose, so you can filter on them afterwards.</div>
+        measured and written to every pose, so you can filter on them afterwards. Energy filter: reject a pose whose
+        <code>minimizedAffinity</code> is above the max &mdash; above zero it is repulsive, so whatever it is, it
+        isn't binding. GNINA's search rarely returns one; this is the check for when it does, which a CNN score
+        field would not show.</div>
     </div>
 
     <div class="panel" id="growPanel" style="display:none">
@@ -367,6 +377,13 @@
       <div class="row">
         <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2"></div>
         <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5"></div>
+      </div>
+      <div class="checkline"><input type="checkbox" id="maxAffOn" checked><label style="margin:0">Energy filter
+        &mdash; reject poses that don't bind</label></div>
+      <div class="row">
+        <div><label>Max affinity (kcal/mol)</label>
+          <input type="number" id="maxAffinity" step="0.5" value="0"></div>
+        <div></div>
       </div>
       <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
     </div>
@@ -542,6 +559,9 @@ function syncScoreFieldOptions(cnnScoringId, scoreFieldId){
 function toggleCoreRmsd(){ el('maxCoreRmsd').disabled = !el('coreRmsdOn').checked; }
 el('coreRmsdOn').addEventListener('change', toggleCoreRmsd);
 toggleCoreRmsd();
+function toggleMaxAff(){ el('maxAffinity').disabled = !el('maxAffOn').checked; }
+el('maxAffOn').addEventListener('change', toggleMaxAff);
+toggleMaxAff();
 
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
@@ -1141,6 +1161,8 @@ el('growBtn').addEventListener('click', async ()=>{
     // Unticked -> null, which the server reads as "no placement guard at all"
     // (distinct from a numeric cutoff, however large).
     max_core_rmsd: el('coreRmsdOn').checked ? (parseFloat(el('maxCoreRmsd').value) || 2.0) : null,
+    max_affinity: el('maxAffOn').checked ? (isNaN(parseFloat(el('maxAffinity').value)) ? 0
+                                            : parseFloat(el('maxAffinity').value)) : null,
     filters: {
       pains: el('pains').checked, reos: el('reos').checked,
       mw: [numOrNull(el('mwLo')), numOrNull(el('mwHi'))],

@@ -1081,8 +1081,30 @@ def test_growth_job_logs_and_wires_the_placement_guard(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    assert "core-RMSD guard 2 A" in line
-    assert captured["max_core_rmsd"] == 2.0
+    assert "core-RMSD guard 2 A" in line and "max affinity 0" in line
+    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (2.0, 0.0)
+
+
+def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):
+    """A null max_affinity means no energy filter, and the log says so."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = {}
+
+    def runner(**k):
+        captured.update(k)
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1, "max_affinity": None},
+        runner=runner)
+    _await(job)
+    line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
+    assert "affinity guard off" in line
+    assert captured["max_affinity"] is None
 
 
 def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):

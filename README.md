@@ -121,8 +121,9 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
   candidate's own anchored conformer, and guarded afterwards on placement
-  (core-RMSD against the bound fragment). The guard is adjustable and can be
-  switched off; either way every pose is annotated with `core_rmsd` and
+  (core-RMSD against the bound fragment) and on energy (`minimizedAffinity`
+  above zero isn't a binding pose). Both are adjustable and can be switched
+  off; either way every pose is annotated with `core_rmsd` and
   `min_receptor_dist` (closest heavy-atom approach to the receptor), so what
   isn't rejected can still be filtered on afterwards.
   The accessibility pre-pass validates the chosen route before it runs.
@@ -212,11 +213,13 @@ it produces isn't one you would act on. The core-RMSD default moved 1.5 → 2.0 
 with it, because a pose that was never allowed to move sits closer to the
 reference than a correctly docked one.
 
-A clash guard briefly sat alongside the placement guard, rejecting poses with a
-heavy atom within 1.8 Å of the receptor or a positive score. It never fired: over
-a 278-product run no pose came within 2.5 Å or scored above −5.2, because the
-search optimises the very term such a pose violates. It was removed rather than
-kept as dead weight — `min_receptor_dist` on each pose is what remains of it.
+A geometric clash guard briefly sat alongside these, rejecting any pose with a
+heavy atom within 1.8 Å of the receptor. It never fired — over a 278-product run
+no pose came within 2.5 Å — so it was removed rather than kept as dead weight;
+`min_receptor_dist` on each pose is what remains of it. The energy filter stays:
+it likewise rarely fires under a search (nothing above −5.2 in that run), but it
+is the one check that catches a pose which isn't binding at all, and a CNN score
+field cannot show that, since it doesn't see the empirical term.
 
 Growth asks gnina for one mode (`--num_modes 1`), since only the best pose per
 product is ever kept. That makes the placement guard all-or-nothing per product:
