@@ -119,8 +119,12 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
 - **Fragment growth** (`asatro/growth.py`): pick one accessible reaction/slot as
   step 1 — the bound fragment fills that slot — and optionally chain further
   "extend" steps onto it; each final product is constrained-placed onto the
-  bound pose and scored by GNINA, with an adjustable core-RMSD placement guard
-  that can also be switched off (drift is then only annotated, never rejected).
+  bound pose, then docked by a real GNINA search inside a box sized to that
+  candidate's own anchored conformer, and guarded afterwards on both placement
+  (core-RMSD against the bound fragment) and geometry (no atom jammed into the
+  receptor, no repulsive score). Each guard is separately adjustable and can be
+  switched off, in which case what it measures is still annotated onto every
+  pose (`core_rmsd`, `min_receptor_dist`) rather than lost.
   The accessibility pre-pass validates the chosen route before it runs.
   Products are named by joining their reagent names, fragment first
   (`TH17144_150266`), so name the fragment in the UI field — a bound fragment
@@ -184,6 +188,26 @@ A slice download keeps the run's name (`<id>_poses_top250.sdf`); a single pose
 is saved under its own product name instead (`TH17145_12559.sdf`, the same title
 the record carries), because that file gets opened next to the fragment and the
 other hits, where *which product* matters and *#7 of that run* does not.
+
+### Why the dock is a search, not a local optimisation
+
+Growth used to pass `--local_only`: gnina minimised the pose the constrained
+embed had built, with no search, at ~2.4 s per dock. The embed places the grown
+arm without ever seeing the receptor, so its starting pose routinely has a third
+of its heavy atoms inside the protein — and a local minimisation cannot repair
+that. Measured over a real 877-product run and reproduced exactly by re-docking
+its own hits: poses came back with 8–17 heavy atoms within 2.2 Å of the receptor
+and `minimizedAffinity` of +10 to +32 kcal/mol, or with the whole ligand shoved
+12 Å out of the site. A CNN score field hides it — CNN_VS and `minimizedAffinity`
+were uncorrelated (r = 0.03), and 39 of that run's top 50 by CNN_VS scored
+positive.
+
+The same products, full search in the same box: −4.9 to −8.0 kcal/mol, closest
+receptor approach 2.8–3.0 Å, anchored core 1.2–1.8 Å off the reference, for
+15–40 s per dock. That is the default now; `local_only` in the growth config
+(and the *Local-only docking* tickbox) brings the fast protocol back for a rough
+sweep. The core-RMSD default moved 1.5 → 2.0 Å with it, because a pose that was
+never allowed to move sits closer to the reference than a correctly docked one.
 
 A pose can also be pulled **while the run is still going**, straight from the
 evaluator's live cache — every card in the live gallery carries the same

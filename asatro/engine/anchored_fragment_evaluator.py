@@ -21,14 +21,33 @@ subclass overrides just those two steps:
 1. 3D build  -> ``rdkit.Chem.AllChem.ConstrainedEmbed`` onto the reference
    fragment's 3D coordinates, so the conserved core starts at (and is
    restrained to) its bound position while only the grown part is embedded.
-2. Docking   -> add ``--local_only`` so gnina performs a local optimisation of
-   the supplied pose instead of a global search; the core barely moves.
+2. Docking   -> a normal gnina search, but in a box sized to *this candidate's*
+   anchored conformer (see ``_box_flags``), so the search is confined to the
+   fragment's own site instead of the whole protein.
 
-Plus a guard: after docking, the conserved-core atoms must not have drifted more
-than ``max_core_rmsd`` A from the reference; if the grow broke the binding mode,
-the product is rejected (``nan``) exactly like a filtered molecule. Setting
-``max_core_rmsd`` to ``None`` switches the guard off: drift is still measured and
-annotated onto every pose, but no pose is rejected for it.
+Plus two post-dock guards, applied per docked mode (``_pose_acceptable``):
+
+* the conserved-core atoms must not have drifted more than ``max_core_rmsd`` A
+  from the reference -- this is what holds the binding mode, since the search
+  itself is free; ``None`` switches it off (drift is still measured and
+  annotated, never rejected).
+* the pose must not be jammed into the receptor: no heavy atom within
+  ``clash_radius`` A of a receptor atom, and ``minimizedAffinity`` (gnina's
+  empirical score, always computed) not above ``max_affinity``.
+
+Why the clash guard exists (measured, not theoretical): the constrained embed
+places the grown arm without ever seeing the receptor, so its starting pose
+routinely has a third of its atoms inside the protein. Under the old
+``--local_only`` protocol -- a local optimisation of exactly that pose, no
+search -- gnina could not repair it: docked poses came back with 8-17 heavy
+atoms within 2.2 A of the receptor and ``minimizedAffinity`` of +10 to +32
+kcal/mol (physically impossible), or with the whole ligand shoved 12 A out of
+the site. A CNN score field ranks those poses top perfectly happily -- CNN_VS
+and minimizedAffinity were uncorrelated (r = 0.03) over a real 877-product run,
+39 of whose top 50 by CNN_VS scored positive. A full search in the same box
+resolves the same products to 0-2 contacts and -4.9 to -8.0 kcal/mol, for ~7x
+the time per dock (2.4 s -> 15-40 s). Set ``local_only=True`` to get the old
+fast protocol back, clash guard included.
 
 Required refactor seam in GninaEvaluator (tiny, behaviour-preserving)
 ---------------------------------------------------------------------
@@ -55,7 +74,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from rdkit import Chem
@@ -222,6 +241,20 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Tuple[Chem.Mol,
 
 _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 
+# Post-dock pose guards. The core-RMSD default is 2.0 A because the docking is a
+# real search now: a clean, correctly-anchored pose from a free search sits ~1.2
+# to 1.8 A off the reference core (measured over a re-docked production run),
+# where the old local-only protocol left it under 1.0 A by construction -- the
+# same 1.5 A that once meant "drifted" would now reject good poses.
+DEFAULT_MAX_CORE_RMSD = 2.0
+# A heavy atom this close to a receptor atom is through the surface, not in
+# contact with it (a real H-bond heavy-atom pair sits at ~2.7-3.2 A).
+DEFAULT_CLASH_RADIUS = 1.8
+# minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
+# pose whatever the score field is. Above zero the steric term has won: the
+# pose is repulsive on the physics the CNN does not see.
+DEFAULT_MAX_AFFINITY = 0.0
+
 # ``forkserver``, not the platform default ``fork`` or ``spawn``:
 # - ``fork`` from a process that has other live threads (the concurrent-dock
 #   ThreadPoolExecutor workers calling this) is fragile -- only the forking
@@ -311,6 +344,25 @@ def _receptor_clashes(mol: Chem.Mol, receptor: np.ndarray, radius: float = 2.2) 
     return int((d2.min(axis=1) < radius * radius).sum())
 
 
+def _receptor_contacts(mol: Chem.Mol, receptor: np.ndarray) -> Optional[float]:
+    """Closest heavy-atom approach between ``mol`` and the receptor, in A.
+    ``None`` when there is nothing to measure. Annotated onto every pose: it is
+    the one number that says "this is in the pocket" or "this is through the
+    wall", and unlike a score it means the same thing in every run."""
+    if receptor.size == 0 or mol.GetNumConformers() == 0:
+        return None
+    conf = mol.GetConformer()
+    xyz = np.array([list(conf.GetAtomPosition(a.GetIdx())) for a in mol.GetAtoms()
+                    if a.GetAtomicNum() != 1])
+    if xyz.size == 0:
+        return None
+    near = receptor[np.linalg.norm(receptor - xyz.mean(axis=0), axis=1) <= 25.0]
+    if near.size == 0:
+        return None
+    d2 = ((near[None, :, :] - xyz[:, None, :]) ** 2).sum(axis=2)
+    return float(np.sqrt(d2.min()))
+
+
 def _constrained_pose_block(
     smiles: str, ph: float, core: Chem.Mol, seed: int = 0xF00D,
     embed_timeout: float = _EMBED_TIMEOUT_DEFAULT,
@@ -390,11 +442,20 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      no longer sized from it -- see _box_flags.
         core_smarts  : str        - the conserved sub-fragment (exclude the
                                      leaving handle). Strongly recommended.
-        max_core_rmsd: float (1.5)- reject if core drifts more than this (A).
+        max_core_rmsd: float (2.0)- reject if core drifts more than this (A).
                                      ``None`` turns the guard off: drift is
                                      still measured and annotated on the pose,
                                      but never rejects it.
-        local_only   : bool (True)- pass --local_only to gnina (no global search).
+        clash_radius : float (1.8) - reject a pose with any heavy atom this
+                                     close to a receptor atom. 0/None: off.
+        max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
+                                     above this (positive = net repulsion, i.e.
+                                     a clash the score itself reports).
+                                     ``None`` turns it off.
+        local_only   : bool (False)- pass --local_only to gnina: optimise the
+                                     supplied pose only, no search. Fast, and
+                                     unable to fix a starting pose built into
+                                     the receptor -- see the module docstring.
         embed_timeout: float (60) - give up on one candidate's ConstrainedEmbed
                                      after this many seconds (see
                                      ``_run_constrained_embed`` -- RDKit's
@@ -413,17 +474,25 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.fragment_sdf = input_dict["fragment_sdf"]
         self.core, self._core_movable = _load_core(self.fragment_sdf,
                                                    input_dict.get("core_smarts"))
-        guard = input_dict.get("max_core_rmsd", 1.5)
+        guard = input_dict.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         self.max_core_rmsd = None if guard is None else float(guard)
-        self.local_only = bool(input_dict.get("local_only", True))
+        radius = input_dict.get("clash_radius", DEFAULT_CLASH_RADIUS)
+        self.clash_radius = float(radius) if radius else 0.0
+        max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
+        self.max_affinity = None if max_aff is None else float(max_aff)
+        self.local_only = bool(input_dict.get("local_only", False))
+        # Post-dock rejects, by reason -- reported in stats() so a run can say
+        # how much of its library the pose guards threw away, and why.
+        self.pose_rejections: Dict[str, int] = {}
         self.embed_timeout = float(input_dict.get("embed_timeout", _EMBED_TIMEOUT_DEFAULT))
         # The handle can turn about the bond into the core, so the product may be
         # buildable in a second orientation. Keep that template (and the receptor
         # to choose between them) only when there is actually something movable.
         flipped = _flipped_core(self.core, self._core_movable)
         self._alt_cores = [flipped] if flipped is not None else []
-        self._receptor_xyz = (load_receptor_atoms(self.receptor_path)
-                              if self._alt_cores else None)
+        # Loaded unconditionally: the clash guard measures every docked pose
+        # against the receptor, not just the alternative core orientations.
+        self._receptor_xyz = load_receptor_atoms(self.receptor_path)
         # Precompute reference core coordinates (receptor frame) for the guard.
         conf = self.core.GetConformer()
         self._core_ref_xyz = np.array(
@@ -443,8 +512,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     # --- override hook 2: docking flags ---------------------------------------
     def _extra_flags(self) -> List[str]:
-        # --local_only: optimise the supplied (anchored) pose only; no global
-        # search that would relocate the fragment. --minimize_iters keeps it short.
+        # Off by default: --local_only optimises the supplied pose without
+        # searching, which cannot undo a grown arm the blind embed built into
+        # the protein. The anchoring comes from the per-candidate box plus the
+        # core-RMSD guard instead of from refusing to search.
         return ["--local_only"] if self.local_only else []
 
     # --- override hook 3: per-candidate box ------------------------------------
@@ -474,23 +545,60 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
             "--size_x", f"{size[0]:.3f}", "--size_y", f"{size[1]:.3f}", "--size_z", f"{size[2]:.3f}",
         ]
 
-    # --- override the pose reader to add the core-drift guard ------------------
+    # --- override hook 4: which docked modes count -----------------------------
+    def _pose_acceptable(self, pose: Chem.Mol) -> bool:
+        """Reject a docked mode that broke the binding mode or is jammed into
+        the receptor. Applied to every mode of the search, so a bad top-scored
+        mode costs that mode, not the product.
+
+        A rejected product ends up ``nan`` -- the same as a filtered one -- so
+        Thompson Sampling is not rewarded for reaching it."""
+        drift = self._core_drift(pose)
+        if self.max_core_rmsd is not None and (drift is None or drift > self.max_core_rmsd):
+            self._count_pose_rejection("core drift")
+            return False
+        if self.clash_radius and self._receptor_xyz is not None:
+            if _receptor_clashes(pose, self._receptor_xyz, self.clash_radius):
+                self._count_pose_rejection("clash")
+                return False
+        if self.max_affinity is not None:
+            aff = self._parse_prop(pose, "minimizedAffinity")
+            if aff is not None and np.isfinite(aff) and aff > self.max_affinity:
+                self._count_pose_rejection("repulsive score")
+                return False
+        return True
+
+    def _count_pose_rejection(self, reason: str) -> None:
+        with self._lock:
+            self.pose_rejections[reason] = self.pose_rejections.get(reason, 0) + 1
+
+    def _progress_extra(self) -> str:
+        # Called with the lock held (see GninaEvaluator._emit_progress), so read
+        # the counter directly rather than through _count_pose_rejection's lock.
+        if not self.pose_rejections:
+            return ""
+        return " | pose_rej " + str(dict(self.pose_rejections))
+
+    def stats(self) -> dict:
+        with self._lock:
+            rejected = dict(self.pose_rejections)
+        return {**super().stats(), "pose_rejections": rejected}
+
+    # --- override the pose reader to annotate what the guards measured ---------
     def _best_pose(self, sdf_path: str, smiles: str):
         score, pose = super()._best_pose(sdf_path, smiles)
         if pose is None:
             return score, pose
+        # Everything the guards judged the pose on, recorded on the pose: with a
+        # guard switched off these are the only way to filter for it after the
+        # run, and with it on they say how much margin the pose had.
         drift = self._core_drift(pose)
-        if self.max_core_rmsd is None:
-            # Guard off: keep every pose, but still record the drift it would
-            # have been judged on, so a run can be filtered on it afterwards.
-            if drift is not None:
-                pose.SetProp("core_rmsd", f"{drift:.2f}")
-            return score, pose
-        if drift is None or drift > self.max_core_rmsd:
-            # The grow broke the binding mode: treat as a reject (nan score) so
-            # TS does not reward it. Returning (None, None) makes _dock yield nan.
-            return None, None
-        pose.SetProp("core_rmsd", f"{drift:.2f}")
+        if drift is not None:
+            pose.SetProp("core_rmsd", f"{drift:.2f}")
+        if self._receptor_xyz is not None:
+            near = _receptor_contacts(pose, self._receptor_xyz)
+            if near is not None:
+                pose.SetProp("min_receptor_dist", f"{near:.2f}")
         return score, pose
 
     def _core_drift(self, pose: Chem.Mol) -> Optional[float]:

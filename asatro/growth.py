@@ -30,7 +30,8 @@ from rdkit.Chem import Crippen, Descriptors
 from asatro.chemistry.catalog import StepSpec, resolve_step
 from asatro.chemistry.handles import neutralize
 from asatro.chemistry.reachability import prune_unreachable_reagents
-from asatro.engine.anchored_fragment_evaluator import AnchoredFragmentEvaluator
+from asatro.engine.anchored_fragment_evaluator import (
+    DEFAULT_MAX_CORE_RMSD, AnchoredFragmentEvaluator)
 from asatro.engine.gnina_evaluator import MolFilters
 from asatro.engine.route_sampler import RouteSampler, run_ts_or_rws_search
 from asatro.engine.ts_autoparams import suggest_rws_params, suggest_ts_params
@@ -275,8 +276,9 @@ def suggest_growth_params(*, fragment_sdf: str, steps: List[StepSpec],
 
 def make_evaluator(*, fragment_sdf: str, receptor_path: str, core_smarts: Optional[str],
                    work_dir: str, score_field: str = "minimizedAffinity",
-                   cnn_scoring: str = "none", max_core_rmsd: Optional[float] = 1.5,
-                   local_only: bool = True, filters: Optional[MolFilters] = None,
+                   cnn_scoring: str = "none",
+                   max_core_rmsd: Optional[float] = DEFAULT_MAX_CORE_RMSD,
+                   local_only: bool = False, filters: Optional[MolFilters] = None,
                    **extra) -> AnchoredFragmentEvaluator:
     """Build the anchored evaluator. The fragment SDF doubles as the autobox
     reference, so no separate binding site is needed."""
@@ -298,7 +300,8 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                hide_progress: bool = True,
                search_method: str = "ts", min_cpds_per_core: Optional[int] = None,
                stop: Optional[int] = None,
-               max_core_rmsd: Optional[float] = 1.5, prune_unreachable: bool = True,
+               max_core_rmsd: Optional[float] = DEFAULT_MAX_CORE_RMSD,
+               prune_unreachable: bool = True,
                fragment_name: Optional[str] = None,
                on_evaluator: Optional[Callable[[object], None]] = None,
                **gnina_opts):
@@ -307,11 +310,15 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
     ``[score, smiles, name]`` rows the sampler collected.
 
     ``max_core_rmsd`` (A) is the placement guard: ``AnchoredFragmentEvaluator``
-    rejects any docked pose whose conserved-core atoms drift more than this
+    rejects any docked mode whose conserved-core atoms drift more than this
     from the bound reference -- the fragment's known binding mode has to
-    survive the grow, however many steps it took, or the product doesn't count. ``None`` switches the guard off -- every docked pose counts, whatever it
-    did to the binding mode, and the drift is only annotated (``core_rmsd``) for
-    inspection afterwards.
+    survive the grow, however many steps it took, or the product doesn't count.
+    With the docking a real search (not a local optimisation of the built pose),
+    this guard is what holds the anchor. ``None`` switches it off -- every
+    docked pose counts, whatever it did to the binding mode, and the drift is
+    only annotated (``core_rmsd``) for inspection afterwards. ``clash_radius``
+    and ``max_affinity`` (passed through ``gnina_opts``) reject poses built into
+    the receptor; see ``AnchoredFragmentEvaluator``.
 
     If at most one reagent component actually varies across the whole route
     (true of a single-step start reaction: the fragment fixes one slot, one

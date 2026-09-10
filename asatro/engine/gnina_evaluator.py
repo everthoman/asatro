@@ -609,6 +609,17 @@ class GninaEvaluator(Evaluator):
         e.g. ``--local_only`` for anchored docking."""
         return []
 
+    def _pose_acceptable(self, pose: Chem.Mol) -> bool:
+        """Whether one docked mode may be considered at all. Default: every
+        mode. Subclasses can reject on geometry the score doesn't capture --
+        see ``AnchoredFragmentEvaluator``, which drops modes that clash into
+        the receptor or that moved the anchored fragment off its bound pose.
+
+        Applied per mode inside ``_best_pose``, so rejecting the top-scored
+        mode leaves the rest of the search's modes to be chosen from; a product
+        only scores ``nan`` when *every* mode is rejected."""
+        return True
+
     def _box_flags(self, sdf_block: str) -> List[str]:
         """gnina's box CLI flags for this dock. Default: a fixed reference
         ligand (autobox) or an explicit center/size, both set once at
@@ -756,7 +767,12 @@ class GninaEvaluator(Evaluator):
         kept in its own comparison pool (always lower-is-better) rather than
         compared directly against configured-field scores under
         ``self.higher_is_better``. The fallback pool is only used when no pose
-        has the configured field at all."""
+        has the configured field at all.
+
+        Poses ``_pose_acceptable`` rejects are skipped before either pool, so
+        the winner is the best *acceptable* mode rather than the best mode --
+        a global search returns ``num_modes`` of them, and the top-scored one
+        being unusable says nothing about the rest."""
         best_score: Optional[float] = None
         best_mol: Optional[Chem.Mol] = None
         fallback_score: Optional[float] = None
@@ -764,6 +780,8 @@ class GninaEvaluator(Evaluator):
         supplier = Chem.SDMolSupplier(sdf_path, sanitize=True, removeHs=False)
         for pose in supplier:
             if pose is None:
+                continue
+            if not self._pose_acceptable(pose):
                 continue
             val = self._parse_prop(pose, self.score_field)
             if val is not None and np.isfinite(val):
@@ -824,10 +842,19 @@ class GninaEvaluator(Evaluator):
                 msg = (
                     f"docked {self._dock_count} | best {self.score_field}={best} | "
                     f"filtered {rej} | prep_fail {self.prep_failures} | dock_fail {self.dock_failures}"
+                    f"{self._progress_extra()}"
                 )
         # Call out to the (possibly slow) callback without holding the lock.
         if msg is not None:
             self.progress_callback(msg)
+
+    def _progress_extra(self) -> str:
+        """Extra text for the periodic progress line. Default: nothing.
+        Called with ``self._lock`` held. Subclasses can report what their own
+        guards are doing (see ``AnchoredFragmentEvaluator``), so a run that is
+        throwing most of its docks away says so while it runs rather than in
+        the summary afterwards."""
+        return ""
 
     @property
     def docks_since_best(self) -> int:

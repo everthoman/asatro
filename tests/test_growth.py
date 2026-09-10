@@ -475,3 +475,116 @@ def test_anchored_evaluator_keeps_a_drifted_pose_when_the_guard_is_off(tmp_path)
     score, pose = ev._best_pose(path, smi)
     assert pose is not None and score == -8.2
     assert float(pose.GetProp("core_rmsd")) > 5.0
+
+
+# --- docking protocol + pose guards ----------------------------------------
+# The anchored path used to pass --local_only: a local optimisation of the pose
+# the constrained embed built, with no search. Measured on a real production
+# run, that could not repair a starting pose built into the protein -- docked
+# poses came back with a third of their atoms inside the receptor and
+# minimizedAffinity of +10..+32, which a CNN score field ranks top regardless.
+# Docking is a real search in the per-candidate box now, and the poses it
+# returns are guarded on geometry, not only on score.
+
+def _clashing_pose_sdf(tmp_path, smiles, receptor_xyz, score_field, value,
+                       affinity=-8.0, name="docked.sdf"):
+    """A docked pose sitting right on top of the receptor atoms."""
+    from rdkit.Chem import AllChem
+    m = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.EmbedMolecule(m, randomSeed=7)
+    m = Chem.RemoveHs(m)
+    conf = m.GetConformer()
+    shift = np.array(receptor_xyz[0]) - np.array(list(conf.GetAtomPosition(0)))
+    for i in range(m.GetNumAtoms()):
+        p = conf.GetAtomPosition(i)
+        conf.SetAtomPosition(i, (p.x + shift[0], p.y + shift[1], p.z + shift[2]))
+    m.SetProp(score_field, str(value))
+    m.SetProp("minimizedAffinity", str(affinity))
+    path = tmp_path / name
+    w = Chem.SDWriter(str(path)); w.write(m); w.close()
+    return str(path)
+
+
+def _ev_with_receptor(tmp_path, **kw):
+    """Anchored evaluator whose receptor has an atom at the fragment's own
+    first core atom, so a pose left on the anchor is by definition clashing."""
+    sdf = _write_bound_fragment(tmp_path, "Brc1ccccc1")
+    frag = Chem.MolFromMolFile(sdf)
+    p0 = frag.GetConformer().GetAtomPosition(1)
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1    %8.3f%8.3f%8.3f  1.00  0.00           C\n"
+                   % (p0.x, p0.y, p0.z))
+    return make_evaluator(fragment_sdf=sdf, receptor_path=str(rec),
+                          core_smarts=derive_core("Brc1ccccc1", "aryl_halide"),
+                          work_dir=str(tmp_path / "dock"), **kw)
+
+
+def test_anchored_docking_is_a_real_search_by_default(tmp_path):
+    """--local_only is off unless asked for: a local optimisation cannot undo a
+    grown arm the (receptor-blind) constrained embed built into the protein."""
+    ev = _ev_with_receptor(tmp_path)
+    assert ev.local_only is False
+    assert ev._extra_flags() == []
+    assert _ev_with_receptor(tmp_path, local_only=True)._extra_flags() == ["--local_only"]
+
+
+def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
+    """A correctly anchored pose from a free search sits further off the
+    reference core than one that was never allowed to move -- re-docking a real
+    run put clean poses at 1.2-1.8 A -- so the default guard is 2.0, not the
+    1.5 that suited the local-only protocol."""
+    ev = _ev_with_receptor(tmp_path)
+    assert ev.max_core_rmsd == 2.0
+    assert (ev.clash_radius, ev.max_affinity) == (1.8, 0.0)
+
+
+def test_pose_jammed_into_the_receptor_is_rejected(tmp_path):
+    """The guard the old protocol never had: geometry, not score. This pose is
+    sitting on a receptor atom while scoring well on both fields."""
+    ev = _ev_with_receptor(tmp_path)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _clashing_pose_sdf(tmp_path, smi, ev._receptor_xyz, ev.score_field, -9.0)
+    assert ev._best_pose(path, smi) == (None, None)
+    assert ev.stats()["pose_rejections"] == {"clash": 1}
+    # Guard off -> the same pose is kept, and still measured.
+    off = _ev_with_receptor(tmp_path, clash_radius=0)
+    _score, pose = off._best_pose(path, smi)
+    assert pose is not None and float(pose.GetProp("min_receptor_dist")) < 1.8
+
+
+def test_pose_with_a_repulsive_score_is_rejected(tmp_path):
+    """minimizedAffinity above zero means the steric term won -- the physics a
+    CNN score field does not see. Rejected even though CNN_VS looks great."""
+    # Core guard off, so the affinity guard is what has to fire.
+    ev = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS",
+                           max_core_rmsd=None)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
+    pose = next(m for m in Chem.SDMolSupplier(path))
+    pose.SetProp("CNN_VS", "4.31"); pose.SetProp("minimizedAffinity", "32.51")
+    w = Chem.SDWriter(path); w.write(pose); w.close()
+    assert ev._best_pose(path, smi) == (None, None)
+    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
+    kept = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS",
+                             max_core_rmsd=None, max_affinity=None)
+    assert kept._best_pose(path, smi)[1] is not None
+
+
+def test_a_rejected_mode_does_not_cost_the_whole_product(tmp_path):
+    """A search returns num_modes poses. The top-scored one being unusable says
+    nothing about the rest, so the guards run per mode and the best *acceptable*
+    mode wins -- only a product whose every mode is rejected scores nan."""
+    ev = _ev_with_receptor(tmp_path, clash_radius=0, score_field="CNN_VS")
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    good = next(m for m in Chem.SDMolSupplier(
+        _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 0.0, name="a.sdf")))
+    bad = Chem.Mol(good)
+    bad.SetProp("CNN_VS", "9.99"); bad.SetProp("minimizedAffinity", "40.0")   # best score, clashing
+    good.SetProp("CNN_VS", "3.10"); good.SetProp("minimizedAffinity", "-7.5")
+    path = str(tmp_path / "modes.sdf")
+    w = Chem.SDWriter(path); w.write(bad); w.write(good); w.close()
+
+    score, pose = ev._best_pose(path, smi)
+    assert score == 3.10                                   # not the 9.99 clash
+    assert float(pose.GetProp("minimizedAffinity")) == -7.5
+    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}

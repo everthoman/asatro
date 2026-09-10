@@ -30,6 +30,8 @@ from typing import Callable, Dict, List, Optional
 from rdkit import Chem
 
 from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
+from asatro.engine.anchored_fragment_evaluator import (
+    DEFAULT_CLASH_RADIUS, DEFAULT_MAX_AFFINITY, DEFAULT_MAX_CORE_RMSD)
 from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
@@ -311,7 +313,9 @@ def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
 
 
 def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None,
-                     *, anchored: bool = False) -> str:
+                     *, anchored: bool = False, clash_radius: Optional[float] = None,
+                     max_affinity: Optional[float] = None,
+                     local_only: bool = False) -> str:
     """One-line census of every hard filter a job applies, for the run log.
 
     Always names all filters -- including the ones that are switched off -- so a
@@ -320,7 +324,10 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
     ``max_core_rmsd`` is the post-dock placement guard (growth only); pass None
     with ``anchored=True`` for a growth job that switched the guard off, and
     leave both at their defaults for combi jobs, which have no anchored core to
-    drift and so no guard to report either way.
+    drift and so no guard to report either way. ``clash_radius`` /
+    ``max_affinity`` are the pose clash guards, and ``local_only`` says which
+    docking protocol ran -- all three decide which poses a growth run kept, so
+    they belong on the same line as the molecule filters.
     """
     parts = [
         f"PAINS {len(mol_filters.pains_patterns)} pattern(s)" if mol_filters.pains_patterns else "PAINS off",
@@ -332,6 +339,13 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
         parts.append(f"core-RMSD guard {max_core_rmsd:g} A")
     elif anchored:
         parts.append("core-RMSD guard off")
+    if anchored:
+        parts.append(f"clash guard {clash_radius:g} A" if clash_radius
+                     else "clash guard off")
+        parts.append(f"max affinity {max_affinity:g}" if max_affinity is not None
+                     else "affinity guard off")
+        parts.append("docking local-only (no search)" if local_only
+                     else "docking full search")
     return "Filters: " + ", ".join(parts)
 
 
@@ -378,6 +392,8 @@ def _summarize_combi(rows: list, evaluator, higher_is_better: Optional[bool],
         }
         if st.get("rejections"):
             entry["rejections"] = st["rejections"]
+        if st.get("pose_rejections"):
+            entry["pose_rejections"] = st["pose_rejections"]
         if hasattr(evaluator, "reagent_rankings"):
             rankings = evaluator.reagent_rankings()
             for slot in rankings:
@@ -533,9 +549,17 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         mol_filters = make_filters(cfg)
         # An explicit null means "no placement guard": dock and keep every pose,
         # however far the anchored core drifted. Absent key -> the default guard.
-        guard = cfg.get("max_core_rmsd", 1.5)
+        # Same convention for the two clash guards.
+        guard = cfg.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         max_core_rmsd = None if guard is None else float(guard)
-        job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True))
+        radius = cfg.get("clash_radius", DEFAULT_CLASH_RADIUS)
+        clash_radius = float(radius) if radius else 0.0
+        max_aff = cfg.get("max_affinity", DEFAULT_MAX_AFFINITY)
+        max_affinity = None if max_aff is None else float(max_aff)
+        local_only = bool(cfg.get("local_only", False))
+        job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True,
+                                 clash_radius=clash_radius, max_affinity=max_affinity,
+                                 local_only=local_only))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -562,7 +586,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 search_method=search_method,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-                max_core_rmsd=max_core_rmsd,
+                max_core_rmsd=max_core_rmsd, clash_radius=clash_radius,
+                max_affinity=max_affinity, local_only=local_only,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,
@@ -584,7 +609,13 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if (cancelled or job.cancel_event.is_set()) else "done"
-        job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
+        run0 = job.result["runs"][0]
+        if run0.get("pose_rejections"):
+            # The pose guards are the difference between "docked" and "kept":
+            # a run that rejected most of what it docked has to say so.
+            job.log("Poses rejected after docking: "
+                    + ", ".join(f"{k} {v}" for k, v in sorted(run0["pose_rejections"].items())))
+        job.log(f"Job {job.status} — {run0['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
         job.error = str(e)
@@ -650,7 +681,13 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
         job.result["steps"] = _persist_steps(steps)
         (job.dir / "results.json").write_text(json.dumps(job.result, indent=2))
         job.status = "cancelled" if (cancelled or job.cancel_event.is_set()) else "done"
-        job.log(f"Job {job.status} — {job.result['runs'][0]['n_docked']} docked")
+        run0 = job.result["runs"][0]
+        if run0.get("pose_rejections"):
+            # The pose guards are the difference between "docked" and "kept":
+            # a run that rejected most of what it docked has to say so.
+            job.log("Poses rejected after docking: "
+                    + ", ".join(f"{k} {v}" for k, v in sorted(run0["pose_rejections"].items())))
+        job.log(f"Job {job.status} — {run0['n_docked']} docked")
     except Exception as e:  # noqa: BLE001 — surface any failure to the UI
         job.status = "error"
         job.error = str(e)
