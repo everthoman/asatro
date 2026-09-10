@@ -1082,7 +1082,9 @@ def test_growth_job_logs_and_wires_the_placement_guard(tmp_path, monkeypatch):
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
     assert "core-RMSD guard 2 A" in line and "max affinity 0" in line
-    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (2.0, 0.0)
+    assert "core max-atom guard 1.5 A" in line
+    assert (captured["max_core_rmsd"], captured["max_core_dev"],
+            captured["max_affinity"]) == (2.0, 1.5, 0.0)
 
 
 def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):
@@ -1123,10 +1125,11 @@ def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):
         fragment_path=sdf, receptor_path="",
         steps=["suzuki"], fragment_slot=1,
         reactant_by_class={"boronic": _boronic(tmp_path)},
-        cfg={"num_cycles": 1, "num_warmup": 1, "max_core_rmsd": None},
+        cfg={"num_cycles": 1, "num_warmup": 1, "max_core_rmsd": None,
+             "max_core_dev": None},
         runner=runner)
     _await(job)
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    assert "core-RMSD guard off" in line
+    assert "core-RMSD guard off" in line and "core max-atom guard off" in line
     assert captured == [None]

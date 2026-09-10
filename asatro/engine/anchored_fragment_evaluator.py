@@ -268,6 +268,14 @@ _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 # where the old local-only protocol left it under 1.0 A by construction -- the
 # same 1.5 A that once meant "drifted" would now reject good poses.
 DEFAULT_MAX_CORE_RMSD = 2.0
+# ...and no single core atom further than this from where it sits in the bound
+# pose. A mean cannot see a core that turned over in place: rotating this core
+# 90 A about its own in-plane axis moves its worst atom 2.43 A but averages to
+# only 1.45 A, so a mean-RMSD guard at any usable threshold passes a
+# perpendicular core (observed: docked poses at 72 and 81 degrees, RMSD 1.92 and
+# 1.99, both accepted). The worst atom is what says "this part of the fragment
+# is not where it was".
+DEFAULT_MAX_CORE_DEV = 1.5
 # minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
 # pose whatever the score field is. Above zero the steric term has won: whatever
 # else the pose is, it is not a binding one. A search rarely returns such a pose
@@ -362,6 +370,11 @@ def _receptor_clashes(mol: Chem.Mol, receptor: np.ndarray, radius: float = 2.2) 
         return 0
     d2 = ((near[None, :, :] - xyz[:, None, :]) ** 2).sum(axis=2)
     return int((d2.min(axis=1) < radius * radius).sum())
+
+
+def _rmsd(dev: np.ndarray) -> float:
+    """RMS of a vector of per-atom deviations."""
+    return float(np.sqrt((dev ** 2).mean())) if dev.size else 0.0
 
 
 def _receptor_contacts(mol: Chem.Mol, receptor: np.ndarray) -> Optional[float]:
@@ -465,6 +478,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      leaving handle). Strongly recommended.
         max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
                                      above this. ``None`` turns it off.
+        max_core_dev : float (1.5) - reject if any single core atom is further
+                                     than this from its bound position. Catches
+                                     a core that turned over in place, which a
+                                     mean RMSD cannot. ``None`` turns it off.
         max_core_rmsd: float (2.0)- reject if core drifts more than this (A).
                                      ``None`` turns the guard off: drift is
                                      still measured and annotated on the pose,
@@ -497,6 +514,8 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         self.max_core_rmsd = None if guard is None else float(guard)
         max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
         self.max_affinity = None if max_aff is None else float(max_aff)
+        max_dev = input_dict.get("max_core_dev", DEFAULT_MAX_CORE_DEV)
+        self.max_core_dev = None if max_dev is None else float(max_dev)
         # Post-dock rejects, by reason -- reported in stats() so a run can say
         # how much of its library the pose guards threw away, and why.
         self.pose_rejections: Dict[str, int] = {}
@@ -561,10 +580,18 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
         A rejected product ends up ``nan`` -- the same as a filtered one -- so
         Thompson Sampling is not rewarded for reaching it."""
-        if self.max_core_rmsd is not None:
-            drift = self._core_drift(pose)
-            if drift is None or drift > self.max_core_rmsd:
+        if self.max_core_rmsd is not None or self.max_core_dev is not None:
+            dev = self._core_deviations(pose)
+            if dev is None:
                 self._count_pose_rejection("core drift")
+                return False
+            if self.max_core_rmsd is not None and _rmsd(dev) > self.max_core_rmsd:
+                self._count_pose_rejection("core drift")
+                return False
+            if self.max_core_dev is not None and dev.max() > self.max_core_dev:
+                # The core is in roughly the right place but not in the right
+                # orientation -- turned over, or one end swung away.
+                self._count_pose_rejection("core turned")
                 return False
         if self.max_affinity is not None:
             aff = self._parse_prop(pose, "minimizedAffinity")
@@ -598,9 +625,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         # guard measured (how much margin it had), and how close it came to the
         # receptor -- nothing rejects on that any more, so the annotation is the
         # only way to filter for it after a run.
-        drift = self._core_drift(pose)
-        if drift is not None:
-            pose.SetProp("core_rmsd", f"{drift:.2f}")
+        dev = self._core_deviations(pose)
+        if dev is not None and dev.size:
+            pose.SetProp("core_rmsd", f"{_rmsd(dev):.2f}")
+            pose.SetProp("core_max_dev", f"{dev.max():.2f}")
         if self._receptor_xyz is not None:
             near = _receptor_contacts(pose, self._receptor_xyz)
             if near is not None:
@@ -608,8 +636,15 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         return score, pose
 
     def _core_drift(self, pose: Chem.Mol) -> Optional[float]:
-        """Heavy-atom RMSD of the conserved core in the docked pose vs the bound
-        reference, in the receptor frame (no superposition -- absolute drift).
+        """Heavy-atom RMSD of the conserved core, for annotation. See
+        ``_core_deviations`` -- this is the mean of those, and on its own it is
+        not a sufficient guard."""
+        dev = self._core_deviations(pose)
+        return None if dev is None else _rmsd(dev)
+
+    def _core_deviations(self, pose: Chem.Mol) -> Optional[np.ndarray]:
+        """How far each conserved-core atom sits from its bound position, in the
+        receptor frame (no superposition -- absolute drift).
         Atoms whose position the bound pose does not fix (``_core_movable``,
         e.g. a carboxyl C=O whose -OH left) are excluded -- they are free to
         turn, so scoring them as drift would reject correctly anchored poses.
@@ -619,22 +654,22 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         pair reference and pose atoms that aren't physically the same atom
         and so under-report real drift. Take the minimum RMSD over every
         symmetry-equivalent mapping instead -- the standard fix for RMSD
-        under symmetry, and never an under-estimate of the true drift."""
+        under symmetry, and never an under-estimate of the true drift. The
+        mapping is chosen on the worst atom, which is what the guard judges."""
         matches = pose.GetSubstructMatches(self.core, uniquify=False)
         matches = [m for m in matches if len(m) == self.core.GetNumAtoms()]
         if not matches:
             return None
         conf = pose.GetConformer()
-        best = None
         keep = self._core_fixed
         if keep.size == 0:
-            return 0.0
+            return np.zeros(0)
+        best = None
         for match in matches:
             xyz = np.array([list(conf.GetAtomPosition(i)) for i in match])
-            d2 = ((xyz[keep] - self._core_ref_xyz[keep]) ** 2).sum(axis=1)
-            rmsd = float(np.sqrt(d2.mean()))
-            if best is None or rmsd < best:
-                best = rmsd
+            dev = np.sqrt((((xyz[keep] - self._core_ref_xyz[keep]) ** 2).sum(axis=1)))
+            if best is None or dev.max() < best.max():
+                best = dev
         return best
 
 

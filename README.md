@@ -121,11 +121,12 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
   candidate's own anchored conformer, and guarded afterwards on placement
-  (core-RMSD against the bound fragment) and on energy (`minimizedAffinity`
-  above zero isn't a binding pose). Both are adjustable and can be switched
-  off; either way every pose is annotated with `core_rmsd` and
-  `min_receptor_dist` (closest heavy-atom approach to the receptor), so what
-  isn't rejected can still be filtered on afterwards.
+  (against the bound fragment's core: mean RMSD *and* worst single atom) and on
+  energy (`minimizedAffinity` above zero isn't a binding pose). All are
+  adjustable and can be switched off; either way every pose is annotated with
+  `core_rmsd`, `core_max_dev` and `min_receptor_dist` (closest heavy-atom
+  approach to the receptor), so what isn't rejected can still be filtered on
+  afterwards.
   The accessibility pre-pass validates the chosen route before it runs.
   Products are named by joining their reagent names, fragment first
   (`TH17144_150266`), so name the fragment in the UI field — a bound fragment
@@ -220,6 +221,16 @@ no pose came within 2.5 Å — so it was removed rather than kept as dead weight
 it likewise rarely fires under a search (nothing above −5.2 in that run), but it
 is the one check that catches a pose which isn't binding at all, and a CNN score
 field cannot show that, since it doesn't see the empirical term.
+
+**The placement guard tests the worst core atom, not just the mean.** A mean
+RMSD cannot see a core that turned over in place: rotating a 9-atom core 90°
+about its own in-plane axis moves its worst atom 2.43 Å but averages to 1.45 Å,
+so *no* usable mean threshold rejects a perpendicular core. Not hypothetical — a
+run's top hits included docked poses whose fragment core sat 72° and 81° off the
+bound one, at RMSD 1.92 and 1.99, both accepted by a 2.0 Å mean guard. The
+`max_core_dev` limit (1.5 Å) is what rejects those; the mean stays as a second,
+looser check on the core as a whole, and rejections are logged separately as
+`core turned`.
 
 Growth asks gnina for one mode (`--num_modes 1`), since only the best pose per
 product is ever kept. That makes the placement guard all-or-nothing per product:

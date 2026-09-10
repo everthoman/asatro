@@ -31,7 +31,7 @@ from rdkit import Chem
 
 from asatro.chemistry.accessibility import ProbeParams, assess_fragment, load_receptor_atoms
 from asatro.engine.anchored_fragment_evaluator import (
-    DEFAULT_MAX_AFFINITY, DEFAULT_MAX_CORE_RMSD)
+    DEFAULT_MAX_AFFINITY, DEFAULT_MAX_CORE_DEV, DEFAULT_MAX_CORE_RMSD)
 from asatro.chemistry.catalog import REACTION_BY_ID, resolve_step
 from asatro.chemistry.stub_growth import StubParams, assess_with_stubs
 from asatro.combi import run_combi
@@ -314,7 +314,8 @@ def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
 
 def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None,
                      *, anchored: bool = False,
-                     max_affinity: Optional[float] = None) -> str:
+                     max_affinity: Optional[float] = None,
+                     max_core_dev: Optional[float] = None) -> str:
     """One-line census of every hard filter a job applies, for the run log.
 
     Always names all filters -- including the ones that are switched off -- so a
@@ -336,6 +337,9 @@ def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = N
         parts.append(f"core-RMSD guard {max_core_rmsd:g} A")
     elif anchored:
         parts.append("core-RMSD guard off")
+    if anchored:
+        parts.append(f"core max-atom guard {max_core_dev:g} A" if max_core_dev is not None
+                     else "core max-atom guard off")
     if anchored:
         parts.append(f"max affinity {max_affinity:g}" if max_affinity is not None
                      else "affinity guard off")
@@ -546,8 +550,10 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         max_core_rmsd = None if guard is None else float(guard)
         max_aff = cfg.get("max_affinity", DEFAULT_MAX_AFFINITY)
         max_affinity = None if max_aff is None else float(max_aff)
+        dev = cfg.get("max_core_dev", DEFAULT_MAX_CORE_DEV)
+        max_core_dev = None if dev is None else float(dev)
         job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True,
-                                 max_affinity=max_affinity))
+                                 max_affinity=max_affinity, max_core_dev=max_core_dev))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -574,7 +580,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 search_method=search_method,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-                max_core_rmsd=max_core_rmsd, max_affinity=max_affinity,
+                max_core_rmsd=max_core_rmsd, max_core_dev=max_core_dev,
+                max_affinity=max_affinity,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,

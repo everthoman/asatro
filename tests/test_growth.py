@@ -458,18 +458,18 @@ def _anchored_ev(tmp_path, **kw):
 def test_anchored_evaluator_rejects_a_drifted_pose_when_the_guard_is_on(tmp_path):
     """Baseline for the switch below: a core sitting 5 A off its bound position
     is a broken binding mode, and the guard throws the pose away."""
-    ev = _anchored_ev(tmp_path, max_core_rmsd=1.5)
+    ev = _anchored_ev(tmp_path, max_core_rmsd=1.5, max_core_dev=None)
     path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
     score, pose = ev._best_pose(path, Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1"))
     assert (score, pose) == (None, None)
 
 
 def test_anchored_evaluator_keeps_a_drifted_pose_when_the_guard_is_off(tmp_path):
-    """max_core_rmsd=None switches the placement filter off: the same drifted
-    pose is kept and scored, and the drift is still annotated on it so the run
-    can be filtered on core_rmsd afterwards rather than during the search."""
-    ev = _anchored_ev(tmp_path, max_core_rmsd=None)
-    assert ev.max_core_rmsd is None
+    """Both placement thresholds off: the same drifted pose is kept and scored,
+    and the drift is still annotated on it so the run can be filtered on
+    core_rmsd afterwards rather than during the search."""
+    ev = _anchored_ev(tmp_path, max_core_rmsd=None, max_core_dev=None)
+    assert ev.max_core_rmsd is None and ev.max_core_dev is None
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     path = _displaced_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 12.0)
     score, pose = ev._best_pose(path, smi)
@@ -617,3 +617,70 @@ def test_unanchored_docking_keeps_its_nine_modes(tmp_path):
     ev = combi_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
                          work_dir=str(tmp_path / "dock"))
     assert ev.num_modes == 9
+
+
+
+# --- a core that turned over in place ---------------------------------------
+# Mean RMSD cannot see this: rotating a core about its own in-plane axis leaves
+# every atom within a ring radius or two of where it started, so the mean stays
+# low however far the core has turned. Rotating this test core 90 degrees gives
+# a mean of ~1.0 A -- under any threshold that still admits real poses -- while
+# its worst atom moves ~2 A. Seen in production: docked poses whose fragment
+# core sat 72 and 81 degrees off the bound one, at RMSD 1.92 and 1.99, accepted
+# by a 2.0 A guard.
+
+def _turned_pose_sdf(tmp_path, ev, product_smiles, degrees, name="turned.sdf"):
+    """The anchored pose, with the whole molecule turned about an in-plane axis
+    through the conserved core's own centroid -- the core stays where it is and
+    turns over, rather than moving away."""
+    block, err = ev._prepare_pose(product_smiles)
+    assert err is None, err
+    mol = Chem.MolFromMolBlock(block)
+    conf = mol.GetConformer()
+    core_xyz = ev._core_ref_xyz[ev._core_fixed]
+    centroid = core_xyz.mean(axis=0)
+    axis = np.linalg.svd(core_xyz - centroid)[2][0]          # long in-plane axis
+    t = np.radians(degrees)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    R = np.eye(3) + np.sin(t) * K + (1 - np.cos(t)) * K @ K
+    for i in range(mol.GetNumAtoms()):
+        p = np.array(list(conf.GetAtomPosition(i)))
+        q = R @ (p - centroid) + centroid
+        conf.SetAtomPosition(i, tuple(float(v) for v in q))
+    mol.SetProp(ev.score_field, "-8.2")
+    mol.SetProp("minimizedAffinity", "-8.2")
+    path = tmp_path / name
+    w = Chem.SDWriter(str(path)); w.write(mol); w.close()
+    return str(path)
+
+
+def test_core_turned_perpendicular_is_rejected_though_its_rmsd_passes(tmp_path):
+    ev = _anchored_ev(tmp_path)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 90.0)
+
+    # The mean is exactly what used to be checked, and it sails through.
+    pose = next(m for m in Chem.SDMolSupplier(path))
+    dev = ev._core_deviations(pose)
+    assert _rmsd_of(dev) < ev.max_core_rmsd          # mean says "fine"
+    assert dev.max() > ev.max_core_dev               # worst atom says otherwise
+
+    assert ev._best_pose(path, smi) == (None, None)
+    assert ev.stats()["pose_rejections"] == {"core turned": 1}
+
+
+def test_a_core_left_in_place_still_passes(tmp_path):
+    """The counterpart: the guard has to admit a pose that kept its anchor, or
+    it rejects everything -- with num_modes 1 that would empty a whole run."""
+    ev = _anchored_ev(tmp_path)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 0.0, name="flat.sdf")
+    score, pose = ev._best_pose(path, smi)
+    assert pose is not None and score == -8.2
+    assert float(pose.GetProp("core_max_dev")) < 1.5
+    assert ev.stats()["pose_rejections"] == {}
+
+
+def _rmsd_of(dev):
+    from asatro.engine.anchored_fragment_evaluator import _rmsd
+    return _rmsd(dev)
