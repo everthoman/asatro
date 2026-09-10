@@ -1003,3 +1003,59 @@ def test_a_setup_failure_is_still_an_error_not_a_cancel(tmp_path, monkeypatch):
     _await(job)
 
     assert job.status == "error" and "gnina exploded" in job.error
+
+
+def test_describe_filters_names_every_filter():
+    """The run log's ``Filters:`` line is a job's only record of the criteria it
+    ran under, so it names all of them -- including the ones switched off, so a
+    disabled cutoff can never be read back as one that merely wasn't logged."""
+    from asatro.jobs import describe_filters, make_filters
+
+    line = describe_filters(
+        make_filters({"filters": {"pains": True, "reos": True,
+                                  "mw": [None, 400], "logp": [1.0, 3.0]}}),
+        1.5)
+    assert line.startswith("Filters: ")
+    assert "PAINS 480 pattern(s)" in line and "REOS 117 rule(s)" in line
+    # An open lower bound reads as -inf, never as a missing or zero cutoff.
+    assert "MW -inf..400" in line
+    assert "logP 1..3" in line
+    # The post-dock placement guard rejects poses too, so it belongs on the line.
+    assert "core-RMSD guard 1.5 A" in line
+
+
+def test_describe_filters_records_disabled_filters():
+    """Everything off still logs a line, and says so filter by filter."""
+    from asatro.jobs import describe_filters, make_filters
+
+    line = describe_filters(make_filters({}))
+    assert line == "Filters: PAINS off, REOS off, MW off, logP off"
+
+
+def test_growth_job_logs_all_filters(tmp_path, monkeypatch):
+    """A real growth job writes the full census to its run log, with the core
+    RMSD guard it actually handed the evaluator."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = []
+
+    def runner(**k):
+        captured.append(k.get("max_core_rmsd"))
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1, "max_core_rmsd": 0.8,
+             "filters": {"mw": [None, 400], "logp": [1.0, 3.0]}},
+        runner=runner)
+    _await(job)
+    assert job.status == "done"
+    log = (job.dir / "run.log").read_text()
+    line = next(l for l in log.splitlines() if "Filters:" in l)
+    assert "logP 1..3" in line and "MW -inf..400" in line
+    assert "PAINS off" in line and "REOS off" in line
+    # What was logged is what the engine actually enforced.
+    assert "core-RMSD guard 0.8 A" in line
+    assert captured == [0.8]

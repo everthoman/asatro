@@ -298,6 +298,38 @@ def make_filters(cfg: dict) -> MolFilters:
     )
 
 
+def _fmt_range(rng: Optional[tuple], unit: str = "") -> str:
+    """A MW/logP range as a readable interval rather than a raw tuple: an unset
+    end reads as an open bound, so a reader can tell "no lower cutoff" from a
+    cutoff that happens to be zero."""
+    if rng is None:
+        return "off"
+    lo, hi = rng
+    lo_s = "-inf" if lo is None else f"{lo:g}"
+    hi_s = "inf" if hi is None else f"{hi:g}"
+    return f"{lo_s}..{hi_s}{unit}"
+
+
+def describe_filters(mol_filters: MolFilters, max_core_rmsd: Optional[float] = None) -> str:
+    """One-line census of every hard filter a job applies, for the run log.
+
+    Always names all filters -- including the ones that are switched off -- so a
+    finished run's log records the full criteria it ran under, and an absent
+    cutoff can never be mistaken for a cutoff that simply wasn't recorded.
+    ``max_core_rmsd`` is the post-dock placement guard (growth only); pass None
+    for combi jobs, which have no anchored core to drift.
+    """
+    parts = [
+        f"PAINS {len(mol_filters.pains_patterns)} pattern(s)" if mol_filters.pains_patterns else "PAINS off",
+        f"REOS {len(mol_filters.reos_rules)} rule(s)" if mol_filters.reos_rules else "REOS off",
+        f"MW {_fmt_range(mol_filters.mw_range)}",
+        f"logP {_fmt_range(mol_filters.logp_range)}",
+    ]
+    if max_core_rmsd is not None:
+        parts.append(f"core-RMSD guard {max_core_rmsd:g} A")
+    return "Filters: " + ", ".join(parts)
+
+
 def make_class_resolver(reactant_by_class: Dict[str, str]):
     """A ReactantResolver that maps a component's accepted classes to the first
     uploaded reactant file tagged with one of those classes."""
@@ -494,10 +526,8 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         reactant_files = resolve_reactant_files(steps, fragment_slot, resolver)
 
         mol_filters = make_filters(cfg)
-        if mol_filters.active:
-            job.log(f"Filters: PAINS {len(mol_filters.pains_patterns)} pattern(s), "
-                    f"REOS {len(mol_filters.reos_rules)} rule(s), MW {mol_filters.mw_range}, "
-                    f"logP {mol_filters.logp_range}")
+        max_core_rmsd = float(cfg.get("max_core_rmsd", 1.5))
+        job.log(describe_filters(mol_filters, max_core_rmsd))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -524,7 +554,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 search_method=search_method,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
-                max_core_rmsd=float(cfg.get("max_core_rmsd", 1.5)),
+                max_core_rmsd=max_core_rmsd,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,
@@ -576,10 +606,7 @@ def _run_combi(job: GrowthJob, receptor_path: str, steps: List,
             job.current_target = " -> ".join(step_ids)
 
         mol_filters = make_filters(cfg)
-        if mol_filters.active:
-            job.log(f"Filters: PAINS {len(mol_filters.pains_patterns)} pattern(s), "
-                    f"REOS {len(mol_filters.reos_rules)} rule(s), MW {mol_filters.mw_range}, "
-                    f"logP {mol_filters.logp_range}")
+        job.log(describe_filters(mol_filters))
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
