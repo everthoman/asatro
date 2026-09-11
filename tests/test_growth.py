@@ -6,6 +6,7 @@ constrained pose generation. The dock itself needs the gnina binary + a GPU and
 is not run here.
 """
 import numpy as np
+import pytest
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -475,6 +476,70 @@ def test_anchored_evaluator_keeps_a_drifted_pose_when_the_guard_is_off(tmp_path)
     score, pose = ev._best_pose(path, smi)
     assert pose is not None and score == -8.2
     assert float(pose.GetProp("core_rmsd")) > 5.0
+
+
+# --- naming what the placement guard judges ---------------------------------
+# Growing from a *modified* fragment, the conserved core is the modified one:
+# the embed has to pin all of it, but the binding mode worth guarding is the
+# original fragment's. rmsd_core_smarts points the guard at that part alone.
+
+def _modified_fragment_ev(tmp_path, **kw):
+    """Anchored evaluator on bromotoluene -- the original fragment (a benzene
+    ring) plus a methyl standing in for whatever was added to it."""
+    sdf = _write_bound_fragment(tmp_path, "Cc1ccc(Br)cc1")
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    return make_evaluator(fragment_sdf=sdf, receptor_path=str(rec),
+                          core_smarts=derive_core("Cc1ccc(Br)cc1", "aryl_halide"),
+                          work_dir=str(tmp_path / "dock"), **kw)
+
+
+def _move_added_atom(pose, shift=3.0):
+    """Displace only the modification (the core's one aliphatic carbon), leaving
+    the original ring exactly where the bound pose put it."""
+    conf = pose.GetConformer()
+    for a in pose.GetAtoms():
+        if a.GetSymbol() == "C" and not a.GetIsAromatic():
+            pos = conf.GetAtomPosition(a.GetIdx())
+            conf.SetAtomPosition(a.GetIdx(), (pos.x + shift, pos.y, pos.z))
+
+
+def test_guard_can_be_pointed_at_the_original_fragment_only(tmp_path):
+    """A pose whose added methyl moved 3 A but whose original ring did not: the
+    whole-core guard calls that 3 A of drift (and rejects it at any sane
+    threshold), while naming the original ring measures ~0 and keeps it."""
+    full = _modified_fragment_ev(tmp_path)
+    ring = _modified_fragment_ev(tmp_path, rmsd_core_smarts="c1ccccc1")
+    # The added atom is guarded by default and excluded when the ring is named.
+    assert len(full._core_fixed) == len(ring._core_fixed) + 1
+
+    block, err = full._prepare_pose("Cc1ccc(-c2ccccc2)cc1")
+    assert err is None, err
+    pose = Chem.MolFromMolBlock(block)
+    _move_added_atom(pose)
+
+    assert full._core_deviations(pose).max() > 2.5
+    assert ring._core_deviations(pose).max() < 0.5
+
+
+def test_naming_the_original_fragment_does_not_loosen_the_build(tmp_path):
+    """Only the measurement narrows: the embed still pins the whole conserved
+    core, so a product is built on the modified fragment exactly as before."""
+    full = _modified_fragment_ev(tmp_path)
+    ring = _modified_fragment_ev(tmp_path, rmsd_core_smarts="c1ccccc1")
+    assert Chem.MolToSmiles(ring.core) == Chem.MolToSmiles(full.core)
+    assert ring.core.GetNumAtoms() == full.core.GetNumAtoms()
+
+
+def test_an_rmsd_core_that_is_not_in_the_core_is_refused(tmp_path):
+    """Naming something the fragment doesn't contain is a mistake worth failing
+    on, not silently guarding everything."""
+    with pytest.raises(ValueError, match="does not match the conserved core"):
+        _modified_fragment_ev(tmp_path, rmsd_core_smarts="c1ccncc1")
+    # The leaving handle is gone from the core by construction -- naming it is
+    # the same mistake, and gets the same explanation.
+    with pytest.raises(ValueError, match="does not match the conserved core"):
+        _modified_fragment_ev(tmp_path, rmsd_core_smarts="Brc1ccccc1")
 
 
 # --- docking protocol + pose guards ----------------------------------------

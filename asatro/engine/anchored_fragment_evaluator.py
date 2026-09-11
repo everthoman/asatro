@@ -261,6 +261,35 @@ def _load_core(fragment_sdf: str, core_smarts: Optional[str]) -> Tuple[Chem.Mol,
             f"atom/group), and keep whole aromatic rings intact.") from e
 
 
+def _resolve_guard_atoms(core: Chem.Mol, rmsd_core_smarts: str,
+                         fixed: np.ndarray) -> np.ndarray:
+    """Which core atoms the placement guard judges, narrowed to ``rmsd_core_smarts``.
+
+    Growing from a *modified* fragment, the conserved core is the modified one:
+    the embed has to pin all of it (that is the molecule being grown), but the
+    binding mode worth guarding is the original fragment's, and the added part
+    may legitimately sit somewhere new. Naming the original here measures drift
+    over its atoms alone, leaving placement untouched.
+
+    Returns the intersection with ``fixed`` -- an atom the bound pose doesn't
+    fix is still excluded, whether or not the pattern names it."""
+    match, _q = _match_core(core, rmsd_core_smarts)
+    if not match:
+        raise ValueError(
+            f"rmsd_core_smarts '{rmsd_core_smarts}' does not match the conserved "
+            f"core (core from the fragment = '{Chem.MolToSmiles(core)}'). It has "
+            f"to be a substructure of that core -- the part of the bound fragment "
+            f"the reaction leaves untouched -- not of the product or of the "
+            f"leaving handle.")
+    keep = np.array(sorted(set(match).intersection(fixed.tolist())), dtype=int)
+    if keep.size == 0:
+        raise ValueError(
+            f"rmsd_core_smarts '{rmsd_core_smarts}' matches only atoms whose "
+            f"position the bound pose does not fix, so there would be nothing "
+            f"left to guard. Name atoms the bound pose actually pins.")
+    return keep
+
+
 _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 
 # Post-dock pose guards. The core-RMSD default is 2.0 A because the docking is a
@@ -476,6 +505,9 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                      no longer sized from it -- see _box_flags.
         core_smarts  : str        - the conserved sub-fragment (exclude the
                                      leaving handle). Strongly recommended.
+        rmsd_core_smarts : str    - measure drift on only this part of the core
+                                     (SMILES or SMARTS). Placement still pins the
+                                     whole core; see _resolve_guard_atoms.
         max_affinity : float (0.0) - reject a pose whose minimizedAffinity is
                                      above this. ``None`` turns it off.
         max_core_rmsd: float (2.0)- reject if core drifts more than this (A).
@@ -534,6 +566,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         # not the broken binding mode the guard exists to catch.
         self._core_fixed = np.array([i for i in range(self.core.GetNumAtoms())
                                      if i not in set(self._core_movable)], dtype=int)
+        self.rmsd_core_smarts = input_dict.get("rmsd_core_smarts") or None
+        if self.rmsd_core_smarts:
+            self._core_fixed = _resolve_guard_atoms(
+                self.core, self.rmsd_core_smarts, self._core_fixed)
 
     # --- override hook 1: constrained 3D build --------------------------------
     def _prepare_pose(self, smiles: str) -> Tuple[Optional[str], Optional[str]]:
@@ -611,7 +647,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
         receptor frame (no superposition -- absolute drift).
         Atoms whose position the bound pose does not fix (``_core_movable``,
         e.g. a carboxyl C=O whose -OH left) are excluded -- they are free to
-        turn, so scoring them as drift would reject correctly anchored poses.
+        turn, so scoring them as drift would reject correctly anchored poses --
+        as is anything outside ``rmsd_core_smarts`` when one was given. The
+        ``core_rmsd``/``core_max_dev`` annotations come from here too, so they
+        always report what the guard actually judged.
 
         When the core has graph symmetry (e.g. a symmetric ring/linker),
         ``GetSubstructMatch`` returns one arbitrary atom mapping, which can

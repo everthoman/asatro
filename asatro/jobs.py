@@ -552,6 +552,13 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
         max_affinity = None if max_aff is None else float(max_aff)
         job.log(describe_filters(mol_filters, max_core_rmsd, anchored=True,
                                  max_affinity=max_affinity))
+        # Drift is measured over the whole conserved core unless the run names a
+        # part of it -- growing from a modified fragment, that is how the guard
+        # is pointed at the original fragment's atoms instead.
+        rmsd_core_smarts = (cfg.get("rmsd_core_smarts") or "").strip() or None
+        if rmsd_core_smarts:
+            job.log(f"Core-RMSD measured on '{rmsd_core_smarts}' only "
+                    f"(placement still pins the whole core '{core_smarts}')")
 
         search_method = "rws" if str(cfg.get("search_method", "ts")).lower() == "rws" else "ts"
         job.log("Selection: Roulette Wheel Sampling + thermal cycling (Zhao 2025)"
@@ -579,6 +586,7 @@ def _run(job: GrowthJob, fragment_path: str, receptor_path: str,
                 min_cpds_per_core=cfg.get("min_cpds_per_core"),  # None -> auto-tuned (RWS only)
                 stop=cfg.get("stop"),  # None -> auto-tuned (RWS only)
                 max_core_rmsd=max_core_rmsd, max_affinity=max_affinity,
+                rmsd_core_smarts=rmsd_core_smarts,
                 prune_unreachable=bool(cfg.get("prune_unreachable", True)),
                 concurrency=concurrency, cpu=cpu, gpu_ids=gpu_ids,
                 progress_callback=job.log, cancel_event=job.cancel_event,

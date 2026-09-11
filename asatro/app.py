@@ -338,6 +338,8 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
     [``"ts"``|``"rws"``], min_cpds_per_core, stop, max_core_rmsd — the core-
     drift placement guard, in Å, or ``null`` to switch the guard off —
+    ``rmsd_core_smarts`` — measure that drift on only this part of the conserved
+    core (SMILES or SMARTS; placement still pins the whole core) —
     ``concurrency``, ``cpu``). Returns the job id."""
     try:
         cfg = json.loads(config or "{}")
@@ -374,6 +376,13 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
         if complaint:
             raise HTTPException(400, complaint + " (set ignore_bond_order_warning "
                                 "in the run config to grow from it anyway)")
+
+    # Parsing is worth catching here rather than 40 seconds into a job; whether
+    # it matches the *core* needs the pre-pass, so the job layer checks that.
+    rmsd_core = (cfg.get("rmsd_core_smarts") or "").strip()
+    if rmsd_core and Chem.MolFromSmarts(rmsd_core) is None and Chem.MolFromSmiles(rmsd_core) is None:
+        raise HTTPException(400, f"config.rmsd_core_smarts: could not be parsed as "
+                                 f"SMILES or SMARTS: '{rmsd_core}'")
 
     pool_path = None
     uploaded_pool = pool is not None and bool(pool.filename)

@@ -1208,6 +1208,73 @@ def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):
     assert captured["max_affinity"] is None
 
 
+def test_growth_job_passes_the_rmsd_core_to_the_engine(tmp_path, monkeypatch):
+    """Growing from a modified fragment, the guard can be pointed at the
+    original: the pattern reaches the engine and the log says what is measured
+    on what, since the placement core and the guarded core now differ."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = {}
+
+    def runner(**k):
+        captured.update(k)
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1, "rmsd_core_smarts": "c1ccccc1"},
+        runner=runner)
+    _await(job)
+    assert job.status == "done", job.error
+    assert captured["rmsd_core_smarts"] == "c1ccccc1"
+    log = (job.dir / "run.log").read_text()
+    assert "Core-RMSD measured on 'c1ccccc1' only" in log
+    assert "placement still pins the whole core" in log
+
+
+def test_growth_job_without_an_rmsd_core_guards_the_whole_core(tmp_path, monkeypatch):
+    """Unset (and blank) means what it always did -- drift over the whole
+    conserved core, and nothing extra in the log to explain."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    sdf = _bound_sdf(tmp_path)
+    captured = {}
+
+    def runner(**k):
+        captured.update(k)
+        return _fake_runner(**k)
+
+    job = start_growth_job(
+        fragment_path=sdf, receptor_path="",
+        steps=["suzuki"], fragment_slot=1,
+        reactant_by_class={"boronic": _boronic(tmp_path)},
+        cfg={"num_cycles": 1, "num_warmup": 1, "rmsd_core_smarts": "  "},
+        runner=runner)
+    _await(job)
+    assert captured["rmsd_core_smarts"] is None
+    assert "Core-RMSD measured on" not in (job.dir / "run.log").read_text()
+
+
+def test_grow_endpoint_rejects_an_unparseable_rmsd_core(tmp_path, monkeypatch):
+    """Caught at the request, not 40 seconds into a docking run."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    sdf_bytes = open(_bound_sdf(tmp_path), "rb").read()
+    with TestClient(app) as client:
+        r = client.post(
+            "/grow",
+            files={"fragment": ("frag.sdf", sdf_bytes, "chemical/x-mdl-sdfile"),
+                   "receptor": ("receptor.pdb", b"", "chemical/x-pdb")},
+            data={"config": json.dumps({"steps": ["suzuki"], "fragment_slot": 1,
+                                        "rmsd_core_smarts": "c1ccccc1)("})},
+        )
+    assert r.status_code == 400
+    assert "rmsd_core_smarts" in r.text
+
+
 def test_combi_job_passes_the_energy_guard_to_the_engine(tmp_path, monkeypatch):
     """Combi has the same energy guard as growth now (the check lives in the
     shared evaluator), so the cutoff reaches the engine and the log names it."""

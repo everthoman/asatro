@@ -260,6 +260,18 @@ bound core. The default is 0.8 Å, which admits about 30° (0.5 Å about 20°,
 0.7 Å about 27°) — tight enough to mean something, loose enough that a run still
 has hits to rank.
 
+**What the guard measures is separately nameable.** By default it judges the
+whole conserved core. Growing from a *modified* fragment, that core is the
+modified one — the embed has to pin all of it, since that is the molecule being
+grown — but the binding mode worth guarding is usually the original fragment's,
+and the added part may legitimately sit somewhere new. Put the original in
+`rmsd_core_smarts` (the form's **Measure drift on** field; SMILES or SMARTS) and
+drift is measured over its atoms alone, placement untouched. The `core_rmsd` and
+`core_max_dev` written onto every pose follow the same subset, so the annotation
+always reports what the guard actually judged. A pattern that isn't a
+substructure of the conserved core is refused outright rather than silently
+falling back to the whole core.
+
 A threshold that tight needs poses to choose from, which is why growth asks
 gnina for nine modes and keeps the best *acceptable* one. The modes are free —
 one search finds them all, reporting more only costs the writing — and they
