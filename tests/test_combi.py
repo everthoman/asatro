@@ -183,6 +183,68 @@ def test_route_sampler_searches_with_all_slots_variable(tmp_path):
     assert all(len(row) == 3 for row in search)
 
 
+class _StubEvaluator:
+    """Scores anything that builds, so a test can tell "never built" apart from
+    "built but scored badly"."""
+    def __init__(self):
+        self.progress_callback = None
+        self.n = 0
+
+    def evaluate(self, mol):
+        self.n += 1
+        return 1.0
+
+
+def test_outcome_census_reports_what_became_of_every_candidate(tmp_path):
+    """The run log has to account for candidates that never reached the dock:
+    they are neither docks nor rejections, so before this a route that built
+    nothing said only "0 docked"."""
+    from asatro.engine.route_sampler import log_outcome_census
+    halide = _write(tmp_path, "halide.smi", ["Brc1ccccc1 phBr", "Brc1ccc(C)cc1 tolBr"])
+    boronic = _write(tmp_path, "boronic.smi", ["OB(O)c1ccccc1 phB", "OB(O)c1ccncc1 pyB"])
+    files, route, _summary = build_combi_route(["suzuki"], [[boronic, halide]], tmp_path)
+
+    s = RouteSampler(mode="maximize")
+    s.set_hide_progress(True)
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route(route)
+    s.set_evaluator(_StubEvaluator())
+    s.warm_up(num_warmup_trials=1)
+    assert s.outcome_counts.get("scored"), s.outcome_counts
+
+    lines = []
+    log_outcome_census(s, lines.append)
+    assert lines and lines[0].startswith("Candidates evaluated:")
+    assert "scored" in lines[0]
+    assert len(lines) == 1          # nothing alarming to say: things did build
+
+
+def test_outcome_census_says_so_when_the_reaction_never_fires(tmp_path):
+    """The TH17145 case: an aryl amine handed to a reaction whose own pattern
+    wants an alkylamine. Every product fails to build, nothing docks, and the
+    census has to name the cause rather than leave a silent empty run."""
+    from asatro.engine.route_sampler import log_outcome_census
+    aldehyde = _write(tmp_path, "aldehyde.smi", ["CC=O acetald", "CCC=O propanal"])
+    arylamine = _write(tmp_path, "amine.smi", ["Nc1cn[nH]c(=O)c1 TH17145"])
+    files, route, _summary = build_combi_route(
+        ["reductive_amination"], [[aldehyde, arylamine]], tmp_path)
+
+    s = RouteSampler(mode="maximize")
+    s.set_hide_progress(True)
+    s.read_reagents(reagent_file_list=files, num_to_select=None)
+    s.set_route(route)
+    s.set_evaluator(_StubEvaluator())
+    rows = s.dock_all()
+    assert rows == []
+    assert s.outcome_counts == {"reaction": 2}
+
+    lines = []
+    log_outcome_census(s, lines.append)
+    assert "2 reaction never fired" in lines[0]
+    assert "Nothing was built" in lines[1]
+    assert "reagent pattern" in lines[1]
+
+
 class _AlwaysFailEvaluator:
     """Every dock scores NaN, as if gnina couldn't place/dock anything for this
     fragment/receptor pairing -- regression coverage for warm_up() crashing

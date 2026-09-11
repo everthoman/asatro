@@ -46,6 +46,11 @@ class ThompsonSampler:
         # is applied, rather than the raw component order (which puts e.g. the
         # acid before the fragment). Does not affect the chemistry, only the name.
         self.name_lead_index = None
+        # What became of every candidate the search built: "scored", or why it
+        # didn't ("reaction" -- the reaction never fired, "filtered", "fail").
+        # A run that builds nothing docks nothing, and the docking progress line
+        # (emitted per dock) never fires to say so -- see log_outcome_census.
+        self.outcome_counts: Dict[str, int] = {}
         self._mode = mode
         if self._mode == "maximize":
             self.pick_function = np.nanargmax
@@ -277,6 +282,9 @@ class ThompsonSampler:
                 scores[i], reasons[i] = self._score_product_detailed(built[i][0], built[i][2], built[i][3])
 
         results = [(built[i][1], built[i][2], scores[i], reasons[i]) for i in range(len(built))]
+        for _smi, _name, _score, reason in results:
+            key = reason or "scored"
+            self.outcome_counts[key] = self.outcome_counts.get(key, 0) + 1
         return results, built
 
     @staticmethod

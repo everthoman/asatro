@@ -57,6 +57,42 @@ def test_ketone_reductive_amination():
     assert any(s["fg_class"] == "ketone" for s in info["slots"])
 
 
+def test_aryl_amine_is_not_offered_reactions_that_need_an_alkylamine():
+    """TH17145 (`Nc1cn[nH]c(=O)c1`) carries a primary amine, but an *aryl* one.
+    Reductive amination, sulfonamide formation and the SNAr reactions all
+    require `$(NC)` and explicitly exclude `N[c]`, so they cannot fire on it --
+    offered on the FG class alone they produced a run that enumerated 1367
+    candidates, built none of them and docked nothing."""
+    offered = set(_compat("Nc1cn[nH]c(=O)c1"))
+    assert "reductive_amination" not in offered
+    assert not offered & {"sulfonamide", "paal_knorr_pyrrole", "heteroaromatic_nuc_sub",
+                          "nucl_sub_aromatic_ortho_nitro", "nucl_sub_aromatic_para_nitro"}
+    # What an aryl amine *can* do is untouched.
+    assert {"schotten_baumann_amide", "urea", "thiourea", "buchwald_hartwig"} <= offered
+
+
+def test_alkylamine_still_gets_the_full_amine_menu():
+    """The gate is the reaction's own reagent pattern, not a blanket ban on
+    amines: benzylamine matches every one of them."""
+    offered = set(_compat("NCc1ccccc1"))
+    assert {"reductive_amination", "sulfonamide", "paal_knorr_pyrrole",
+            "heteroaromatic_nuc_sub", "schotten_baumann_amide", "urea"} <= offered
+
+
+def test_every_offered_slot_can_actually_fire():
+    """The pre-pass promise, stated directly: if a slot is offered, the
+    fragment matches that component's reactant template, so RunReactants has
+    something to work with."""
+    from asatro.chemistry.catalog import reactant_templates
+    for smiles in ("Nc1cn[nH]c(=O)c1", "NCc1ccccc1", "Brc1ccccc1", "CC(=O)O",
+                   "CC(=O)c1ccncc1", "OB(O)c1ccccc1"):
+        mol = Chem.MolFromSmiles(smiles)
+        for rid, info in analyze_fragment(smiles)["reactions"].items():
+            for slot in info["slots"]:
+                template = reactant_templates(rid)[slot["index"]]
+                assert mol.HasSubstructMatch(template), (smiles, rid, slot["index"])
+
+
 def test_no_handle_no_reactions():
     assert _compat("c1ccccc1") == {}
 

@@ -17,7 +17,7 @@ from rdkit import Chem
 
 from rdkit.Chem.MolStandardize import rdMolStandardize
 
-from asatro.chemistry.catalog import START_REACTIONS, VOCAB
+from asatro.chemistry.catalog import START_REACTIONS, VOCAB, reactant_templates
 
 MolOrSmiles = Union[Chem.Mol, str]
 
@@ -193,21 +193,38 @@ def analyze_fragment(frag: MolOrSmiles) -> dict:
     ``{index, fg_class, core_smarts}`` (the component the fragment fills and the
     core it conserves there). Extend reactions are out of scope here — the
     fragment only seeds the first step.
+
+    A slot has to pass *both* gates: the fragment carries a handle of the class
+    the component accepts, **and** the fragment matches that component's own
+    reagent pattern out of the reaction SMARTS. The class alone is too coarse
+    to offer a reaction on -- ``primary_amine`` covers anilines and alkylamines
+    alike, but reductive amination, sulfonamide formation and the SNAr
+    reactions all require ``$(NC)`` and explicitly exclude ``N[c]``. Offered on
+    the class alone, an aryl-amine fragment got a menu of reactions that could
+    never fire: the run enumerated its whole library, built nothing, and
+    finished in a second with no hits and nothing in the log to say why.
     """
     mol = neutralize(to_mol(frag))
     classes = set(detect_fg_classes(mol))
     reactions: Dict[str, dict] = {}
     for r in START_REACTIONS:
+        templates = reactant_templates(r["id"])
         slots: List[dict] = []
         for i, comp in enumerate(r["components"]):
             hit = classes.intersection(comp.get("accepts", []))
-            if hit:
-                fg = sorted(hit)[0]
-                slots.append({
-                    "index": i,
-                    "fg_class": fg,
-                    "core_smarts": derive_core(mol, fg),
-                })
+            if not hit:
+                continue
+            # Same matcher RunReactants will use on the same (neutralized)
+            # molecule -- see growth.fragment_smiles_from_sdf -- so this
+            # predicts exactly whether the reaction can fire, no heuristic.
+            if i < len(templates) and not mol.HasSubstructMatch(templates[i]):
+                continue
+            fg = sorted(hit)[0]
+            slots.append({
+                "index": i,
+                "fg_class": fg,
+                "core_smarts": derive_core(mol, fg),
+            })
         reactions[r["id"]] = {"compatible": bool(slots), "slots": slots}
     return {
         "fragment_smiles": Chem.MolToSmiles(mol),

@@ -117,6 +117,33 @@ class RouteSampler(ThompsonSampler):
         return intermediate, product_smiles, product_name, selected_reagents
 
 
+# Ordered as a run reads: what worked, then why the rest didn't.
+_OUTCOME_LABELS = [("scored", "scored"), ("reaction", "reaction never fired"),
+                   ("filtered", "rejected by filters"), ("fail", "prep/dock failures")]
+
+
+def log_outcome_census(sampler: ThompsonSampler, log) -> None:
+    """Say what became of the candidates a search touched, once it is over.
+
+    A candidate whose reaction doesn't fire never reaches the evaluator, so it
+    counts as neither a dock nor a rejection: a route whose reagents simply
+    cannot react logged "0 docked" and nothing else, and the run looked like a
+    docking failure rather than a chemistry mismatch. This is the one place
+    that reports those, and it says so plainly when *nothing* was built."""
+    if log is None:
+        return
+    counts = dict(sampler.outcome_counts)
+    total = sum(counts.values())
+    if not total:
+        return
+    log("Candidates evaluated: %d — %s" % (
+        total, ", ".join(f"{counts[k]} {label}" for k, label in _OUTCOME_LABELS if counts.get(k))))
+    if not counts.get("scored") and counts.get("reaction") == total:
+        log("Nothing was built: the reaction did not fire for a single candidate. "
+            "The fragment has a handle of the right class, but does not match this "
+            "reaction's own reagent pattern, so there was nothing to dock.")
+
+
 def run_ts_or_rws_search(sampler: ThompsonSampler, evaluator, search_method: str,
                          num_warmup: Optional[int], num_cycles: Optional[int],
                          min_cpds_per_core: Optional[int] = None,
@@ -140,9 +167,11 @@ def run_ts_or_rws_search(sampler: ThompsonSampler, evaluator, search_method: str
             # nothing scored means those were never initialized, and searching
             # further would just repeat the same all-nan warm-up. Bail out
             # cleanly instead of the AttributeError search_rws would raise.
+            log_outcome_census(sampler, evaluator.progress_callback)
             return []
         search_results = sampler.search_rws(
             num_targets=num_cycles, min_cpds_per_core=min_cpds_per_core, stop=stop)
+        log_outcome_census(sampler, evaluator.progress_callback)
         return warmup_results + search_results
     warmup_results = sampler.warm_up(num_warmup_trials=num_warmup)
     if not warmup_results:
@@ -151,5 +180,8 @@ def run_ts_or_rws_search(sampler: ThompsonSampler, evaluator, search_method: str
         # in its uninitialized "warmup" phase), so searching further would
         # sample meaningless all-zero priors. Bail out cleanly, mirroring
         # the RWS branch's guard above.
+        log_outcome_census(sampler, evaluator.progress_callback)
         return []
-    return sampler.search(num_cycles=num_cycles)
+    results = sampler.search(num_cycles=num_cycles)
+    log_outcome_census(sampler, evaluator.progress_callback)
+    return results

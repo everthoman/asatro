@@ -33,7 +33,8 @@ from asatro.chemistry.reachability import prune_unreachable_reagents
 from asatro.engine.anchored_fragment_evaluator import (
     DEFAULT_MAX_CORE_RMSD, AnchoredFragmentEvaluator)
 from asatro.engine.gnina_evaluator import MolFilters
-from asatro.engine.route_sampler import RouteSampler, run_ts_or_rws_search
+from asatro.engine.route_sampler import (RouteSampler, log_outcome_census,
+                                         run_ts_or_rws_search)
 from asatro.engine.ts_autoparams import suggest_rws_params, suggest_ts_params
 
 
@@ -381,6 +382,7 @@ def run_growth(*, fragment_sdf: str, receptor_path: str, steps: List[StepSpec],
                 f"Single variable slot ({sampler.num_prods} candidates) — "
                 f"exhaustive dock, no warm-up/search split")
         results = sampler.dock_all()
+        log_outcome_census(sampler, evaluator.progress_callback)
         return results, evaluator
     # Two or more variable slots: auto-tune the TS/RWS budget from the
     # (pruned) pool sizes and run the warm-up + search dispatch, shared with

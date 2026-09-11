@@ -96,6 +96,19 @@ receptor atoms; an optional **stub-growth refinement** (`stub_growth.py`) then
 grows real –Me/–Ph/morpholine substituents onto the survivors, constrained to the
 bound pose, and keeps only vectors where a substituent physically fits.
 
+A reaction is offered for a slot only if the fragment passes *both* gates: it
+carries a handle of the class that component accepts, **and** it matches that
+component's own reagent pattern from the reaction SMARTS. The class alone is too
+coarse to act on — `primary_amine` covers anilines and alkylamines alike, while
+reductive amination, sulfonamide formation and the SNAr reactions all require
+`$(NC)` and explicitly exclude `N[c]`. An aryl-amine fragment was offered ten
+reactions on class alone and only four of them could fire; picking one of the
+other six enumerated the whole library, built nothing and finished in a second.
+What became of every candidate is now logged at the end of a run — scored,
+reaction never fired, filtered, prep/dock failure — because a product that
+doesn't build never reaches the evaluator and so counts as neither a dock nor a
+rejection.
+
 ```bash
 # fragment SDF (in its bound pose) + receptor PDB -> analysis + accessible reactions
 curl -F fragment=@hit.sdf -F receptor=@receptor.pdb http://localhost:5015/prune

@@ -6,11 +6,13 @@ This is the single source of truth the handle-detection layer reads from. Lifted
 """
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -63,6 +65,35 @@ VOCAB = Vocab(DATA_DIR / "functional_groups.json")
 REACTIONS: List[dict] = _load_reactions(DATA_DIR / "reactions.json")
 START_REACTIONS: List[dict] = [r for r in REACTIONS if r.get("role") == "start"]
 REACTION_BY_ID: Dict[str, dict] = {r["id"]: r for r in REACTIONS}
+
+
+@functools.lru_cache(maxsize=None)
+def _compiled_reaction(reaction_id: str) -> Tuple[AllChem.ChemicalReaction, Tuple[Chem.Mol, ...]]:
+    """One compiled reaction and its reactant templates, cached *together*.
+
+    ``GetReactantTemplate`` hands back a molecule the reaction still owns, not a
+    copy: keep only the templates and the reaction is freed under them, so the
+    next substructure match reads freed memory and segfaults the interpreter
+    (reproduced -- it is not a Python-level error you can catch). Caching the
+    pair keeps the owner alive for as long as the templates are reachable."""
+    rxn = AllChem.ReactionFromSmarts(REACTION_BY_ID[reaction_id]["smarts"])
+    return rxn, tuple(rxn.GetReactantTemplate(i) for i in range(rxn.GetNumReactantTemplates()))
+
+
+def reactant_templates(reaction_id: str) -> Tuple[Chem.Mol, ...]:
+    """One reaction's compiled reagent patterns, indexed like its ``components``.
+
+    The catalog's component list and the reaction SMARTS' reactant templates
+    are in the same order for every reaction in the catalog, so
+    ``reactant_templates(rid)[i]`` is what component ``i`` has to match for
+    ``RunReactants`` to produce anything. Compiled once per reaction: handle
+    analysis asks this for all 58 start reactions on every fragment.
+
+    A component's FG class says the handle is the right *kind*; this says
+    whether a particular molecule is one the reaction will actually consume --
+    ``primary_amine`` covers both anilines and alkylamines, but a reductive
+    amination only fires on the latter."""
+    return _compiled_reaction(reaction_id)[1]
 
 
 StepSpec = Union[str, Dict]  # bare reaction id, or {"reaction_id": str, "slot": Optional[int]}
