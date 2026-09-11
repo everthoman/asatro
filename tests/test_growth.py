@@ -530,12 +530,13 @@ def test_anchored_docking_is_a_real_search(tmp_path):
 
 
 def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
-    """The guard is tight (0.5 A) because the core is rigid: its RMSD tracks how
-    far it turned, and a core turned perpendicular in place still averages only
-    ~1.45 A. Nine modes are asked for so the guard has poses to choose between --
-    at one mode a 0.5 A guard passed none of twelve products, at nine, three."""
+    """The guard is tight (0.8 A, about 30 degrees off the bound core) because
+    the core is rigid: its RMSD tracks how far it turned, and a core turned
+    perpendicular in place still averages only ~1.45 A. Nine modes are asked for
+    so the guard has poses to choose between -- at one mode even a 0.5 A guard
+    passed none of twelve products, at nine, three."""
     ev = _ev_with_receptor(tmp_path)
-    assert (ev.max_core_rmsd, ev.max_affinity) == (0.5, 0.0)
+    assert (ev.max_core_rmsd, ev.max_affinity) == (0.8, 0.0)
 
 
 def test_pose_with_a_repulsive_score_is_rejected(tmp_path):

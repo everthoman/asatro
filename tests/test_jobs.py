@@ -693,8 +693,19 @@ def _job(tmp_path, job_id="j1"):
     return jobs.GrowthJob(id=job_id, dir=d)
 
 
-def test_dock_resources_defaults_to_serial_no_gpu(tmp_path):
+def test_dock_resources_defaults_to_parallel_docking(tmp_path):
+    """A config that says nothing docks DEFAULT_CONCURRENCY products at a time
+    -- the same default the UI's forms carry -- with DOCK_CPU split across them
+    and no GPU round-robin (CNN scoring is off by default, so it is CPU work)."""
     concurrency, cpu, gpu_ids = jobs._dock_resources({}, _job(tmp_path))
+    assert concurrency == jobs.DEFAULT_CONCURRENCY == 16
+    assert cpu == max(1, jobs.DOCK_CPU // jobs.DEFAULT_CONCURRENCY)
+    assert gpu_ids is None
+
+
+def test_dock_resources_serial_when_asked(tmp_path):
+    """concurrency=1 still means one dock at a time, with every core it can get."""
+    concurrency, cpu, gpu_ids = jobs._dock_resources({"concurrency": 1}, _job(tmp_path))
     assert concurrency == 1 and cpu is None and gpu_ids is None
 
 
@@ -1171,8 +1182,8 @@ def test_growth_job_logs_and_wires_the_placement_guard(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    assert "core-RMSD guard 0.5 A" in line and "max affinity 0" in line
-    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (0.5, 0.0)
+    assert "core-RMSD guard 0.8 A" in line and "max affinity 0" in line
+    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (0.8, 0.0)
 
 
 def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):

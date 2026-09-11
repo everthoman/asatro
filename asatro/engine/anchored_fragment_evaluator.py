@@ -274,8 +274,8 @@ _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 # it has turned almost exactly (r = 0.95 over a 162-pose run, worst atom a
 # near-constant 1.6x the mean), and a core turned 90 degrees in place still
 # averages only ~1.45 A. At 2.0 A the guard admitted poses sitting 81 degrees off
-# the bound core; 0.5 A admits about 20 degrees.
-DEFAULT_MAX_CORE_RMSD = 0.5
+# the bound core; 0.8 A admits about 30 degrees (0.5 A about 20, 0.7 A about 27).
+DEFAULT_MAX_CORE_RMSD = 0.8
 # minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
 # pose whatever the score field is. Above zero the steric term has won: whatever
 # else the pose is, it is not a binding one. A search rarely returns such a pose

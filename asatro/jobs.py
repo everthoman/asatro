@@ -427,6 +427,12 @@ def _detect_gpu_ids(min_memory_mib: int = 8000) -> List[int]:
     return ids
 
 
+# Products built and docked in parallel when a run doesn't say otherwise. The
+# same default the UI's forms carry, so an API-launched run docks like one
+# launched from the app instead of quietly running serial.
+DEFAULT_CONCURRENCY = 16
+
+
 def _dock_resources(cfg: dict, job: GrowthJob) -> tuple:
     """Resolve ``concurrency``/``cpu``/``gpu_ids`` from the job config.
 
@@ -434,19 +440,18 @@ def _dock_resources(cfg: dict, job: GrowthJob) -> tuple:
     ``gnina_evaluator.py``), and each individual dock otherwise defaults to
     ``DOCK_CPU`` (all but a few reserved cores) -- fine at ``concurrency=1``,
     but requesting that many threads per dock while running several docks in
-    parallel oversubscribes the box. If the caller sets ``concurrency`` without
-    an explicit ``cpu``, split ``DOCK_CPU`` evenly across the parallel docks
-    instead of leaving every one of them asking for all of it.
+    parallel oversubscribes the box. With no explicit ``cpu``, split
+    ``DOCK_CPU`` evenly across the parallel docks instead of leaving every one
+    of them asking for all of it.
 
     When CNN scoring is active (GPU-bound, unlike the CPU-only Vina path),
     multiple concurrent docks otherwise all pin the same GPU (``gpu_id``
     defaults to 0) -- real contention, and on this box the trigger for a
-    genuine hang (see ``GninaEvaluator._run_pollable``). If the caller sets
-    ``concurrency`` with CNN scoring on and doesn't give explicit
-    ``gpu_ids``, auto-detect the real (non-display) GPUs and round-robin
-    docks across all of them instead of piling onto one.
+    genuine hang (see ``GninaEvaluator._run_pollable``). With CNN scoring on
+    and no explicit ``gpu_ids``, auto-detect the real (non-display) GPUs and
+    round-robin docks across all of them instead of piling onto one.
     """
-    concurrency = max(1, int(cfg.get("concurrency", 1)))
+    concurrency = max(1, int(cfg.get("concurrency", DEFAULT_CONCURRENCY)))
     cpu = cfg.get("cpu")
     if cpu is None and concurrency > 1:
         cpu = max(1, DOCK_CPU // concurrency)

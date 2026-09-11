@@ -121,7 +121,7 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
   candidate's own anchored conformer, and guarded afterwards on placement
-  (core RMSD against the bound fragment, 0.5 Å) and on energy
+  (core RMSD against the bound fragment, 0.8 Å) and on energy
   (`minimizedAffinity` above zero isn't a binding pose). Both are adjustable and
   can be switched off; either way every pose is annotated with `core_rmsd`,
   `core_max_dev` and `min_receptor_dist` (closest heavy-atom approach to the
@@ -243,7 +243,9 @@ almost exactly (r = 0.95 over a 162-pose run; the worst atom is a near-constant
 1.6× the mean). That also means a core turned fully perpendicular *in place*
 still averages only ~1.45 Å — so a loose threshold is not a lenient guard, it is
 no guard: at 2.0 Å a run's top hits included poses sitting 72° and 81° off the
-bound core. 0.5 Å admits about 20°, 0.7 Å about 27°.
+bound core. The default is 0.8 Å, which admits about 30° (0.5 Å about 20°,
+0.7 Å about 27°) — tight enough to mean something, loose enough that a run still
+has hits to rank.
 
 A threshold that tight needs poses to choose from, which is why growth asks
 gnina for nine modes and keeps the best *acceptable* one. The modes are free —

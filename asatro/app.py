@@ -436,7 +436,7 @@ async def combi(receptor: UploadFile = File(...),
     each, pocket mode), plus the same run knobs as ``/grow`` (num_warmup,
     num_cycles, num_to_select, seed, score_field, cnn_scoring, search_method
     [``"ts"``|``"rws"``], min_cpds_per_core, stop, ``concurrency`` — number of
-    products to build+dock in parallel (default 1), ``cpu`` — cores per dock
+    products to build+dock in parallel (default 16), ``cpu`` — cores per dock
     (default: ``DOCK_CPU`` split evenly across ``concurrency`` when unset)).
     Returns the job id."""
     try:
