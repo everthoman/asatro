@@ -272,6 +272,52 @@ def test_make_evaluator_requires_binding_site(tmp_path):
         make_evaluator(receptor_path=str(rec), work_dir=str(tmp_path / "dock"))
 
 
+def _pose_sdf(tmp_path, smiles, props, name="pose"):
+    """One docked-looking mode: an embedded conformer carrying gnina's score
+    properties, which is all ``_best_pose`` reads."""
+    from rdkit.Chem import AllChem
+    m = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    AllChem.EmbedMolecule(m, randomSeed=11)
+    m = Chem.RemoveHs(m)
+    for k, v in props.items():
+        m.SetProp(k, str(v))
+    path = str(tmp_path / f"{name}.sdf")
+    w = Chem.SDWriter(path); w.write(m); w.close()
+    return path
+
+
+def test_plain_evaluator_has_no_energy_guard_by_default(tmp_path):
+    """Combi is unanchored and its guard is opt-in: without ``max_affinity`` the
+    evaluator keeps whatever it docked, exactly as it always has."""
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    ev = make_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
+                        work_dir=str(tmp_path / "dock"))
+    assert ev.max_affinity is None
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _pose_sdf(tmp_path, smi, {"minimizedAffinity": 32.51})
+    assert ev._best_pose(path, smi)[0] == 32.51
+    assert ev.stats()["pose_rejections"] == {}
+
+
+def test_plain_evaluator_rejects_a_repulsive_pose_when_asked(tmp_path):
+    """Same guard growth defaults on (see test_growth's repulsive-pose test),
+    available to the unanchored search: a positive minimizedAffinity is net
+    repulsion, so the mode is not a binding pose whatever the score field says."""
+    rec = tmp_path / "receptor.pdb"
+    rec.write_text("ATOM      1  CA  ALA A   1      0.000   0.000   0.000  1.00  0.00           C\n")
+    ev = make_evaluator(receptor_path=str(rec), center=(0.0, 0.0, 0.0),
+                        work_dir=str(tmp_path / "dock"),
+                        score_field="CNN_VS", max_affinity=0.0)
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _pose_sdf(tmp_path, smi, {"CNN_VS": 4.31, "minimizedAffinity": 32.51})
+    assert ev._best_pose(path, smi) == (None, None)
+    assert ev.stats()["pose_rejections"] == {"repulsive score": 1}
+    # A pose that does bind is kept and scored on the configured field.
+    good = _pose_sdf(tmp_path, smi, {"CNN_VS": 4.31, "minimizedAffinity": -8.2}, name="good")
+    assert ev._best_pose(good, smi)[0] == 4.31
+
+
 def test_prepare_pose_is_free_embed_not_constrained(tmp_path):
     """Contrast with test_growth's anchored pose test: the plain evaluator's
     _prepare_pose takes no core/fragment and just free-embeds the SMILES."""

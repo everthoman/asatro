@@ -1029,7 +1029,7 @@ def test_describe_filters_records_disabled_filters():
     from asatro.jobs import describe_filters, make_filters
 
     line = describe_filters(make_filters({}))
-    assert line == "Filters: PAINS off, REOS off, MW off, logP off"
+    assert line == "Filters: PAINS off, REOS off, MW off, logP off, affinity guard off"
 
 
 def test_growth_job_logs_all_filters(tmp_path, monkeypatch):
@@ -1105,6 +1105,54 @@ def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
     assert "affinity guard off" in line
     assert captured["max_affinity"] is None
+
+
+def test_combi_job_passes_the_energy_guard_to_the_engine(tmp_path, monkeypatch):
+    """Combi has the same energy guard as growth now (the check lives in the
+    shared evaluator), so the cutoff reaches the engine and the log names it."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    rec = tmp_path / "receptor.pdb"; rec.write_text("")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
+    boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    captured = {}
+
+    def runner(**k):
+        captured.update(k)
+        return _fake_combi_runner(**k)
+
+    job = start_combi_job(
+        receptor_path=str(rec), steps=["suzuki"],
+        reagent_files=[[str(halide), str(boronic)]], center=(0.0, 0.0, 0.0),
+        cfg={"num_cycles": 1, "max_affinity": -1.5}, runner=runner)
+    _await(job)
+    assert captured["max_affinity"] == -1.5
+    line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
+    assert "max affinity -1.5" in line
+    # ...and no core-RMSD guard is claimed: a combi run has no anchored core.
+    assert "core-RMSD" not in line
+
+
+def test_combi_job_leaves_the_energy_guard_off_when_unset(tmp_path, monkeypatch):
+    """Absent key -> off, so a combi run launched by API (or one relaunched
+    from a config saved before the guard existed) docks exactly as before."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    rec = tmp_path / "receptor.pdb"; rec.write_text("")
+    halide = tmp_path / "halide.smi"; halide.write_text("Brc1ccccc1 phBr\n")
+    boronic = tmp_path / "boronic.smi"; boronic.write_text("OB(O)c1ccccc1 phB\n")
+    captured = {}
+
+    def runner(**k):
+        captured.update(k)
+        return _fake_combi_runner(**k)
+
+    job = start_combi_job(
+        receptor_path=str(rec), steps=["suzuki"],
+        reagent_files=[[str(halide), str(boronic)]], center=(0.0, 0.0, 0.0),
+        cfg={"num_cycles": 1}, runner=runner)
+    _await(job)
+    assert captured["max_affinity"] is None
+    line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
+    assert "affinity guard off" in line
 
 
 def test_growth_job_can_switch_the_core_rmsd_guard_off(tmp_path, monkeypatch):

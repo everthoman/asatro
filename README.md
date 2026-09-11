@@ -219,7 +219,11 @@ no pose came within 2.5 Å — so it was removed rather than kept as dead weight
 `min_receptor_dist` on each pose is what remains of it. The energy filter stays:
 it likewise rarely fires under a search (nothing above −5.2 in that run), but it
 is the one check that catches a pose which isn't binding at all, and a CNN score
-field cannot show that, since it doesn't see the empirical term.
+field cannot show that, since it doesn't see the empirical term. It lives in the
+shared evaluator, so combi has it too (`max_affinity` in the run config) — the
+only pose guard that makes sense unanchored, where there is no core to hold.
+Growth defaults it on at 0; for combi an absent key leaves it off, so an
+API-launched run scores every mode it docks unless it asks otherwise.
 
 **The placement guard has to be tight, and it is coupled to `num_modes`.** The
 core is rigid, so its RMSD against the bound pose tracks how far it has *turned*

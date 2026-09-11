@@ -422,7 +422,8 @@ class GninaEvaluator(Evaluator):
         exhaustiveness (8), num_modes (9), autobox_add (4.0), ph (7.4),
         box_size (16.0), gpu_id (0), work_dir (tempdir), gnina_path,
         filters (MolFilters instance), progress_callback (callable),
-        timeout (600).
+        timeout (600), max_affinity (None -- no energy guard; a float rejects
+        any docked mode whose minimizedAffinity is above it).
     """
 
     def __init__(self, input_dict: dict):
@@ -459,6 +460,13 @@ class GninaEvaluator(Evaluator):
         self.timeout = int(input_dict.get("timeout", 600))
         self.cpu = int(input_dict.get("cpu") or DOCK_CPU)
 
+        # Empirical-score guard: a docked mode scoring above this is not a
+        # binding pose at all, whatever the search ranked it. Off unless asked
+        # for -- growth defaults it on (see AnchoredFragmentEvaluator), combi
+        # switches it on from the run config.
+        max_aff = input_dict.get("max_affinity")
+        self.max_affinity = None if max_aff is None else float(max_aff)
+
         self.filters: Optional[MolFilters] = input_dict.get("filters")
         self.cancel_event = input_dict.get("cancel_event")  # threading.Event or None
         self.progress_callback: Optional[Callable[[str], None]] = input_dict.get("progress_callback")
@@ -486,6 +494,9 @@ class GninaEvaluator(Evaluator):
         self._name_cache: Dict[str, str] = {}  # smiles -> reagent-combo name (for the live gallery)
         self._components_cache: Dict[str, list] = {}  # smiles -> [{"smiles","name"}, ...] per component
         self.rejections: Dict[str, int] = {}
+        # Post-dock rejects, by reason -- reported in stats() so a run can say
+        # how much of what it docked the pose guards threw away, and why.
+        self.pose_rejections: Dict[str, int] = {}
         self.prep_failures = 0
         self.dock_failures = 0
         self._best_score: Optional[float] = None
@@ -611,15 +622,26 @@ class GninaEvaluator(Evaluator):
         return []
 
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:
-        """Whether one docked mode may be considered at all. Default: every
-        mode. Subclasses can reject on geometry the score doesn't capture --
-        see ``AnchoredFragmentEvaluator``, which drops modes that clash into
-        the receptor or that moved the anchored fragment off its bound pose.
+        """Whether one docked mode may be considered at all: every mode, unless
+        ``max_affinity`` says this one is repulsive. Subclasses reject on
+        geometry the score doesn't capture too -- see
+        ``AnchoredFragmentEvaluator``, which also drops modes that moved the
+        anchored fragment off its bound pose.
 
         Applied per mode inside ``_best_pose``, so rejecting the top-scored
         mode leaves the rest of the search's modes to be chosen from; a product
-        only scores ``nan`` when *every* mode is rejected."""
+        only scores ``nan`` when *every* mode is rejected -- the same as a
+        filtered one, so the sampler is not rewarded for reaching it."""
+        if self.max_affinity is not None:
+            aff = self._parse_prop(pose, "minimizedAffinity")
+            if aff is not None and np.isfinite(aff) and aff > self.max_affinity:
+                self._count_pose_rejection("repulsive score")
+                return False
         return True
+
+    def _count_pose_rejection(self, reason: str) -> None:
+        with self._lock:
+            self.pose_rejections[reason] = self.pose_rejections.get(reason, 0) + 1
 
     def _box_flags(self, sdf_block: str) -> List[str]:
         """gnina's box CLI flags for this dock. Default: a fixed reference
@@ -851,12 +873,14 @@ class GninaEvaluator(Evaluator):
             self.progress_callback(msg)
 
     def _progress_extra(self) -> str:
-        """Extra text for the periodic progress line. Default: nothing.
-        Called with ``self._lock`` held. Subclasses can report what their own
-        guards are doing (see ``AnchoredFragmentEvaluator``), so a run that is
-        throwing most of its docks away says so while it runs rather than in
-        the summary afterwards."""
-        return ""
+        """Extra text for the periodic progress line: what the pose guards have
+        rejected so far, so a run throwing most of its docks away says so while
+        it runs rather than in the summary afterwards. Called with ``self._lock``
+        held, so the counter is read directly rather than through
+        ``_count_pose_rejection``'s lock."""
+        if not self.pose_rejections:
+            return ""
+        return " | pose_rej " + str(dict(self.pose_rejections))
 
     @property
     def docks_since_best(self) -> int:
@@ -964,11 +988,14 @@ class GninaEvaluator(Evaluator):
         return out
 
     def stats(self) -> dict:
+        with self._lock:
+            pose_rejected = dict(self.pose_rejections)
         return {
             "evaluations": self.num_evaluations,
             "docked": self._dock_count,
             "unique_scored": len([s for s in self._score_cache.values() if np.isfinite(s)]),
             "rejections": dict(self.rejections),
+            "pose_rejections": pose_rejected,
             "prep_failures": self.prep_failures,
             "dock_failures": self.dock_failures,
             "best_score": self._best_score,

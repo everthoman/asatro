@@ -96,7 +96,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 from rdkit import Chem
@@ -511,11 +511,10 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
                                                    input_dict.get("core_smarts"))
         guard = input_dict.get("max_core_rmsd", DEFAULT_MAX_CORE_RMSD)
         self.max_core_rmsd = None if guard is None else float(guard)
+        # Same guard as the base evaluator's, but on by default here: a grown
+        # product that scores positive has been pushed somewhere it does not fit.
         max_aff = input_dict.get("max_affinity", DEFAULT_MAX_AFFINITY)
         self.max_affinity = None if max_aff is None else float(max_aff)
-        # Post-dock rejects, by reason -- reported in stats() so a run can say
-        # how much of its library the pose guards threw away, and why.
-        self.pose_rejections: Dict[str, int] = {}
         self.embed_timeout = float(input_dict.get("embed_timeout", _EMBED_TIMEOUT_DEFAULT))
         # The handle can turn about the bond into the core, so the product may be
         # buildable in a second orientation. Keep that template (and the receptor
@@ -571,39 +570,15 @@ class AnchoredFragmentEvaluator(GninaEvaluator):
 
     # --- override hook 3: which docked modes count -----------------------------
     def _pose_acceptable(self, pose: Chem.Mol) -> bool:
-        """Reject a docked mode whose conserved core left its bound position
-        (the search is free, so this is what holds the binding mode), or whose
-        empirical score says it is not a binding pose at all.
-
-        A rejected product ends up ``nan`` -- the same as a filtered one -- so
-        Thompson Sampling is not rewarded for reaching it."""
+        """Reject a docked mode whose conserved core left its bound position --
+        the search is free, so this is what holds the binding mode -- on top of
+        the base evaluator's empirical-score guard."""
         if self.max_core_rmsd is not None:
             dev = self._core_deviations(pose)
             if dev is None or _rmsd(dev) > self.max_core_rmsd:
                 self._count_pose_rejection("core drift")
                 return False
-        if self.max_affinity is not None:
-            aff = self._parse_prop(pose, "minimizedAffinity")
-            if aff is not None and np.isfinite(aff) and aff > self.max_affinity:
-                self._count_pose_rejection("repulsive score")
-                return False
-        return True
-
-    def _count_pose_rejection(self, reason: str) -> None:
-        with self._lock:
-            self.pose_rejections[reason] = self.pose_rejections.get(reason, 0) + 1
-
-    def _progress_extra(self) -> str:
-        # Called with the lock held (see GninaEvaluator._emit_progress), so read
-        # the counter directly rather than through _count_pose_rejection's lock.
-        if not self.pose_rejections:
-            return ""
-        return " | pose_rej " + str(dict(self.pose_rejections))
-
-    def stats(self) -> dict:
-        with self._lock:
-            rejected = dict(self.pose_rejections)
-        return {**super().stats(), "pose_rejections": rejected}
+        return super()._pose_acceptable(pose)
 
     # --- override the pose reader to annotate what the guards measured ---------
     def _best_pose(self, sdf_path: str, smiles: str):

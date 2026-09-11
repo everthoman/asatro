@@ -381,11 +381,11 @@
         <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2"></div>
         <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5"></div>
       </div>
-      <div class="checkline"><input type="checkbox" id="maxAffOn" checked><label style="margin:0">Energy filter
+      <div class="checkline"><input type="checkbox" id="combiMaxAffOn" checked><label style="margin:0">Energy filter
         &mdash; reject poses that don't bind</label></div>
       <div class="row">
         <div><label>Max affinity (kcal/mol)</label>
-          <input type="number" id="maxAffinity" step="0.5" value="0"></div>
+          <input type="number" id="combiMaxAffinity" step="0.5" value="0"></div>
         <div></div>
       </div>
       <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
@@ -562,9 +562,14 @@ function syncScoreFieldOptions(cnnScoringId, scoreFieldId){
 function toggleCoreRmsd(){ el('maxCoreRmsd').disabled = !el('coreRmsdOn').checked; }
 el('coreRmsdOn').addEventListener('change', toggleCoreRmsd);
 toggleCoreRmsd();
+// Both modes have the guard (growth's own ids, combi's prefixed) -- each with
+// its own checkbox, and the cutoff box is meaningless with it switched off.
 function toggleMaxAff(){ el('maxAffinity').disabled = !el('maxAffOn').checked; }
 el('maxAffOn').addEventListener('change', toggleMaxAff);
 toggleMaxAff();
+function toggleCombiMaxAff(){ el('combiMaxAffinity').disabled = !el('combiMaxAffOn').checked; }
+el('combiMaxAffOn').addEventListener('change', toggleCombiMaxAff);
+toggleCombiMaxAff();
 
 // ---- mode toggle (fragment growth vs combinatorial search) ----
 function setMode(mode){
@@ -1097,6 +1102,10 @@ el('combiRunBtn').addEventListener('click', async ()=>{
     score_field: el('combiScoreField').value,
     cnn_scoring: el('combiCnnScoring').value,
     seed: el('combiSeed').value ? parseInt(el('combiSeed').value) : null,
+    // Unticked -> null, which the server reads as "dock and keep every pose,
+    // however repulsive it scored" (distinct from a cutoff of 0).
+    max_affinity: el('combiMaxAffOn').checked ? (isNaN(parseFloat(el('combiMaxAffinity').value)) ? 0
+                                                 : parseFloat(el('combiMaxAffinity').value)) : null,
     filters: {
       pains: el('combiPains').checked, reos: el('combiReos').checked,
       mw: [numOrNull(el('combiMwLo')), numOrNull(el('combiMwHi'))],
