@@ -28,8 +28,8 @@ from asatro.chemistry.handles import analyze_fragment, bond_order_complaint
 from asatro.chemistry.catalog import REACTION_BY_ID, REACTIONS, VOCAB, resolve_step
 from asatro.chemistry.stub_growth import assess_with_stubs
 from asatro.jobs import (JOBS, _slugify, delete_job, jobs_dir, list_jobs,
-                         reap_orphaned_jobs, staged_uploads, start_combi_job,
-                         start_growth_job, sweep_staged_uploads)
+                         read_launch, reap_orphaned_jobs, staged_uploads,
+                         start_combi_job, start_growth_job, sweep_staged_uploads)
 from asatro.seed import carve_fragment, component_route_meta
 from asatro.svg import mol_props, mol_svg, palette_css, retheme_svg
 
@@ -58,6 +58,13 @@ def bundled_pool_path(pool_id: str = "") -> str:
         if p["id"] == pool_id:
             return str(POOL_DIR / p["file"])
     return DEFAULT_POOL_PATH
+
+
+def bundled_pool_id(pool_id: str = "") -> str:
+    """The bundled pool a request actually got: ``pool_id`` when it names one,
+    else the default. Recorded in a run's launch settings so reloading them
+    re-selects the pool the run really used, not the request's empty string."""
+    return pool_id if any(p["id"] == pool_id for p in BUNDLED_POOLS) else BUNDLED_POOLS[0]["id"]
 
 
 async def stage_pool(pool: Optional[UploadFile], pool_id: str, stage: Path) -> str:
@@ -369,7 +376,8 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
                                 "in the run config to grow from it anyway)")
 
     pool_path = None
-    if pool is not None and pool.filename:
+    uploaded_pool = pool is not None and bool(pool.filename)
+    if uploaded_pool:
         pool_path = await stage_pool(pool, pool_id, stage)
 
     reactant_by_class = {}
@@ -384,11 +392,24 @@ async def grow(fragment: UploadFile = File(...), receptor: UploadFile = File(...
     if not pool_path and not reactant_by_class:
         pool_path = bundled_pool_path(pool_id)  # bundled pool (default: Enamine Rush EU)
 
+    # What the form was set to, beyond ``cfg``: the reagent source and the names
+    # of the files the user picked (the uploads themselves are staged, but a
+    # browser can't refill a file input, so names are all the UI can use).
+    launch = {
+        # A pool wins over per-class files when both were sent, exactly as the
+        # job layer resolves them -- record what the run actually drew from.
+        "reagent_source": "files" if (reactant_by_class and not pool_path) else "pool",
+        "pool_id": None if uploaded_pool else bundled_pool_id(pool_id),
+        "pool_filename": (pool.filename if uploaded_pool else None),
+        "fragment_filename": fragment.filename,
+        "receptor_filename": receptor.filename,
+        "reactant_filenames": [rf.filename for rf in reactants if rf.filename],
+    }
     try:
         job = start_growth_job(fragment_path=str(frag_path), receptor_path=str(rec_path),
                                steps=steps, fragment_slot=fragment_slot,
                                reactant_by_class=reactant_by_class, pool_path=pool_path,
-                               cfg=cfg, session_name=session_name)
+                               cfg=cfg, session_name=session_name, launch=launch)
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"job_id": job.id, "status": job.status}
@@ -482,10 +503,19 @@ async def combi(receptor: UploadFile = File(...),
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+    uploaded_pool = pool is not None and bool(pool.filename)
+    launch = {
+        "reagent_source": "files" if reactants else "pool",
+        "pool_id": None if uploaded_pool else bundled_pool_id(pool_id),
+        "pool_filename": (pool.filename if uploaded_pool else None),
+        "receptor_filename": receptor.filename,
+        "reference_filename": (reference.filename if reference_given else None),
+        "reactant_filenames": [rf.filename for rf in reactants if rf.filename],
+    }
     try:
         job = start_combi_job(receptor_path=str(rec_path), steps=steps, reagent_files=reagent_files,
                               reference_path=reference_path, center=center, size=size,
-                              cfg=cfg, session_name=session_name)
+                              cfg=cfg, session_name=session_name, launch=launch)
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"job_id": job.id, "status": job.status}
@@ -654,15 +684,20 @@ def _job_path(job_id: str, *parts: str) -> Path:
 
 @app.get("/jobs/{job_id}")
 async def job_detail(job_id: str) -> dict:
+    """Status + results for one run, plus the ``launch`` settings it was started
+    with (``None`` for runs from before those were persisted) so the UI can load
+    a past run straight back into its form."""
+    d = _job_path(job_id)
+    launch = read_launch(d) if d.is_dir() else None
     job = JOBS.get(job_id)
     if job is not None:
-        return {**job.meta(), "result": _enrich_top_props(job.result), "n_log": len(job.lines)}
+        return {**job.meta(), "result": _enrich_top_props(job.result),
+                "launch": launch, "n_log": len(job.lines)}
     # Past run: read persisted metadata/results from disk.
-    d = _job_path(job_id)
     if d.is_dir() and (d / "job.json").is_file():
         meta = json.loads((d / "job.json").read_text())
         res = json.loads((d / "results.json").read_text()) if (d / "results.json").is_file() else None
-        return {**meta, "result": _enrich_top_props(res)}
+        return {**meta, "result": _enrich_top_props(res), "launch": launch}
     raise HTTPException(404, "unknown job")
 
 

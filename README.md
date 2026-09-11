@@ -185,6 +185,18 @@ holds what `results.json` doesn't: the pool's tagged-block census, which
 filters were active and what each one rejected, the auto-tuned TS budget,
 prep/dock failure counts, and where the run stopped.
 
+Every job also saves the settings it was launched with (`config.json` beside
+its results). Pick a past run out of the history and **Load settings** puts them
+back into the form — route, reagent source and pool, search budget, filters,
+guards, session name — so re-running it with one parameter changed is a click
+and an edit, not a rebuild from the log. The uploads are the exception: a
+browser won't let a page refill a file picker, so the run's fragment/receptor/
+library *names* are shown and you re-pick them yourself. In growth mode the
+route needs the accessibility pre-pass that those files feed, so it is restored
+the moment you re-analyze the fragment (and says so if this pose doesn't offer
+the run's start reaction). Runs that finished before this existed have no saved
+settings, and the button stays greyed out for them.
+
 A slice download keeps the run's name (`<id>_poses_top250.sdf`); a single pose
 is saved under its own product name instead (`TH17145_12559.sdf`, the same title
 the record carries), because that file gets opened next to the fragment and the

@@ -389,6 +389,96 @@ def test_combi_endpoint_and_jobs_listing(tmp_path, monkeypatch):
         assert any(j["id"] == job_id for j in client.get("/jobs").json()["jobs"])
 
 
+def test_grow_endpoint_persists_the_settings_it_was_launched_with(tmp_path, monkeypatch):
+    """A finished run carries its own launch settings, so the UI can load them
+    back into the form instead of the user rebuilding the run by hand."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setattr(jobs, "run_growth", _fake_runner)
+    from starlette.testclient import TestClient
+    from asatro.app import app
+
+    sdf_bytes = open(_bound_sdf(tmp_path), "rb").read()
+    cfg = {"steps": ["suzuki"], "fragment_slot": 1, "num_cycles": 7, "num_warmup": 2,
+           "search_method": "rws", "max_core_rmsd": None,
+           "filters": {"pains": True, "reos": False, "mw": [None, 450], "logp": [1, 3]}}
+    with TestClient(app) as client:
+        r = client.post(
+            "/grow",
+            files={
+                "fragment": ("TH17145.sdf", sdf_bytes, "chemical/x-mdl-sdfile"),
+                "receptor": ("3fci.pdb", b"", "chemical/x-pdb"),
+                "reactants": ("boronic.smi", b"OB(O)c1ccccc1 phB\n", "text/plain"),
+            },
+            data={"config": json.dumps(cfg), "session_name": "reuse me"},
+        )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+        for _ in range(200):
+            d = client.get(f"/jobs/{job_id}").json()
+            if d["status"] in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.02)
+        assert d["status"] == "done", d
+
+    launch = d["launch"]
+    assert launch["mode"] == "growth"
+    assert launch["session_name"] == "reuse me"
+    assert launch["config"] == cfg          # verbatim, nulls included
+    assert launch["reagent_source"] == "files"
+    assert launch["fragment_filename"] == "TH17145.sdf"
+    assert launch["receptor_filename"] == "3fci.pdb"
+    assert launch["reactant_filenames"] == ["boronic.smi"]
+    # ...and off disk too, once the job has been evicted from memory
+    JOBS.pop(job_id, None)
+    from starlette.testclient import TestClient as _TC
+    with _TC(app) as client:
+        assert client.get(f"/jobs/{job_id}").json()["launch"]["config"] == cfg
+
+
+def test_combi_endpoint_persists_the_pool_it_actually_used(tmp_path, monkeypatch):
+    """An unset ``pool_id`` still ran against a real pool (the bundled default)
+    -- the settings record which one, not the request's empty string."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setattr(jobs, "run_combi", _fake_combi_runner)
+    from starlette.testclient import TestClient
+    from asatro.app import BUNDLED_POOLS, app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/combi",
+            files=[("receptor", ("ung2.pdb", b"", "chemical/x-pdb")),
+                   ("reference", ("ref.sdf", b"", "chemical/x-mdl-sdfile"))],
+            data={"config": json.dumps({"steps": ["suzuki"], "num_cycles": 1})},
+        )
+        assert r.status_code == 200, r.text
+        job_id = r.json()["job_id"]
+        for _ in range(200):
+            d = client.get(f"/jobs/{job_id}").json()
+            if d["status"] in ("done", "error", "cancelled"):
+                break
+            time.sleep(0.02)
+    launch = d["launch"]
+    assert launch["mode"] == "combi"
+    assert launch["reagent_source"] == "pool"
+    assert launch["pool_id"] == BUNDLED_POOLS[0]["id"]
+    assert launch["reference_filename"] == "ref.sdf"
+
+
+def test_job_detail_of_a_run_from_before_settings_were_saved(tmp_path, monkeypatch):
+    """No config.json (every run that finished before this existed): the detail
+    still loads, with ``launch`` explicitly null so the UI can say so."""
+    monkeypatch.setenv("ASATRO_JOBS_DIR", str(tmp_path / "jobs"))
+    d = tmp_path / "jobs" / "old_run"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text(json.dumps({"id": "old_run", "status": "done"}))
+    from starlette.testclient import TestClient
+    from asatro.app import app
+    with TestClient(app) as client:
+        got = client.get("/jobs/old_run").json()
+    assert got["status"] == "done"
+    assert got["launch"] is None
+
+
 def test_combi_endpoint_resolves_reactants_from_master_pool(tmp_path, monkeypatch):
     # No per-slot files -- a tagged master pool is pruned to each component by
     # FG class, same as growth.

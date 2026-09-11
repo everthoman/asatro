@@ -698,6 +698,32 @@ def _persist_meta(job: GrowthJob) -> None:
         pass
 
 
+def _persist_launch(job_dir: Path, launch: dict) -> None:
+    """Write a run's own launch settings to ``config.json``, next to its results.
+
+    The run config used to live only in the request that started the job, so
+    re-running one with a tweaked parameter meant rebuilding the whole form by
+    hand (or reverse-engineering it out of run.log). Persisted here, the UI can
+    load a finished run's settings straight back into the form. The uploads
+    themselves aren't kept -- a browser can't refill a file input anyway --
+    only their filenames, so the user knows which fragment/receptor to re-pick."""
+    try:
+        (job_dir / "config.json").write_text(json.dumps(launch, indent=2, default=str))
+    except Exception:
+        pass
+
+
+def read_launch(job_dir: Path) -> Optional[dict]:
+    """A run's persisted launch settings, or None for a run that predates them."""
+    f = job_dir / "config.json"
+    if not f.is_file():
+        return None
+    try:
+        return json.loads(f.read_text())
+    except Exception:
+        return None
+
+
 # -- Memory watchdog -----------------------------------------------------
 # A real, still-unexplained leak OOM-killed the whole asatro-webapp process
 # (anon-rss 58.9GB, then again within 5 minutes on a live relaunch) on
@@ -773,7 +799,8 @@ def _run_with_watchdog(job: GrowthJob, fn: Callable[[], None]) -> None:
 def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
                      fragment_slot: int, reactant_by_class: Optional[Dict[str, str]] = None,
                      pool_path: Optional[str] = None, cfg: Optional[dict] = None,
-                     session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
+                     session_name: str = "", launch: Optional[dict] = None,
+                     runner: Optional[Callable] = None) -> GrowthJob:
     """Create a job dir, register the job, and run one user-chosen growth route
     (fragment fixed into ``fragment_slot`` of ``steps[0]``, any further steps
     extending the intermediate) in a background thread.
@@ -782,12 +809,18 @@ def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
     tagged master pool (``pool_path``), pruned per reaction component across every
     step. ``runner`` defaults to :func:`asatro.growth.run_growth` (resolved at
     call time so it stays patchable) and is injectable so the job layer can be
-    driven without docking."""
+    driven without docking.
+
+    ``launch`` is whatever the caller wants recorded alongside ``cfg`` in the
+    job's ``config.json`` (which reagent source was used, the uploads' names)
+    so the UI can repopulate its form from this run -- see _persist_launch."""
     runner = runner or run_growth
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
     _check_not_running(job_id)
     job_dir = jobs_dir() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    _persist_launch(job_dir, {"mode": "growth", "session_name": session_name,
+                              "config": cfg or {}, **(launch or {})})
     job = GrowthJob(id=job_id, dir=job_dir)
     JOBS[job_id] = job
     job.thread = threading.Thread(
@@ -804,16 +837,20 @@ def start_growth_job(*, fragment_path: str, receptor_path: str, steps: List,
 def start_combi_job(*, receptor_path: str, steps: List, reagent_files: List[List[str]],
                     reference_path: Optional[str] = None, center: Optional[tuple] = None,
                     size: Optional[tuple] = None, cfg: Optional[dict] = None,
-                    session_name: str = "", runner: Optional[Callable] = None) -> GrowthJob:
+                    session_name: str = "", launch: Optional[dict] = None,
+                    runner: Optional[Callable] = None) -> GrowthJob:
     """Create a job dir, register the job, and run an unanchored combi search in
     a background thread. ``runner`` defaults to :func:`asatro.combi.run_combi`
-    (resolved at call time so it stays patchable), same convention as
+    (resolved at call time so it stays patchable), and ``launch`` is persisted
+    for the UI's "load these settings", same convention as
     :func:`start_growth_job`."""
     runner = runner or run_combi
     job_id = _slugify(session_name) or uuid.uuid4().hex[:12]
     _check_not_running(job_id)
     job_dir = jobs_dir() / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    _persist_launch(job_dir, {"mode": "combi", "session_name": session_name,
+                              "config": cfg or {}, **(launch or {})})
     job = GrowthJob(id=job_id, dir=job_dir)
     JOBS[job_id] = job
     job.thread = threading.Thread(

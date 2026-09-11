@@ -446,9 +446,12 @@
       <div class="jobbar" style="margin-bottom:10px">
         <select id="history"><option value="">— job history —</option></select>
         <button class="btn ghost" id="refreshJobs" type="button">↻</button>
+        <button class="btn ghost" id="reuseBtn" type="button" disabled
+                title="Load this run's settings back into the form">Load settings</button>
         <button class="btn ghost" id="manageBtn" type="button">Manage</button>
         <button class="btn danger" id="cancelBtn" type="button" style="display:none">Cancel</button>
       </div>
+      <div id="reuseNote" class="note" style="display:none"></div>
       <div class="manage" id="jobManage" style="display:none"></div>
       <div id="log" class="muted">No run yet. Upload a fragment + receptor and analyze.</div>
     </div>
@@ -493,6 +496,7 @@ let growthStep1 = null;
 let poolAnnotated = false;  // set once "Annotate pool" runs; gates auto param refresh
 let growthExtendStepDivs = [];  // .step elements for steps 2+ (extend reactions)
 let currentJob = null;
+let currentLaunch = null;   // the settings currentJob was launched with (null: a run from before those were saved)
 let evtSource = null;
 
 // ---- theme ----
@@ -665,6 +669,21 @@ function renderAnalysis(){
           : '<span class="bad">none detected — this scaffold has no reactive handle</span>'));
 
   renderReactantSlots();
+
+  // A route loaded from a past run waits here: step 1 is picked out of the
+  // menu this pre-pass just built, so the choice only becomes valid now (and
+  // only if this fragment/pose really does offer that reaction + slot).
+  if (pendingGrowthRoute){
+    const route = pendingGrowthRoute;
+    if (applyPendingGrowthRoute()){
+      showReuseNote('Route restored from the loaded run.');
+    } else {
+      pendingGrowthRoute = null;
+      const first = typeof route.steps[0] === 'string' ? route.steps[0] : (route.steps[0]||{}).reaction_id;
+      showReuseNote(`The loaded run started from <b>${esc(first||'?')}</b> at slot ${route.fragmentSlot + 1}, `
+        + 'which this fragment + pose does not offer — pick step 1 yourself.');
+    }
+  }
 }
 
 el('step1Select').addEventListener('change', e=>{
@@ -1246,6 +1265,10 @@ function setLogLink(jobId){
 function attachStream(jobId){
   currentJob = jobId;
   setLogLink(jobId);
+  setCurrentLaunch(null);
+  fetch(`/jobs/${jobId}`).then(r => r.json())
+    .then(d => { if (currentJob === jobId) setCurrentLaunch(d.launch); })
+    .catch(()=>{});
   el('cancelBtn').style.display = '';
   el('hitsPanel').style.display = 'none';
   startLivePanels();
@@ -1581,6 +1604,207 @@ function wireReagentPanel(){
 }
 el('hitsTopN').addEventListener('change', ()=> renderHits(lastHitsResult));
 
+// ---- load a past run's settings back into the form ----
+// Every run persists the config it was launched with (config.json, served as
+// `launch` by /jobs/{id}), so "run that again with one knob changed" is a
+// click plus the change -- no rebuilding the form from the console log. The
+// file pickers are the one thing that can't be restored (a browser refuses to
+// let a page refill one), so the run's fragment/receptor/library *names* go in
+// the note instead and the user re-picks them.
+//
+// Growth's route is a special case: its step-1 menu only exists once an
+// accessibility pre-pass has run on a fragment, which needs those very file
+// pickers. So the route is held here and applied by renderAnalysis() as soon
+// as the user re-analyzes -- the rest of the settings land immediately.
+let pendingGrowthRoute = null;
+
+function setBlankable(id, v){   // null/undefined -> empty, i.e. the field's "auto"/"all" state
+  el(id).value = (v === null || v === undefined) ? '' : v;
+}
+function setIfGiven(id, v){     // absent key -> keep whatever the form already has
+  if (v !== null && v !== undefined) el(id).value = v;
+}
+function selectValue(id, v){    // a <select> can only take a value it actually offers
+  const sel = el(id);
+  if (v === null || v === undefined) return false;
+  if (![...sel.options].some(o => o.value === String(v))) return false;
+  sel.value = String(v);
+  return true;
+}
+function fireChange(id){ el(id).dispatchEvent(new Event('change')); }
+// The run recorded which source it drew reagents from; the two mode pickers
+// spell "not the master pool" differently ('perclass' / 'perslot').
+function usedOwnFiles(launch){ return (launch.reagent_source || 'pool') !== 'pool'; }
+// An absent guard key means the server's own default (guard on); an explicit
+// null means the user switched it off. Only the second unticks the box.
+function guardOn(cfg, key){ return (key in cfg) ? cfg[key] !== null : true; }
+
+function applyFilters(cfg, ids){
+  const f = cfg.filters || {};
+  el(ids.pains).checked = f.pains !== false;
+  el(ids.reos).checked = f.reos !== false;
+  const mw = f.mw || [null, null], logp = f.logp || [null, null];
+  setBlankable(ids.mwLo, mw[0]); setBlankable(ids.mwHi, mw[1]);
+  setBlankable(ids.logpLo, logp[0]); setBlankable(ids.logpHi, logp[1]);
+}
+
+// Both modes share the same search/docking knobs under different ids.
+function applySearchParams(cfg, ids){
+  selectValue(ids.searchMethod, cfg.search_method); fireChange(ids.searchMethod);
+  setIfGiven(ids.numWarmup, cfg.num_warmup);
+  setIfGiven(ids.numCycles, cfg.num_cycles);
+  setIfGiven(ids.rwsMinCore, cfg.min_cpds_per_core);
+  setIfGiven(ids.rwsStop, cfg.stop);
+  setBlankable(ids.numToSelect, cfg.num_to_select);
+  setIfGiven(ids.concurrency, cfg.concurrency);
+  setBlankable(ids.cpuPerDock, cfg.cpu);
+  // CNN scoring first: it decides which score fields are selectable at all.
+  selectValue(ids.cnnScoring, cfg.cnn_scoring); fireChange(ids.cnnScoring);
+  selectValue(ids.scoreField, cfg.score_field);
+  setBlankable(ids.seed, cfg.seed);
+}
+
+function applyGrowthLaunch(launch){
+  const cfg = launch.config || {};
+  setMode('growth');
+  el('refine').checked = !!cfg.refine;
+  el('ignoreBondOrder').checked = !!cfg.ignore_bond_order_warning;
+  setBlankable('fragmentName', cfg.fragment_name);
+
+  // A loaded run's pool may not be the one currently annotated, so the counts
+  // and the budget suggested from them no longer describe this form.
+  poolAnnotated = false;
+  el('poolPreview').innerHTML = ''; el('paramSuggest').innerHTML = '';
+  el('reagentSource').value = usedOwnFiles(launch) ? 'perclass' : 'pool';
+  togglePoolMode();
+  selectValue('poolChoice', launch.pool_id);
+
+  applySearchParams(cfg, {searchMethod:'searchMethod', numWarmup:'numWarmup',
+    numCycles:'numCycles', rwsMinCore:'rwsMinCore', rwsStop:'rwsStop',
+    numToSelect:'numToSelect', concurrency:'concurrency', cpuPerDock:'cpuPerDock',
+    cnnScoring:'cnnScoring', scoreField:'scoreField', seed:'seed'});
+  applyFilters(cfg, {pains:'pains', reos:'reos', mwLo:'mwLo', mwHi:'mwHi',
+    logpLo:'logpLo', logpHi:'logpHi'});
+  el('coreRmsdOn').checked = guardOn(cfg, 'max_core_rmsd');
+  setIfGiven('maxCoreRmsd', cfg.max_core_rmsd); toggleCoreRmsd();
+  el('maxAffOn').checked = guardOn(cfg, 'max_affinity');
+  setIfGiven('maxAffinity', cfg.max_affinity); toggleMaxAff();
+  setBlankable('sessionName', launch.session_name);
+
+  pendingGrowthRoute = {steps: cfg.steps || [], fragmentSlot: cfg.fragment_slot};
+  return applyPendingGrowthRoute();
+}
+
+// The chosen (start reaction, fragment slot) plus any extend steps. Returns
+// false while the step-1 menu can't offer that choice yet -- i.e. before the
+// run's fragment has been re-uploaded and analyzed -- leaving the route
+// pending for renderAnalysis() to retry.
+function applyPendingGrowthRoute(){
+  if (!pendingGrowthRoute) return false;
+  const steps = pendingGrowthRoute.steps, fragmentSlot = pendingGrowthRoute.fragmentSlot;
+  if (!steps.length || fragmentSlot === null || fragmentSlot === undefined){
+    pendingGrowthRoute = null; return false;
+  }
+  const first = typeof steps[0] === 'string' ? steps[0] : steps[0].reaction_id;
+  if (!selectValue('step1Select', `${first}|${fragmentSlot}`)) return false;
+  fireChange('step1Select');          // rebuilds the route panel + reactant slots
+  steps.slice(1).forEach(s => {
+    addGrowthStep();
+    const sel = growthExtendStepDivs[growthExtendStepDivs.length - 1].querySelector('.growthStepRxn');
+    const v = `${s.reaction_id}|${s.slot}`;
+    if ([...sel.options].some(o => o.value === v)) sel.value = v;
+    sel.dispatchEvent(new Event('change'));
+  });
+  pendingGrowthRoute = null;
+  return true;
+}
+
+function applyCombiLaunch(launch){
+  const cfg = launch.config || {};
+  setMode('combi');
+  combiPoolAnnotated = false;
+  el('combiPoolPreview').innerHTML = ''; el('combiParamSuggest').innerHTML = '';
+  el('combiReagentSource').value = usedOwnFiles(launch) ? 'perslot' : 'pool';
+  el('combiPoolBox').style.display = combiPoolModeOn() ? '' : 'none';
+  selectValue('combiPoolChoice', launch.pool_id);
+
+  // An explicit pocket is what a run carries when it had no reference ligand.
+  el('combiSiteMode').value = cfg.center ? 'pocket' : 'reference';
+  toggleCombiSiteMode();
+  if (cfg.center){
+    ['combiCx','combiCy','combiCz'].forEach((id, i) => setIfGiven(id, cfg.center[i]));
+  }
+  if (cfg.size){
+    ['combiSx','combiSy','combiSz'].forEach((id, i) => setIfGiven(id, cfg.size[i]));
+  }
+
+  const steps = cfg.steps || [];
+  while (combiStepDivs.length > 1) removeCombiStep();
+  steps.forEach((s, i) => {
+    if (i > 0) addCombiStep();
+    const sel = combiStepDivs[i].querySelector('.combiStepRxn');
+    const v = i === 0 ? (typeof s === 'string' ? s : s.reaction_id) : `${s.reaction_id}|${s.slot}`;
+    if ([...sel.options].some(o => o.value === v)) sel.value = v;
+    sel.dispatchEvent(new Event('change'));
+  });
+
+  applySearchParams(cfg, {searchMethod:'combiSearchMethod', numWarmup:'combiNumWarmup',
+    numCycles:'combiNumCycles', rwsMinCore:'combiRwsMinCore', rwsStop:'combiRwsStop',
+    numToSelect:'combiNumToSelect', concurrency:'combiConcurrency',
+    cpuPerDock:'combiCpuPerDock', cnnScoring:'combiCnnScoring',
+    scoreField:'combiScoreField', seed:'combiSeed'});
+  applyFilters(cfg, {pains:'combiPains', reos:'combiReos', mwLo:'combiMwLo',
+    mwHi:'combiMwHi', logpLo:'combiLogpLo', logpHi:'combiLogpHi'});
+  // Absent key: a run from before combi had the guard -- it docked without one.
+  el('combiMaxAffOn').checked = 'max_affinity' in cfg && cfg.max_affinity !== null;
+  setIfGiven('combiMaxAffinity', cfg.max_affinity); toggleCombiMaxAff();
+  setBlankable('combiSessionName', launch.session_name);
+  return true;
+}
+
+// Which uploads this run used -- all the form can't restore.
+function launchFileNote(launch){
+  const files = [];
+  if (launch.fragment_filename) files.push(`fragment ${launch.fragment_filename}`);
+  if (launch.receptor_filename) files.push(`receptor ${launch.receptor_filename}`);
+  if (launch.reference_filename) files.push(`reference ${launch.reference_filename}`);
+  if (launch.pool_filename) files.push(`pool ${launch.pool_filename}`);
+  (launch.reactant_filenames || []).forEach(n => files.push(n));
+  return files;
+}
+// The button is only live for a run that actually saved its settings.
+function setCurrentLaunch(launch){
+  currentLaunch = launch || null;
+  const b = el('reuseBtn');
+  b.disabled = !currentLaunch;
+  b.title = currentLaunch ? "Load this run's settings back into the form"
+                          : 'This run predates saved settings';
+  showReuseNote('');
+}
+
+function showReuseNote(html){
+  const n = el('reuseNote');
+  n.style.display = html ? '' : 'none';
+  n.innerHTML = html || '';
+}
+
+function loadRunSettings(){
+  if (!currentLaunch){ showReuseNote('This run predates saved settings — nothing to load.'); return; }
+  const growth = currentLaunch.mode !== 'combi';
+  const routeApplied = growth ? applyGrowthLaunch(currentLaunch) : applyCombiLaunch(currentLaunch);
+  // Anything a route edit just scheduled would land on top of the budget we
+  // have restored -- the suggestion describes the form's old route, not this one.
+  clearTimeout(_paramTimer); clearTimeout(_combiParamTimer);
+  const files = launchFileNote(currentLaunch);
+  let msg = `Loaded the settings from <b>${esc(currentJob)}</b>.`;
+  if (files.length) msg += ` Re-pick the file(s) yourself — this run used: ${esc(files.join(', '))}.`;
+  if (growth && !routeApplied){
+    msg += ' The route (step 1 and any extend steps) is restored as soon as you analyze the fragment again.';
+  }
+  showReuseNote(msg);
+}
+el('reuseBtn').addEventListener('click', loadRunSettings);
+
 // ---- history ----
 async function loadHistory(){
   try {
@@ -1711,6 +1935,7 @@ el('history').addEventListener('change', async e=>{
   let d;
   try { d = await (await fetch(`/jobs/${id}`)).json(); }
   catch(err){ logLine('Error loading job ' + id + ': ' + err.message); return; }
+  setCurrentLaunch(d.launch);
   setStatus(d.status);
   el('log').classList.remove('muted');
   el('log').textContent = `Loading job ${id} (${d.status})…`;
