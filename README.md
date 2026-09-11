@@ -272,6 +272,14 @@ always reports what the guard actually judged. A pattern that isn't a
 substructure of the conserved core is refused outright rather than silently
 falling back to the whole core.
 
+The field's **Draw…** button opens the JSME molecule editor (vendored under
+`static/jsme`, loaded on first use) with the route's own conserved core already
+in it, so the usual job — keep the ring, rub out the flexible arm — is a few
+clicks rather than a hand-written SMILES. What the editor gives back goes
+straight into the field. The editor is optional: it is fetched only when the
+button is pressed, and if it can't be loaded the box says so and the field still
+takes a typed SMILES or SMARTS.
+
 A threshold that tight needs poses to choose from, which is why growth asks
 gnina for nine modes and keeps the best *acceptable* one. The modes are free —
 one search finds them all, reporting more only costs the writing — and they

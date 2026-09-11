@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from rdkit import Chem
 from starlette.concurrency import run_in_threadpool
 
@@ -105,6 +106,13 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Asatro", version=__version__, lifespan=_lifespan)
+
+# Vendored front-end assets (the JSME molecule editor -- see static/jsme/README).
+# Mounted only if present, so a checkout without them still serves the app: the
+# Draw button hides itself when the editor can't be fetched.
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)

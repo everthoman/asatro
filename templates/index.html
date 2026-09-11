@@ -36,6 +36,18 @@
   .wrap { display:grid; grid-template-columns:1.05fr 1fr; gap:18px; padding:18px 26px; }
   @media (max-width:1000px){ .wrap{ grid-template-columns:1fr; } }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  /* Draw-the-core modal (JSME, vendored under /static/jsme). The editor itself
+     is a fixed-palette GWT widget and always renders light, so the box it sits
+     in stays white in both themes rather than half-theming around it. */
+  .modal { position:fixed; inset:0; background:rgba(4,8,16,.65); display:flex;
+           align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal .sheet { background:var(--panel); border:1px solid var(--border); border-radius:10px;
+                  padding:16px 18px; width:min(560px,100%); max-height:92vh; overflow:auto; }
+  .modal h3 { margin:0 0 4px; font-size:14px; color:var(--accent); }
+  .jsme-box { background:#fff; border:1px solid var(--border); border-radius:8px; padding:6px;
+              min-height:340px; display:flex; align-items:center; justify-content:center;
+              color:#64748b; font-size:12px; margin:10px 0; }
+  .modal .row { display:flex; gap:8px; align-items:center; }
   .panel h2 { margin:0 0 12px; font-size:15px; color:var(--accent); letter-spacing:.3px; }
   .panel h2 .h2btn { float:right; font-size:11px; font-weight:600; padding:2px 9px; background:var(--ghost-bg); color:var(--text); border-radius:6px; }
   .panel h2 .h2select { float:right; width:auto; font-size:11px; padding:2px 6px; margin-right:8px; }
@@ -244,7 +256,11 @@
         <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span></label>
           <input type="number" id="maxCoreRmsd" step="0.1" value="0.8" min="0"></div>
         <div><label>Measure drift on <span class="chip">optional SMILES/SMARTS</span></label>
-          <input type="text" id="rmsdCore" placeholder="blank: the whole conserved core"></div>
+          <div class="row" style="display:flex; gap:6px">
+            <input type="text" id="rmsdCore" placeholder="blank: the whole conserved core" style="flex:1; min-width:0">
+            <button class="btn ghost" id="rmsdCoreDrawBtn" type="button" style="width:auto; white-space:nowrap"
+                    title="Draw the part to measure drift on">Draw&hellip;</button>
+          </div></div>
       </div>
       <div class="checkline"><input type="checkbox" id="maxAffOn" checked><label style="margin:0">Energy filter
         &mdash; reject poses that don't bind</label></div>
@@ -441,6 +457,20 @@
       </div>
     </div>
     </div><!-- /combiPanels -->
+  </div>
+
+  <div class="modal" id="drawModal" style="display:none">
+    <div class="sheet">
+      <h3>Draw the part to measure drift on</h3>
+      <div class="muted" id="drawSeedNote"></div>
+      <div id="jsmeContainer" class="jsme-box">Loading editor&hellip;</div>
+      <div class="muted" id="drawSmilesPreview" style="margin-bottom:10px">Sketch a structure &mdash; its SMILES appears here.</div>
+      <div class="row">
+        <button class="btn" id="drawUseBtn" type="button">Use this</button>
+        <button class="btn ghost" id="drawResetBtn" type="button" style="width:auto">Reload core</button>
+        <button class="btn ghost" id="drawCancelBtn" type="button" style="width:auto">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <!-- RIGHT: run -->
@@ -798,6 +828,93 @@ function renderReactantSlots(){
   togglePoolMode();
   maybeRefreshParams();
 }
+
+// ---- draw the RMSD core (JSME, vendored under /static/jsme) ----
+// Typing a ring as SMILES is exactly the kind of thing that is quicker to draw
+// than to get right by hand, and the usual job here is subtractive: the editor
+// opens loaded with the run's own conserved core, you rub out the part that
+// should not be guarded (a flexible arm, say) and keep the rest.
+//
+// The editor is a GWT bundle loaded on first use, not at page load -- it is
+// 2.7 MB and most runs never open it. If it can't be fetched the box says so
+// and the text field beside it still takes a typed SMILES/SMARTS.
+let jsmeApplet = null, jsmeLoading = false;
+
+function drawSetPreview(smi){
+  const box = el('drawSmilesPreview');
+  if (smi){ box.innerHTML = 'SMILES: <code>' + esc(smi) + '</code>'; }
+  else { box.textContent = 'Sketch a structure — its SMILES appears here.'; }
+}
+function drawnSmiles(){
+  if (!jsmeApplet) return '';
+  try { return (jsmeApplet.smiles() || '').trim(); } catch(e){ return ''; }
+}
+// What the editor opens with: whatever is already in the field, else the core
+// the pre-pass derived for this route -- the thing being trimmed down.
+function drawSeed(){
+  return el('rmsdCore').value.trim() || (growthStep1 ? growthStep1.coreSmarts : '') || '';
+}
+function drawLoadSeed(){
+  const seed = drawSeed();
+  el('drawSeedNote').textContent = seed
+    ? 'Loaded: ' + seed + ' — delete what should not be guarded, keep the rest.'
+    : 'Empty editor — analyze a fragment first to start from its conserved core.';
+  if (!jsmeApplet) return;
+  try {
+    if (seed) jsmeApplet.readGenericMolecularInput(seed); else jsmeApplet.reset();
+  } catch(e){
+    try { jsmeApplet.reset(); } catch(e2){}
+  }
+  drawSetPreview(drawnSmiles());
+}
+// jsme.nocache.js calls this once the editor code is in.
+window.jsmeOnLoad = function(){
+  const box = el('jsmeContainer');
+  box.textContent = '';
+  const w = Math.max(320, Math.floor(box.clientWidth - 14));
+  try { jsmeApplet = new JSApplet.JSME('jsmeContainer', w + 'px', '340px'); }
+  catch(e){ box.textContent = 'Could not start the molecule editor: ' + e.message; return; }
+  jsmeLoading = false;
+  try { jsmeApplet.setCallBack('AfterStructureModified', ()=> drawSetPreview(drawnSmiles())); } catch(e){}
+  drawLoadSeed();
+};
+function loadJSME(){
+  if (jsmeApplet){ drawLoadSeed(); return; }
+  if (jsmeLoading) return;
+  jsmeLoading = true;
+  const sc = document.createElement('script');
+  sc.src = '/static/jsme/jsme.nocache.js';
+  sc.onerror = ()=>{
+    jsmeLoading = false;
+    el('jsmeContainer').textContent =
+      'Could not load the molecule editor — type a SMILES or SMARTS in the field instead.';
+  };
+  document.head.appendChild(sc);
+}
+function openDrawModal(){
+  el('drawModal').style.display = '';
+  loadJSME();
+  if (jsmeApplet) drawLoadSeed(); else el('drawSeedNote').textContent = drawSeed()
+    ? 'Will open with: ' + drawSeed() : '';
+}
+function closeDrawModal(){ el('drawModal').style.display = 'none'; }
+el('rmsdCoreDrawBtn').addEventListener('click', openDrawModal);
+el('drawCancelBtn').addEventListener('click', closeDrawModal);
+el('drawResetBtn').addEventListener('click', ()=>{
+  el('rmsdCore').value = '';     // so the seed falls back to the route's core
+  drawLoadSeed();
+});
+el('drawUseBtn').addEventListener('click', ()=>{
+  const smi = drawnSmiles();
+  if (!smi){ drawSetPreview(''); return; }   // nothing drawn: keep the field as it was
+  el('rmsdCore').value = smi;
+  closeDrawModal();
+});
+// Click the backdrop (not the sheet) or press Escape to dismiss.
+el('drawModal').addEventListener('click', e=>{ if (e.target === el('drawModal')) closeDrawModal(); });
+document.addEventListener('keydown', e=>{
+  if (e.key === 'Escape' && el('drawModal').style.display !== 'none') closeDrawModal();
+});
 
 // ---- master-pool picker (bundled pools, shared by growth + combi) ----
 // The <select> lists every pool bundled with the app plus an "upload" entry;
