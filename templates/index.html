@@ -243,18 +243,18 @@
       <div class="checkline"><input type="checkbox" id="pains" checked><label style="margin:0">PAINS structural alerts</label></div>
       <div class="checkline"><input type="checkbox" id="reos" checked><label style="margin:0">REOS functional-group filter</label></div>
       <div class="row">
-        <div><label>MW min</label><input type="number" id="mwLo" placeholder="e.g. 150"></div>
-        <div><label>MW max</label><input type="number" id="mwHi" placeholder="e.g. 500"></div>
+        <div><label>MW min</label><input type="number" id="mwLo" placeholder="e.g. 150" value="100"></div>
+        <div><label>MW max</label><input type="number" id="mwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min</label><input type="number" id="logpLo" step="0.1" placeholder="-2"></div>
-        <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5"></div>
+        <div><label>logP min</label><input type="number" id="logpLo" step="0.1" placeholder="-2" value="1"></div>
+        <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
       <div class="checkline"><input type="checkbox" id="coreRmsdOn" checked><label style="margin:0">Core RMSD guard
         against the bound fragment</label></div>
       <div class="row">
         <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span></label>
-          <input type="number" id="maxCoreRmsd" step="0.1" value="0.8" min="0"></div>
+          <input type="number" id="maxCoreRmsd" step="0.1" value="2.0" min="0"></div>
         <div><label>Measure drift on <span class="chip">optional SMILES/SMARTS</span></label>
           <div class="row" style="display:flex; gap:6px">
             <input type="text" id="rmsdCore" placeholder="blank: the whole conserved core" style="flex:1; min-width:0">
@@ -273,9 +273,12 @@
         disable. Core RMSD guard: reject any docked pose whose placed fragment core drifts more than this from the
         bound reference (MCS match to the conserved core) &mdash; this is what holds the fragment's binding mode now
         that the dock is a real search, so it has to be tight: the core is rigid, so its RMSD tracks how far it has
-        turned, and a core turned fully perpendicular in place still averages only ~1.5 &Aring;. At the default
-        0.8 &Aring; a pose is within about 30&deg; of the bound core; tighten to 0.5 &Aring; (~20&deg;) for poses
-        that hold the bound orientation closely, or loosen further to keep more products.
+        turned, and a core turned fully perpendicular in place still averages only ~1.5 &Aring;. The default is
+        2.0 &Aring;, which is admissive on purpose: every pose is annotated with <code>core_rmsd</code> and
+        <code>core_max_dev</code> so you can filter on drift afterwards, while a pose the guard rejected is gone
+        unless you re-dock. Tighten to 0.8 &Aring; (~30&deg;) or 0.5 &Aring; (~20&deg;) only when the anchor is
+        large enough to hold it &mdash; on a small, flat core a tight guard keeps the few percent of products that
+        sit closest to the fragment and throws away the rest.
         Measure drift on: by default the guard judges the whole conserved core. Name a part of it (SMILES or
         SMARTS) to judge only that &mdash; growing from a <em>modified</em> fragment, put the <em>original</em>
         fragment here: the build still pins the whole modified core (it is the molecule being grown), while the
@@ -322,7 +325,7 @@
             <option value="none">none (fast)</option>
             <option value="rescore">rescore</option>
           </select></div>
-        <div><label>Seed</label><input type="number" id="seed" placeholder="random"></div>
+        <div><label>Seed</label><input type="number" id="seed" placeholder="random" value="666"></div>
       </div>
       <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
       <input type="text" id="sessionName" placeholder="e.g. NUDT15_frag1">
@@ -397,12 +400,12 @@
       <div class="checkline"><input type="checkbox" id="combiPains" checked><label style="margin:0">PAINS structural alerts</label></div>
       <div class="checkline"><input type="checkbox" id="combiReos" checked><label style="margin:0">REOS functional-group filter</label></div>
       <div class="row">
-        <div><label>MW min</label><input type="number" id="combiMwLo" placeholder="e.g. 150"></div>
-        <div><label>MW max</label><input type="number" id="combiMwHi" placeholder="e.g. 500"></div>
+        <div><label>MW min</label><input type="number" id="combiMwLo" placeholder="e.g. 150" value="100"></div>
+        <div><label>MW max</label><input type="number" id="combiMwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2"></div>
-        <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5"></div>
+        <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2" value="1"></div>
+        <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
       <div class="checkline"><input type="checkbox" id="combiMaxAffOn" checked><label style="margin:0">Energy filter
         &mdash; reject poses that don't bind</label></div>
@@ -449,7 +452,7 @@
         <div><label>CPU / dock <span class="chip">(blank: auto-split)</span></label><input type="number" id="combiCpuPerDock" placeholder="auto" min="1"></div>
         <div></div>
       </div>
-      <label>Seed</label><input type="number" id="combiSeed" placeholder="random">
+      <label>Seed</label><input type="number" id="combiSeed" placeholder="random" value="666">
       <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
       <input type="text" id="combiSessionName" placeholder="e.g. suzuki_diversity_scan">
       <div class="row" style="margin-top:12px">
@@ -1319,7 +1322,7 @@ el('growBtn').addEventListener('click', async ()=>{
     seed: el('seed').value ? parseInt(el('seed').value) : null,
     // Unticked -> null, which the server reads as "no placement guard at all"
     // (distinct from a numeric cutoff, however large).
-    max_core_rmsd: el('coreRmsdOn').checked ? (parseFloat(el('maxCoreRmsd').value) || 0.8) : null,
+    max_core_rmsd: el('coreRmsdOn').checked ? (parseFloat(el('maxCoreRmsd').value) || 2.0) : null,
     rmsd_core_smarts: el('rmsdCore').value.trim() || null,
     max_affinity: el('maxAffOn').checked ? (isNaN(parseFloat(el('maxAffinity').value)) ? 0
                                             : parseFloat(el('maxAffinity').value)) : null,

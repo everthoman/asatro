@@ -1182,8 +1182,8 @@ def test_growth_job_logs_and_wires_the_placement_guard(tmp_path, monkeypatch):
     _await(job)
     assert job.status == "done"
     line = next(l for l in (job.dir / "run.log").read_text().splitlines() if "Filters:" in l)
-    assert "core-RMSD guard 0.8 A" in line and "max affinity 0" in line
-    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (0.8, 0.0)
+    assert "core-RMSD guard 2 A" in line and "max affinity 0" in line
+    assert (captured["max_core_rmsd"], captured["max_affinity"]) == (2.0, 0.0)
 
 
 def test_growth_job_can_switch_the_energy_filter_off(tmp_path, monkeypatch):

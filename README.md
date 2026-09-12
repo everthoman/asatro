@@ -134,7 +134,7 @@ Two search paths share the same lifted Thompson-Sampling + GNINA stack
   "extend" steps onto it; each final product is constrained-placed onto the
   bound pose, then docked by a real GNINA search inside a box sized to that
   candidate's own anchored conformer, and guarded afterwards on placement
-  (core RMSD against the bound fragment, 0.8 Å) and on energy
+  (core RMSD against the bound fragment, 2.0 Å) and on energy
   (`minimizedAffinity` above zero isn't a binding pose). Both are adjustable and
   can be switched off; either way every pose is annotated with `core_rmsd`,
   `core_max_dev` and `min_receptor_dist` (closest heavy-atom approach to the
@@ -250,15 +250,30 @@ only pose guard that makes sense unanchored, where there is no core to hold.
 Growth defaults it on at 0; for combi an absent key leaves it off, so an
 API-launched run scores every mode it docks unless it asks otherwise.
 
-**The placement guard has to be tight, and it is coupled to `num_modes`.** The
-core is rigid, so its RMSD against the bound pose tracks how far it has *turned*
-almost exactly (r = 0.95 over a 162-pose run; the worst atom is a near-constant
-1.6× the mean). That also means a core turned fully perpendicular *in place*
-still averages only ~1.45 Å — so a loose threshold is not a lenient guard, it is
-no guard: at 2.0 Å a run's top hits included poses sitting 72° and 81° off the
-bound core. The default is 0.8 Å, which admits about 30° (0.5 Å about 20°,
-0.7 Å about 27°) — tight enough to mean something, loose enough that a run still
-has hits to rank.
+**The placement guard defaults to admissive, and you filter afterwards.** The
+default is 2.0 Å. Every pose is annotated with `core_rmsd` and `core_max_dev`,
+so a run's output can be narrowed on drift at any point; a pose the guard
+rejected is gone and costs a re-dock to get back. That asymmetry is the whole
+argument for a loose default.
+
+It is a real trade, not a free one. The core is rigid, so its RMSD against the
+bound pose tracks how far it has *turned* almost exactly (r = 0.95 over a
+162-pose run; the worst atom is a near-constant 1.6× the mean), and a core
+turned fully perpendicular *in place* still averages only ~1.45 Å — so at 2.0 Å
+the guard does admit poses well off the bound orientation (72° and 81° have been
+observed among a run's top hits). Tighten it — 0.8 Å is about 30°, 0.7 Å about
+27°, 0.5 Å about 20° — when the anchor is big enough to hold it.
+
+**A tight guard does not survive a small anchor.** On TH5006 (a 9-atom
+pyridinone core, 8 atoms guarded) growing amides over a 3035-member pool, 0.8 Å
+scored 13 products with a best CNN_VS of 2.97, while 2.0 Å scored 907 with a
+best of 3.96 — and only 1 of those top 20 would have cleared 0.8 Å. Accepted
+drift there centres at 1.45 Å with 1% under 0.8 Å, so the tight threshold was
+cutting the body of the distribution rather than a tail, keeping the ~1% of
+products that happened to sit closest to the fragment. That selects for rigidity
+(median 2 rotatable bonds against 4) rather than for binding. Larger anchors
+tolerate a tight guard; the number that suits one fragment is not a safe
+default for all of them.
 
 **What the guard measures is separately nameable.** By default it judges the
 whole conserved core. Growing from a *modified* fragment, that core is the

@@ -595,13 +595,14 @@ def test_anchored_docking_is_a_real_search(tmp_path):
 
 
 def test_anchored_guard_defaults_leave_room_for_a_searched_pose(tmp_path):
-    """The guard is tight (0.8 A, about 30 degrees off the bound core) because
-    the core is rigid: its RMSD tracks how far it turned, and a core turned
-    perpendicular in place still averages only ~1.45 A. Nine modes are asked for
-    so the guard has poses to choose between -- at one mode even a 0.5 A guard
-    passed none of twelve products, at nine, three."""
+    """The guard defaults to 2.0 A -- admissive on purpose, because every pose is
+    annotated with core_rmsd/core_max_dev and can be filtered afterwards, while a
+    rejected pose is gone without a re-dock. A tight default does not survive a
+    small anchor: on a 9-atom pyridinone core, 0.8 A scored 13 of 3035 products
+    against 907 at 2.0 A, keeping the ~1% that sat closest to the fragment.
+    Nine modes are asked for so the guard has poses to choose between."""
     ev = _ev_with_receptor(tmp_path)
-    assert (ev.max_core_rmsd, ev.max_affinity) == (0.8, 0.0)
+    assert (ev.max_core_rmsd, ev.max_affinity) == (2.0, 0.0)
 
 
 def test_pose_with_a_repulsive_score_is_rejected(tmp_path):
@@ -718,17 +719,34 @@ def _turned_pose_sdf(tmp_path, ev, product_smiles, degrees, name="turned.sdf"):
     return str(path)
 
 
-def test_core_turned_perpendicular_is_rejected(tmp_path):
-    ev = _anchored_ev(tmp_path)
+def test_core_turned_perpendicular_is_rejected_by_a_tight_guard(tmp_path):
+    """A core turned right over in place still averages well under 2.0 A -- which
+    is what a tight guard is for, and why it has to be set explicitly."""
+    ev = _anchored_ev(tmp_path, max_core_rmsd=0.8)
     smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
     path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 90.0)
 
-    # This is why the threshold has to be tight: a core turned right over in
-    # place still averages well under the 2.0 A the guard once used.
     pose = next(m for m in Chem.SDMolSupplier(path))
     assert _rmsd_of(ev._core_deviations(pose)) < 2.0
     assert ev._best_pose(path, smi) == (None, None)
     assert ev.stats()["pose_rejections"] == {"core drift": 1}
+
+
+def test_the_default_guard_admits_a_turned_core_but_annotates_the_drift(tmp_path):
+    """The other side of the 2.0 A default, stated plainly: a core turned 90 deg
+    in place is *kept*, because the default trades precision for recall and
+    leaves the filtering to whoever reads the results. The pose carries the drift
+    it was admitted with, so that filtering is actually possible."""
+    ev = _anchored_ev(tmp_path)
+    assert ev.max_core_rmsd == 2.0
+    smi = Chem.CanonSmiles("c1ccc(-c2ccccc2)cc1")
+    path = _turned_pose_sdf(tmp_path, ev, "c1ccc(-c2ccccc2)cc1", 90.0)
+
+    score, pose = ev._best_pose(path, smi)
+    assert pose is not None and score == -8.2
+    assert ev.stats()["pose_rejections"] == {}
+    assert 0.5 < float(pose.GetProp("core_rmsd")) < 2.0
+    assert float(pose.GetProp("core_max_dev")) >= float(pose.GetProp("core_rmsd"))
 
 
 def test_a_core_left_in_place_still_passes(tmp_path):

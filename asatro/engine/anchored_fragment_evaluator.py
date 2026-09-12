@@ -292,19 +292,33 @@ def _resolve_guard_atoms(core: Chem.Mol, rmsd_core_smarts: str,
 
 _EMBED_TIMEOUT_DEFAULT = 60  # seconds
 
-# Post-dock pose guards. The core-RMSD default is 2.0 A because the docking is a
-# real search now: a clean, correctly-anchored pose from a free search sits ~1.2
-# to 1.8 A off the reference core (measured over a re-docked production run),
-# where the old local-only protocol left it under 1.0 A by construction -- the
-# same 1.5 A that once meant "drifted" would now reject good poses.
-# Core RMSD against the bound pose, and tight, because the point of anchored
-# growth is that the fragment keeps the pose it was solved in. The threshold has
-# to be this low to mean anything: the core is rigid, so its RMSD tracks how far
-# it has turned almost exactly (r = 0.95 over a 162-pose run, worst atom a
-# near-constant 1.6x the mean), and a core turned 90 degrees in place still
-# averages only ~1.45 A. At 2.0 A the guard admitted poses sitting 81 degrees off
-# the bound core; 0.8 A admits about 30 degrees (0.5 A about 20, 0.7 A about 27).
-DEFAULT_MAX_CORE_RMSD = 0.8
+# Post-dock pose guards. Core RMSD against the bound pose: the point of anchored
+# growth is that the fragment keeps the pose it was solved in, and with the dock
+# a real search (not a local optimisation of the built pose) this guard is what
+# holds it. The default is 2.0 A -- deliberately admissive, because a run's poses
+# are all annotated with core_rmsd/core_max_dev and can be filtered afterwards,
+# whereas a pose the guard rejected is gone and cannot be recovered without
+# re-docking.
+#
+# A tight default was tried and does not survive contact with a small, flat
+# anchor. Measured on a TH5006 (9-atom pyridinone core) amide run over the same
+# 3035-member pool: at 0.8 A the run scored 13 products out of 3035, best
+# CNN_VS 2.97; at 2.0 A it scored 907, best 3.96, and only 1 of its top 20 would
+# have cleared 0.8 A. The accepted drift there is centred at 1.45 A (1% under
+# 0.8, 41% between 1.2 and 1.5), so the tight threshold was not trimming a tail,
+# it was cutting the body of the distribution and keeping the ~1% of products
+# that happened to sit closest to the fragment -- selecting for rigidity rather
+# than for binding. Bigger anchors (TH17144/TH17145) tolerate a tight guard, so
+# the number that works for one fragment is not a safe global default.
+#
+# What the number means geometrically, for tightening it by hand: the core is
+# rigid, so its RMSD tracks how far it has turned almost exactly (r = 0.95 over a
+# 162-pose run, worst atom a near-constant 1.6x the mean), and a core turned
+# fully perpendicular in place still averages only ~1.45 A. So 2.0 A does admit
+# poses well off the bound orientation (81 degrees was observed) -- that is the
+# trade being made, and it is why the annotations matter. 0.8 A admits about
+# 30 degrees, 0.7 A about 27, 0.5 A about 20.
+DEFAULT_MAX_CORE_RMSD = 2.0
 # minimizedAffinity is gnina's empirical (Vina-like) score, computed for every
 # pose whatever the score field is. Above zero the steric term has won: whatever
 # else the pose is, it is not a binding one. A search rarely returns such a pose
