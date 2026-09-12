@@ -81,6 +81,21 @@
   .checkline input { width:auto; }
   #log { background:var(--inset-bg); border:1px solid var(--border); border-radius:8px; padding:12px; height:360px; overflow:auto; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; }
   .muted { color:var(--muted); font-size:12px; }
+  /* Per-parameter help: a "?" beside the control, hover for the one-line
+     version (native title), click to unfold the full note below the row. The
+     note is a normal block in the flow rather than a popover, so a paragraph
+     of it wraps instead of overflowing a narrow column. */
+  .help, .help-inline { display:inline-flex; align-items:center; justify-content:center;
+    width:15px; height:15px; border:1px solid var(--border2); border-radius:50%;
+    background:var(--ghost-bg); color:var(--muted); font-size:10px; font-weight:700;
+    line-height:1; vertical-align:middle; margin-left:5px; user-select:none; }
+  .help { cursor:pointer; }
+  .help-inline { margin:0 2px; }
+  .help:hover, .help:focus, .help.on { color:var(--text); border-color:var(--accent); outline:none; }
+  .hint { display:none; color:var(--muted); font-size:12px; line-height:1.55;
+    margin:6px 0 2px; padding:8px 10px; background:var(--inset-bg);
+    border-left:2px solid var(--accent); border-radius:4px; }
+  .hint.open { display:block; }
   .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:600; color:#fff; }
   .status-queued{ background:#2a3550; } .status-running{ background:#234a7a; } .status-done{ background:#1d5e38; } .status-error{ background:#5e1d1d; } .status-cancelled{ background:#5e4a1d; }
   .ok { color:var(--ok); } .bad { color:var(--err); } .warn { color:var(--warn); }
@@ -240,56 +255,86 @@
 
     <div class="panel" id="filtersPanel" style="display:none">
       <h2>5 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
-      <div class="checkline"><input type="checkbox" id="pains" checked><label style="margin:0">PAINS structural alerts</label></div>
-      <div class="checkline"><input type="checkbox" id="reos" checked><label style="margin:0">REOS functional-group filter</label></div>
+      <div class="checkline"><input type="checkbox" id="pains" checked><label style="margin:0">PAINS structural alerts</label>
+        <span class="help" data-help="hPains" role="button" tabindex="0"
+              title="Drops products matching pan-assay-interference substructures, before docking.">?</span></div>
+      <div class="hint" id="hPains">Pan-Assay INterference compoundS &mdash; substructures that light up in many
+        assays for reasons other than binding the target. A matching product is rejected before it is docked, so
+        leaving this on costs nothing but the products you would have thrown away later anyway.</div>
+      <div class="checkline"><input type="checkbox" id="reos" checked><label style="margin:0">REOS functional-group filter</label>
+        <span class="help" data-help="hReos" role="button" tabindex="0"
+              title="Drops products bearing reactive or otherwise undesirable groups, before docking.">?</span></div>
+      <div class="hint" id="hReos">Rapid Elimination Of Swill &mdash; a functional-group filter for reactive,
+        unstable and otherwise undesirable chemistry. Same hard reject before docking as PAINS.</div>
       <div class="row">
-        <div><label>MW min</label><input type="number" id="mwLo" placeholder="e.g. 150" value="100"></div>
+        <div><label>MW min <span class="help" data-help="hProps" role="button" tabindex="0"
+              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+          <input type="number" id="mwLo" placeholder="e.g. 150" value="100"></div>
         <div><label>MW max</label><input type="number" id="mwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min</label><input type="number" id="logpLo" step="0.1" placeholder="-2" value="1"></div>
+        <div><label>logP min <span class="help" data-help="hProps" role="button" tabindex="0"
+              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+          <input type="number" id="logpLo" step="0.1" placeholder="-2" value="1"></div>
         <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
+      <div class="hint" id="hProps">Molecular weight and cLogP of the whole enumerated product &mdash; the fragment
+        plus everything the route adds &mdash; not of the reagents. Leave a box blank to drop that bound.
+        The defaults (MW 100&ndash;400, logP 1&ndash;4) keep the products lead-like. logP is the one to watch:
+        widening it upwards is the cheap way to recover docking score and lose cell permeability.</div>
       <div class="checkline"><input type="checkbox" id="coreRmsdOn" checked><label style="margin:0">Core RMSD guard
-        against the bound fragment</label></div>
+        against the bound fragment</label>
+        <span class="help" data-help="hGuard" role="button" tabindex="0"
+              title="Rejects docked poses whose fragment core has moved off the bound reference.">?</span></div>
       <div class="row">
-        <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span></label>
+        <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span>
+          <span class="help" data-help="hGuard" role="button" tabindex="0"
+                title="Rejects docked poses whose fragment core has moved off the bound reference.">?</span></label>
           <input type="number" id="maxCoreRmsd" step="0.1" value="2.0" min="0"></div>
-        <div><label>Measure drift on <span class="chip">optional SMILES/SMARTS</span></label>
+        <div><label>Measure drift on <span class="chip">optional SMILES/SMARTS</span>
+          <span class="help" data-help="hRmsdCore" role="button" tabindex="0"
+                title="Judge only part of the core. Blank: the whole conserved core.">?</span></label>
           <div class="row" style="display:flex; gap:6px">
             <input type="text" id="rmsdCore" placeholder="blank: the whole conserved core" style="flex:1; min-width:0">
             <button class="btn ghost" id="rmsdCoreDrawBtn" type="button" style="width:auto; white-space:nowrap"
                     title="Draw the part to measure drift on">Draw&hellip;</button>
           </div></div>
       </div>
+      <div class="hint" id="hGuard">Rejects any docked pose whose placed fragment core has drifted further than this
+        from the bound reference. The core is the conserved one &mdash; the fragment minus the atoms its handle
+        loses on reacting &mdash; and the drift is measured in the receptor frame, without superposition.
+        The dock is a real search rather than a local minimisation, so this guard is what holds the fragment's
+        solved binding mode.
+        <br><br>
+        The 2.0 &Aring; default is admissive on purpose: every pose is annotated with <code>core_rmsd</code> and
+        <code>core_max_dev</code>, so you can filter on drift whenever you like, while a pose the guard rejected is
+        gone unless you dock it again. Tighten to 0.8 &Aring; (~30&deg;) or 0.5 &Aring; (~20&deg;) only when the
+        anchor is large enough to hold it: the core is rigid, so its RMSD tracks how far it has turned, and a core
+        turned fully perpendicular in place still averages only ~1.5 &Aring;. On a small, flat core a tight guard
+        keeps the few percent of products that sit closest to the fragment and throws the rest away.
+        <br><br>
+        Untick and nothing is rejected on placement; either way <code>core_rmsd</code>, <code>core_max_dev</code>
+        and <code>min_receptor_dist</code> (closest heavy-atom approach to the receptor) are measured and written to
+        every pose.</div>
+      <div class="hint" id="hRmsdCore">By default the guard judges the whole conserved core. Name a part of it
+        (SMILES or SMARTS), or draw it, to judge only that. Growing from a <em>modified</em> fragment, put the
+        <em>original</em> fragment here: the build still pins the whole modified core (it is the molecule being
+        grown), while the binding mode being guarded stays the one that was actually solved.
+        <code>core_rmsd</code> is then reported over those atoms too.</div>
       <div class="checkline"><input type="checkbox" id="maxAffOn" checked><label style="margin:0">Energy filter
-        &mdash; reject poses that don't bind</label></div>
+        &mdash; reject poses that don't bind</label>
+        <span class="help" data-help="hAff" role="button" tabindex="0"
+              title="Rejects a pose whose minimizedAffinity is above the max.">?</span></div>
       <div class="row">
         <div><label>Max affinity (kcal/mol)</label>
           <input type="number" id="maxAffinity" step="0.5" value="0"></div>
         <div></div>
       </div>
-      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to
-        disable. Core RMSD guard: reject any docked pose whose placed fragment core drifts more than this from the
-        bound reference (MCS match to the conserved core) &mdash; this is what holds the fragment's binding mode now
-        that the dock is a real search, so it has to be tight: the core is rigid, so its RMSD tracks how far it has
-        turned, and a core turned fully perpendicular in place still averages only ~1.5 &Aring;. The default is
-        2.0 &Aring;, which is admissive on purpose: every pose is annotated with <code>core_rmsd</code> and
-        <code>core_max_dev</code> so you can filter on drift afterwards, while a pose the guard rejected is gone
-        unless you re-dock. Tighten to 0.8 &Aring; (~30&deg;) or 0.5 &Aring; (~20&deg;) only when the anchor is
-        large enough to hold it &mdash; on a small, flat core a tight guard keeps the few percent of products that
-        sit closest to the fragment and throws away the rest.
-        Measure drift on: by default the guard judges the whole conserved core. Name a part of it (SMILES or
-        SMARTS) to judge only that &mdash; growing from a <em>modified</em> fragment, put the <em>original</em>
-        fragment here: the build still pins the whole modified core (it is the molecule being grown), while the
-        binding mode being guarded stays the one that was solved. <code>core_rmsd</code> is then reported over
-        those atoms too.
-        Untick and nothing is rejected on placement; either way <code>core_rmsd</code>, <code>core_max_dev</code>
-        and <code>min_receptor_dist</code> (closest heavy-atom approach to the receptor) are measured and written to
-        every pose, so you can filter on them afterwards. Energy filter: reject a pose whose
-        <code>minimizedAffinity</code> is above the max &mdash; above zero it is repulsive, so whatever it is, it
-        isn't binding. GNINA's search rarely returns one; this is the check for when it does, which a CNN score
-        field would not show.</div>
+      <div class="hint" id="hAff">Rejects a pose whose <code>minimizedAffinity</code> is above the max. Above zero
+        it is repulsive &mdash; whatever that pose is, it isn't binding. GNINA's search rarely returns one; this is
+        the check for when it does, and a CNN score field would not show it.</div>
+      <div class="muted" style="margin-top:6px">Every filter has a <span class="help-inline">?</span> &mdash; hover it
+        for the one-line version, click it for what the filter does and when to change it.</div>
     </div>
 
     <div class="panel" id="growPanel" style="display:none">
@@ -397,24 +442,47 @@
 
     <div class="panel">
       <h2>3 &middot; Filters <span class="muted" style="font-weight:400">(applied to every enumerated product before docking)</span></h2>
-      <div class="checkline"><input type="checkbox" id="combiPains" checked><label style="margin:0">PAINS structural alerts</label></div>
-      <div class="checkline"><input type="checkbox" id="combiReos" checked><label style="margin:0">REOS functional-group filter</label></div>
+      <div class="checkline"><input type="checkbox" id="combiPains" checked><label style="margin:0">PAINS structural alerts</label>
+        <span class="help" data-help="hcPains" role="button" tabindex="0"
+              title="Drops products matching pan-assay-interference substructures, before docking.">?</span></div>
+      <div class="hint" id="hcPains">Pan-Assay INterference compoundS &mdash; substructures that light up in many
+        assays for reasons other than binding the target. A matching product is rejected before it is docked, so
+        leaving this on costs nothing but the products you would have thrown away later anyway.</div>
+      <div class="checkline"><input type="checkbox" id="combiReos" checked><label style="margin:0">REOS functional-group filter</label>
+        <span class="help" data-help="hcReos" role="button" tabindex="0"
+              title="Drops products bearing reactive or otherwise undesirable groups, before docking.">?</span></div>
+      <div class="hint" id="hcReos">Rapid Elimination Of Swill &mdash; a functional-group filter for reactive,
+        unstable and otherwise undesirable chemistry. Same hard reject before docking as PAINS.</div>
       <div class="row">
-        <div><label>MW min</label><input type="number" id="combiMwLo" placeholder="e.g. 150" value="100"></div>
+        <div><label>MW min <span class="help" data-help="hcProps" role="button" tabindex="0"
+              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+          <input type="number" id="combiMwLo" placeholder="e.g. 150" value="100"></div>
         <div><label>MW max</label><input type="number" id="combiMwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min</label><input type="number" id="combiLogpLo" step="0.1" placeholder="-2" value="1"></div>
+        <div><label>logP min <span class="help" data-help="hcProps" role="button" tabindex="0"
+              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+          <input type="number" id="combiLogpLo" step="0.1" placeholder="-2" value="1"></div>
         <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
+      <div class="hint" id="hcProps">Molecular weight and cLogP of the whole enumerated product, not of the
+        reagents. Leave a box blank to drop that bound. The defaults (MW 100&ndash;400, logP 1&ndash;4) keep the
+        products lead-like. logP is the one to watch: widening it upwards is the cheap way to recover docking score
+        and lose cell permeability.</div>
       <div class="checkline"><input type="checkbox" id="combiMaxAffOn" checked><label style="margin:0">Energy filter
-        &mdash; reject poses that don't bind</label></div>
+        &mdash; reject poses that don't bind</label>
+        <span class="help" data-help="hcAff" role="button" tabindex="0"
+              title="Rejects a pose whose minimizedAffinity is above the max.">?</span></div>
       <div class="row">
         <div><label>Max affinity (kcal/mol)</label>
           <input type="number" id="combiMaxAffinity" step="0.5" value="0"></div>
         <div></div>
       </div>
-      <div class="muted" style="margin-top:6px">PAINS / REOS hard-reject before docking. MW / logP: leave blank to disable.</div>
+      <div class="hint" id="hcAff">Rejects a pose whose <code>minimizedAffinity</code> is above the max. Above zero
+        it is repulsive &mdash; whatever that pose is, it isn't binding. GNINA's search rarely returns one; this is
+        the check for when it does, and a CNN score field would not show it.</div>
+      <div class="muted" style="margin-top:6px">Every filter has a <span class="help-inline">?</span> &mdash; hover it
+        for the one-line version, click it for what the filter does and when to change it.</div>
     </div>
 
     <div class="panel">
@@ -917,6 +985,24 @@ el('drawUseBtn').addEventListener('click', ()=>{
 el('drawModal').addEventListener('click', e=>{ if (e.target === el('drawModal')) closeDrawModal(); });
 document.addEventListener('keydown', e=>{
   if (e.key === 'Escape' && el('drawModal').style.display !== 'none') closeDrawModal();
+});
+
+// ---- per-parameter help ("?" beside a control) ----
+// Delegated, so a "?" added to the markup later needs no wiring: it toggles the
+// .hint box named by data-help. Several "?" may point at one box (MW and logP
+// share a note); they light up together.
+document.addEventListener('click', e=>{
+  const mark = e.target.closest ? e.target.closest('.help') : null;
+  if (!mark) return;
+  const box = el(mark.dataset.help);
+  if (!box) return;
+  const open = box.classList.toggle('open');
+  document.querySelectorAll('.help[data-help="' + mark.dataset.help + '"]')
+    .forEach(m => m.classList.toggle('on', open));
+});
+document.addEventListener('keydown', e=>{
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList
+      && e.target.classList.contains('help')){ e.preventDefault(); e.target.click(); }
 });
 
 // ---- master-pool picker (bundled pools, shared by growth + combi) ----
