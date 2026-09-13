@@ -308,8 +308,7 @@
         <div><label>MW max</label><input type="number" id="mwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min <span class="help" data-help="hProps" role="button" tabindex="0"
-              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+        <div><label>logP min</label>
           <input type="number" id="logpLo" step="0.1" placeholder="-2" value="1"></div>
         <div><label>logP max</label><input type="number" id="logpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
@@ -322,9 +321,7 @@
         <span class="help" data-help="hGuard" role="button" tabindex="0"
               title="Rejects docked poses whose fragment core has moved off the bound reference.">?</span></div>
       <div class="row">
-        <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span>
-          <span class="help" data-help="hGuard" role="button" tabindex="0"
-                title="Rejects docked poses whose fragment core has moved off the bound reference.">?</span></label>
+        <div><label>Core RMSD guard (&Aring;) <span class="chip">placement filter</span></label>
           <input type="number" id="maxCoreRmsd" step="0.1" value="2.0" min="0"></div>
         <div><label>Measure drift on <span class="chip">optional SMILES/SMARTS</span>
           <span class="help" data-help="hRmsdCore" role="button" tabindex="0"
@@ -399,9 +396,7 @@
           <span class="help" data-help="hRws" role="button" tabindex="0"
                 title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
           <input type="number" id="rwsMinCore" value="50" min="1"></div>
-        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span>
-          <span class="help" data-help="hRws" role="button" tabindex="0"
-                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label>
           <input type="number" id="rwsStop" value="6000" min="1"></div>
         <div></div>
       </div>
@@ -544,8 +539,7 @@
         <div><label>MW max</label><input type="number" id="combiMwHi" placeholder="e.g. 500" value="400"></div>
       </div>
       <div class="row">
-        <div><label>logP min <span class="help" data-help="hcProps" role="button" tabindex="0"
-              title="Property window on the enumerated product. Blank disables that bound.">?</span></label>
+        <div><label>logP min</label>
           <input type="number" id="combiLogpLo" step="0.1" placeholder="-2" value="1"></div>
         <div><label>logP max</label><input type="number" id="combiLogpHi" step="0.1" placeholder="5" value="4"></div>
       </div>
@@ -596,9 +590,7 @@
           <span class="help" data-help="hcRws" role="button" tabindex="0"
                 title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
           <input type="number" id="combiRwsMinCore" value="50" min="1"></div>
-        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span>
-          <span class="help" data-help="hcRws" role="button" tabindex="0"
-                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label>
           <input type="number" id="combiRwsStop" value="6000" min="1"></div>
         <div></div>
       </div>
@@ -1116,8 +1108,9 @@ document.addEventListener('keydown', e=>{
 
 // ---- per-parameter help ("?" beside a control) ----
 // Delegated, so a "?" added to the markup later needs no wiring: it toggles the
-// .hint box named by data-help. Several "?" may point at one box (MW and logP
-// share a note); they light up together.
+// .hint box named by data-help. One note per "?" -- but a note two controls
+// share carries its "?" on the first of them only, and should several ever
+// point at one box again, they light up together.
 document.addEventListener('click', e=>{
   const mark = e.target.closest ? e.target.closest('.help') : null;
   if (!mark) return;
