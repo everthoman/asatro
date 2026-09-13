@@ -173,20 +173,35 @@
 
     <div id="growthPanels">
     <div class="panel">
-      <h2>1 &middot; Bound fragment &amp; receptor</h2>
+      <h2>1 &middot; Bound fragment &amp; receptor
+        <span class="help" data-help="hPanel1" role="button" tabindex="0"
+              title="What this panel anchors, and what Analyze accessibility does.">?</span></h2>
       <div class="muted">Upload the fragment hit in its <b>bound pose</b> (SDF, 3D) and the prepared
         receptor (PDB). Asatro reads the fragment's reactive handles, derives a conserved core for
         each, and probes the pocket for room to grow.</div>
-      <label>Bound fragment (SDF, in pose)</label>
+      <div class="hint" id="hPanel1">Everything downstream is anchored to what you upload here. The fragment's <b>bound pose</b> is the reference the placement guard measures drift against; the receptor is what the pocket probe marches into. <b>Analyze accessibility</b> takes each reactive handle's growth vector &mdash; attachment atom &rarr; the leaving group it displaces, read straight off the bound pose &mdash; casts a cone along it, and prunes the vectors that can only grow into protein. No docking; it runs in seconds and decides what panel 2 is allowed to offer.</div>
+      <label>Bound fragment (SDF, in pose)
+        <span class="help" data-help="hFragPose" role="button" tabindex="0"
+              title="The hit in its solved pose, in the receptor's frame. Bond orders matter.">?</span></label>
+      <div class="hint" id="hFragPose">The fragment hit in its <b>solved pose</b>: 3D, in the same coordinate frame as the receptor. The pose is the anchor, so a re-minimised or re-docked copy is the wrong input. Bond orders matter as much as the coordinates &mdash; a ligand that came through a PDB carries whatever a perception tool guessed, and a flat pyrimidinone routinely comes back as an sp3 CH<sub>2</sub>. Asatro checks for that and refuses to grow from it unless you override the warning in panel 2.</div>
       <input type="file" id="fragment" accept=".sdf,.mol">
       <label>Fragment name <span class="muted" style="font-weight:400">— leads every product name
-        (e.g. <code>TH17144_150266</code>); optional</span></label>
+        (e.g. <code>TH17144_150266</code>); optional</span>
+        <span class="help" data-help="hFragName" role="button" tabindex="0"
+              title="Leads every product name. Blank falls back to the SDF title, then FRAG.">?</span></label>
+      <div class="hint" id="hFragName">Used as the fragment's reagent name, so it leads every product name (<code>TH17144_150266</code>). Left blank, Asatro tries the SDF title &mdash; usually a prep tool's temp filename, which is why this box is here &mdash; and falls back to <code>FRAG</code>.</div>
       <input type="text" id="fragmentName" placeholder="FRAG" maxlength="32"
              title="Used as the fragment's reagent name. Left blank, Asatro tries the SDF title — usually a prep tool's temp filename — and falls back to FRAG.">
-      <label>Receptor (PDB)</label>
+      <label>Receptor (PDB)
+        <span class="help" data-help="hReceptor" role="button" tabindex="0"
+              title="The prepared receptor, in the same frame as the fragment pose.">?</span></label>
       <input type="file" id="receptor" accept=".pdb">
+      <div class="hint" id="hReceptor">The prepared receptor, in the same frame as the fragment pose. Its heavy atoms are what the cone probe marches into, what <code>min_receptor_dist</code> is measured against, and what every enumerated product is docked into.</div>
       <div class="checkline"><input type="checkbox" id="refine">
-        <label style="margin:0">Stub-growth refinement (slower, more reliable)</label></div>
+        <label style="margin:0">Stub-growth refinement (slower, more reliable)</label>
+        <span class="help" data-help="hRefine" role="button" tabindex="0"
+              title="Asks whether a real substituent fits, not just whether the ray is open.">?</span></div>
+      <div class="hint" id="hRefine">The cone probe asks &ldquo;is the <i>ray</i> open?&rdquo;. This asks the stronger question: does a real <i>substituent</i> fit? It embeds a few minimal stubs (&ndash;Me, &ndash;Ph, morpholine) onto the conserved core, pinned to the bound pose, and keeps a vector only if one of them places without clashing into the receptor. It catches the thin channel a ray slips through but a flat phenyl cannot. Still no docking and no GNINA &mdash; just constrained embedding and a clash check &mdash; at the cost of a handful of embeddings per vector.</div>
       <div class="row" style="margin-top:10px">
         <button class="btn" id="analyzeBtn" type="button">Analyze accessibility</button>
       </div>
@@ -194,7 +209,10 @@
     </div>
 
     <div class="panel" id="resultsPanel" style="display:none">
-      <h2>2 &middot; Handles &amp; accessible reactions</h2>
+      <h2>2 &middot; Handles &amp; accessible reactions
+        <span class="help" data-help="hPanel2" role="button" tabindex="0"
+              title="Why a handle or reaction may be missing from this list.">?</span></h2>
+      <div class="hint" id="hPanel2">Only handles that survived the pre-pass are listed, and only reaction/slot pairs this fragment can actually react in: the functional-group class has to match <i>and</i> the reaction's own reagent template has to match the molecule. The class alone is too coarse &mdash; <code>primary_amine</code> covers anilines and alkylamines alike, while reductive amination and the SNAr reactions exclude anilines &mdash; and a menu offered on the class alone gives you reactions that enumerate a whole library and build nothing. A detected handle with no usable reaction here (a buried or chemically incompatible N&ndash;H, say) is deliberately not shown.</div>
       <div id="bondOrderWarning" class="note" style="display:none; margin-bottom:8px">
         <div id="bondOrderWarningText"></div>
         <label class="checkline" style="margin-top:6px">
@@ -203,17 +221,23 @@
         </label>
       </div>
       <div id="fgClasses" style="margin-bottom:8px"></div>
-      <label>Step 1</label>
+      <label>Step 1
+        <span class="help" data-help="hStep1" role="button" tabindex="0"
+              title="Picking a reaction/slot fixes the conserved core the guard judges.">?</span></label>
+      <div class="hint" id="hStep1">Picking a reaction/slot fixes the <b>conserved core</b> &mdash; the fragment minus the atoms that handle loses on reacting &mdash; which is what the constrained embed pins and what the placement guard measures drift on. The fragment is always slot 1 of step 1; the reaction's other components come from the reagent libraries. A slot marked <i>via a turned handle</i> only opens once the handle rotates about its bond into the core (a carboxyl swapping &ndash;OH and C=O): worth knowing, because the grown substituent then goes where the other substituent currently sits.</div>
       <select id="step1Select">
         <option value="">— choose an accessible reaction/slot —</option>
       </select>
     </div>
 
     <div class="panel" id="growthRoutePanel" style="display:none">
-      <h2>3 &middot; Route</h2>
+      <h2>3 &middot; Route
+        <span class="help" data-help="hRoute" role="button" tabindex="0"
+              title="How steps chain, and when the search method starts to matter.">?</span></h2>
       <div class="muted">Step 1 is the accessible reaction/slot picked above &mdash; the fragment is
         coupled to every candidate step-1 reagent before the adaptive search starts. Add further
         steps to extend the running intermediate before it's scored.</div>
+      <div class="hint" id="hRoute">How many steps you chain is what decides how the search behaves. With a single variable slot &mdash; one start step, the fragment fixing the other component &mdash; there is no unseen combination for a bandit to find, so Asatro docks the whole library exhaustively and the search knobs in panel 6 are moot. From two variable slots up it is a real search, and reagents whose product could never react at a later step are pruned before it starts, so the slot sizes the search sees are smaller than the pool you picked.</div>
       <div id="growthStep1Summary" class="step"></div>
       <div id="growthExtendSteps"></div>
       <div class="row" style="margin-top:8px">
@@ -223,14 +247,20 @@
     </div>
 
     <div class="panel" id="reactantPanel" style="display:none">
-      <h2>4 &middot; Reactant libraries</h2>
+      <h2>4 &middot; Reactant libraries
+        <span class="help" data-help="hPanel4" role="button" tabindex="0"
+              title="Where the reagents for every non-fragment slot come from.">?</span></h2>
+      <div class="hint" id="hPanel4">Where the reagents for every slot the fragment doesn't fill come from. Whatever you choose, each slot ends up with one <code>.smi</code> list, and the product of those lists is the space the search explores.</div>
       <div class="checkline">
-        <label style="margin:0">Source</label>
+        <label style="margin:0">Source
+          <span class="help" data-help="hSource" role="button" tabindex="0"
+                title="Master pool prunes by class; per-class files are lists you supply.">?</span></label>
         <select id="reagentSource" style="width:auto">
           <option value="pool">Master pool (auto-prune)</option>
           <option value="perclass">Per-class files</option>
         </select>
       </div>
+      <div class="hint" id="hSource"><b>Master pool</b>: one tagged <code>.smi</code> library that Asatro classifies by functional group when the run starts (the log reports how many blocks tagged) and prunes to each slot's class. <b>Per-class files</b>: you supply one <code>.smi</code> per slot yourself &mdash; for when a slot should be exactly one curated list rather than everything of that class in the pool. Uploads are <code>SMILES name</code> per line.</div>
       <div id="poolBox">
         <div class="muted">One tagged <code>.smi</code> pool; Asatro prunes it to each
           slot by functional-group class. <code>SMILES name</code> per line. Pick a
@@ -241,8 +271,13 @@
         </div>
         <input type="file" id="poolFile" accept=".smi" style="display:none">
         <div class="row" style="margin-top:8px">
-          <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
+          <div style="display:flex; align-items:center; flex:0 0 auto">
+            <button class="btn ghost" id="poolPreviewBtn" type="button">Annotate pool</button>
+            <span class="help" data-help="hAnnotate" role="button" tabindex="0"
+                  title="Dry run: prunes dead reagents and sets the search budget. Worth doing.">?</span>
+          </div>
         </div>
+        <div class="hint" id="hAnnotate">A dry run with no docking and no receptor. It resolves the route's pools, drops reagents whose product could never react at a later step (an exact prune &mdash; those reagents are pure waste, and en masse they make a run look like it barely docked anything), and reports the <i>buildable</i> slot sizes rather than the raw pool size. It then writes a search budget into panel 6: warm-up 3, and cycles &asymp; 2 &times; the largest variable slot, clamped to 500&ndash;10000. Worth doing every time &mdash; the 50 sitting in the Search cycles box is a placeholder, not a budget.</div>
         <div id="poolPreview" class="muted" style="margin-top:8px"></div>
         <div id="paramSuggest" style="margin-top:6px"></div>
       </div>
@@ -340,40 +375,83 @@
     <div class="panel" id="growPanel" style="display:none">
       <h2>6 &middot; Growth run</h2>
       <div class="grid3">
-        <div><label>Search method</label>
+        <div><label>Search method
+          <span class="help" data-help="hMethod" role="button" tabindex="0"
+                title="Thompson Sampling vs Roulette Wheel — and when neither runs.">?</span></label>
           <select id="searchMethod">
             <option value="ts">Thompson Sampling</option>
             <option value="rws">Roulette Wheel</option>
           </select></div>
-        <div><label>Warm-up / arm</label><input type="number" id="numWarmup" value="3" min="1"></div>
-        <div><label>Search cycles</label><input type="number" id="numCycles" value="50" min="1"></div>
+        <div><label>Warm-up / arm
+          <span class="help" data-help="hWarmup" role="button" tabindex="0"
+                title="Docks per reagent before the search, to seed its prior.">?</span></label>
+          <input type="number" id="numWarmup" value="3" min="1"></div>
+        <div><label>Search cycles
+          <span class="help" data-help="hCycles" role="button" tabindex="0"
+                title="The search budget after warm-up. Annotate pool sets it.">?</span></label>
+          <input type="number" id="numCycles" value="50" min="1"></div>
       </div>
+      <div class="hint" id="hMethod">Only matters with two or more variable slots. <b>Thompson Sampling</b> (argmax) is the default bandit: it keeps a per-reagent prior and spends the budget on the arms that look good. <b>Roulette Wheel</b> with thermal cycling trades some of that greediness for coverage, which pays on 3+-component routes over ultralarge libraries. With a single variable slot the choice is moot &mdash; warm-up alone would already touch every reagent, so Asatro docks the whole library exhaustively and says so in the log.</div>
+      <div class="hint" id="hWarmup">Docks per reagent before the search starts, seeding each reagent's prior. It costs this number &times; every reagent in every slot, so on a big pool warm-up dominates the budget. 3 is the literature standard and is right here because reachability pruning keeps the pools dense &mdash; the inflated warm-up that sparse pools needed (to stop good reagents being retired for unlucky partners) is no longer necessary.</div>
+      <div class="hint" id="hCycles">The search budget after warm-up: TS iterations, or unique products docked for RWS &mdash; the same units either way, so a TS and an RWS run at the same number are comparable. <b>Annotate pool</b> fills this from the buildable pool sizes (&asymp; 2 draws per reagent in the largest variable slot, clamped to 500&ndash;10000). The 50 it starts at is a placeholder; left alone on a real pool it stops the search almost as soon as it begins.</div>
       <div class="grid3" id="rwsParams" style="display:none">
-        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span></label><input type="number" id="rwsMinCore" value="50" min="1"></div>
-        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label><input type="number" id="rwsStop" value="6000" min="1"></div>
+        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span>
+          <span class="help" data-help="hRws" role="button" tabindex="0"
+                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+          <input type="number" id="rwsMinCore" value="50" min="1"></div>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span>
+          <span class="help" data-help="hRws" role="button" tabindex="0"
+                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+          <input type="number" id="rwsStop" value="6000" min="1"></div>
         <div></div>
       </div>
+      <div class="hint" id="hRws">Roulette Wheel only; ignored by Thompson Sampling. <b>Min compounds / core</b> is the batch size the thermal cycling adapts across &mdash; several batches, not one giant blob, or the temperature schedule has nothing to act on. <b>Resample stop</b> is the early stop: that many consecutive draws that turn up an already-seen product and the search calls the library exhausted. Blanking either falls back to 50 / 6000, not to the size-scaled suggestion, so set them deliberately if you care.</div>
       <div class="grid3">
-        <div><label>Reagents cap</label><input type="number" id="numToSelect" placeholder="all"></div>
-        <div><label>Concurrency <span class="chip">(parallel docks)</span></label><input type="number" id="concurrency" value="16" min="1"></div>
-        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span></label><input type="number" id="cpuPerDock" placeholder="auto" min="1"></div>
+        <div><label>Reagents cap
+          <span class="help" data-help="hCap" role="button" tabindex="0"
+                title="Takes only the first N reagents of each library. A dev knob.">?</span></label>
+          <input type="number" id="numToSelect" placeholder="all"></div>
+        <div><label>Concurrency <span class="chip">(parallel docks)</span>
+          <span class="help" data-help="hConc" role="button" tabindex="0"
+                title="How many GNINA docks run at once.">?</span></label>
+          <input type="number" id="concurrency" value="16" min="1"></div>
+        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span>
+          <span class="help" data-help="hCpu" role="button" tabindex="0"
+                title="CPU threads per dock. Blank splits the cores across them.">?</span></label>
+          <input type="number" id="cpuPerDock" placeholder="auto" min="1"></div>
       </div>
+      <div class="hint" id="hCap">Reads only the first N reagents of each library. A development knob for a quick smoke test: it truncates the file rather than sampling it, so whatever the file happens to be sorted by is what you get. Blank uses everything.</div>
+      <div class="hint" id="hConc">How many docks run at once. Each is a separate GNINA process, so this multiplies memory as well as throughput. With CNN scoring on, the docks are GPU-bound and would otherwise all pile onto card 0; above 1 Asatro auto-detects the real GPUs and round-robins across them.</div>
+      <div class="hint" id="hCpu">CPU threads GNINA gets per dock. Blank is what you want: Asatro splits the box's cores across the concurrent docks (cores &divide; concurrency, at least 1) instead of every dock asking for all of them. Set it only to hold each dock to fewer threads than that.</div>
       <div class="grid3">
-        <div><label>Score field</label>
+        <div><label>Score field
+          <span class="help" data-help="hScore" role="button" tabindex="0"
+                title="Which GNINA output the search optimises and the leaderboard ranks by.">?</span></label>
           <select id="scoreField">
             <option value="minimizedAffinity">minimizedAffinity</option>
             <option value="CNNaffinity">CNNaffinity</option>
             <option value="CNN_VS">CNN_VS</option>
           </select></div>
-        <div><label>CNN scoring</label>
+        <div><label>CNN scoring
+          <span class="help" data-help="hCnn" role="button" tabindex="0"
+                title="none is CPU Vina and fast; rescore adds the GPU CNN pass.">?</span></label>
           <select id="cnnScoring">
             <option value="none">none (fast)</option>
             <option value="rescore">rescore</option>
           </select></div>
-        <div><label>Seed</label><input type="number" id="seed" placeholder="random" value="666"></div>
+        <div><label>Seed
+          <span class="help" data-help="hSeed" role="button" tabindex="0"
+                title="Seeds the sampler's draws. The docking seed is separate and fixed.">?</span></label>
+          <input type="number" id="seed" placeholder="random" value="666"></div>
       </div>
-      <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
+      <div class="hint" id="hScore">Which GNINA output the search optimises and the leaderboard ranks by. <code>minimizedAffinity</code> is kcal/mol, lower is better. <code>CNNaffinity</code> and <code>CNN_VS</code> are CNN outputs, higher is better &mdash; and they only carry signal with CNN scoring on. Every pose is annotated with all of them whatever you pick here; this chooses what the <i>search</i> chases.</div>
+      <div class="hint" id="hCnn"><b>none</b> is pure Vina docking on the CPU &mdash; much faster, and the GPUs are hidden from it entirely to avoid contention. <b>rescore</b> docks with Vina and then rescores the poses with the CNN: the GPU-bound step, several times slower per dock, and what <code>CNNaffinity</code> / <code>CNN_VS</code> need in order to mean anything.</div>
+      <div class="hint" id="hSeed">Seeds the sampler &mdash; which reagents get drawn &mdash; so a repeat with the same inputs and budget follows the same path. Blank leaves the draws nondeterministic. It does not reach GNINA: the docking seed and the constrained-embed seed are fixed at 666 internally, so the placement and docking half is reproducible either way.</div>
+      <label>Session name <span class="muted">(optional; reuse overwrites)</span>
+        <span class="help" data-help="hSession" role="button" tabindex="0"
+              title="Names the run and its folder. Reuse overwrites.">?</span></label>
       <input type="text" id="sessionName" placeholder="e.g. NUDT15_frag1">
+      <div class="hint" id="hSession">Names the run and its output folder. Reusing a name overwrites that run &mdash; and is refused outright while a job of that name is still running, so a double-click or a second tab cannot corrupt a run in flight. Blank gets a random id, which makes the run harder to find later; a name that says what you changed is worth the typing.</div>
       <div class="row" style="margin-top:12px">
         <button class="btn" id="growBtn" type="button">Launch growth</button>
       </div>
@@ -382,7 +460,10 @@
 
     <div id="combiPanels" style="display:none">
     <div class="panel">
-      <h2>1 &middot; Receptor &amp; binding site</h2>
+      <h2>1 &middot; Receptor &amp; binding site
+        <span class="help" data-help="hcSite" role="button" tabindex="0"
+              title="Where the docking box comes from: a reference ligand, or an explicit pocket.">?</span></h2>
+      <div class="hint" id="hcSite">No bound fragment here, so the box has to come from somewhere else. <b>Reference ligand</b> autoboxes on a ligand SDF &mdash; GNINA takes its extent and pads it by 4 &Aring; &mdash; which is the easy route when you have any ligand solved in the site. <b>Explicit pocket</b> takes a centre and a size in &Aring;ngstr&ouml;m instead, for an apo structure or a site you want to box by hand. The box is set once and every product in the run is docked into it, so a route that grows well past the reference still has to fit the same box.</div>
       <label>Receptor (PDB)</label>
       <input type="file" id="combiReceptor" accept=".pdb">
       <div class="checkline">
@@ -407,11 +488,14 @@
     </div>
 
     <div class="panel">
-      <h2>2 &middot; Reaction route</h2>
+      <h2>2 &middot; Reaction route
+        <span class="help" data-help="hcRoute" role="button" tabindex="0"
+              title="How this differs from growth: no anchor, every slot varies.">?</span></h2>
       <div class="muted">No bound fragment &mdash; every slot of a (possibly multi-step) route is
         Thompson-sampled from a real reagent library and freely docked (ts-gnina's own search,
         reused as-is). The first step must be a "start" reaction; each added step extends the
         running intermediate with one more reagent.</div>
+      <div class="hint" id="hcRoute">The difference from fragment growth is that nothing is anchored: there is no bound pose to pin the build to and no placement guard, so every slot varies and the search is a real bandit problem from the first step. That also means the budget matters more here than in a one-step growth run &mdash; two libraries of a few thousand each is already millions of products, and the search only ever sees the part of it the budget pays for. Reagents that cannot complete a later step are pruned before the search starts.</div>
       <div id="combiSteps"></div>
       <div class="row" style="margin-top:8px">
         <button class="btn ghost" id="combiAddStepBtn" type="button">+ Add extend step</button>
@@ -488,41 +572,84 @@
     <div class="panel">
       <h2>4 &middot; Combi search run</h2>
       <div class="grid3">
-        <div><label>Search method</label>
+        <div><label>Search method
+          <span class="help" data-help="hcMethod" role="button" tabindex="0"
+                title="Thompson Sampling vs Roulette Wheel — and when neither runs.">?</span></label>
           <select id="combiSearchMethod">
             <option value="ts">Thompson Sampling</option>
             <option value="rws">Roulette Wheel</option>
           </select></div>
-        <div><label>Warm-up / arm</label><input type="number" id="combiNumWarmup" value="3" min="1"></div>
-        <div><label>Search cycles</label><input type="number" id="combiNumCycles" value="50" min="1"></div>
+        <div><label>Warm-up / arm
+          <span class="help" data-help="hcWarmup" role="button" tabindex="0"
+                title="Docks per reagent before the search, to seed its prior.">?</span></label>
+          <input type="number" id="combiNumWarmup" value="3" min="1"></div>
+        <div><label>Search cycles
+          <span class="help" data-help="hcCycles" role="button" tabindex="0"
+                title="The search budget after warm-up. Annotate pool sets it.">?</span></label>
+          <input type="number" id="combiNumCycles" value="50" min="1"></div>
       </div>
+      <div class="hint" id="hcMethod">Only matters with two or more variable slots. <b>Thompson Sampling</b> (argmax) is the default bandit: it keeps a per-reagent prior and spends the budget on the arms that look good. <b>Roulette Wheel</b> with thermal cycling trades some of that greediness for coverage, which pays on 3+-component routes over ultralarge libraries. With a single variable slot the choice is moot &mdash; warm-up alone would already touch every reagent, so Asatro docks the whole library exhaustively and says so in the log.</div>
+      <div class="hint" id="hcWarmup">Docks per reagent before the search starts, seeding each reagent's prior. It costs this number &times; every reagent in every slot, so on a big pool warm-up dominates the budget. 3 is the literature standard and is right here because reachability pruning keeps the pools dense &mdash; the inflated warm-up that sparse pools needed (to stop good reagents being retired for unlucky partners) is no longer necessary.</div>
+      <div class="hint" id="hcCycles">The search budget after warm-up: TS iterations, or unique products docked for RWS &mdash; the same units either way, so a TS and an RWS run at the same number are comparable. <b>Annotate pool</b> fills this from the buildable pool sizes (&asymp; 2 draws per reagent in the largest variable slot, clamped to 500&ndash;10000). The 50 it starts at is a placeholder; left alone on a real pool it stops the search almost as soon as it begins.</div>
       <div class="grid3" id="combiRwsParams" style="display:none">
-        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span></label><input type="number" id="combiRwsMinCore" value="50" min="1"></div>
-        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span></label><input type="number" id="combiRwsStop" value="6000" min="1"></div>
+        <div><label>Min compounds / core <span class="chip">(RWS batch size)</span>
+          <span class="help" data-help="hcRws" role="button" tabindex="0"
+                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+          <input type="number" id="combiRwsMinCore" value="50" min="1"></div>
+        <div><label>Resample stop <span class="chip">(RWS: consecutive dups)</span>
+          <span class="help" data-help="hcRws" role="button" tabindex="0"
+                title="Roulette-Wheel-only knobs: batch size and the early stop.">?</span></label>
+          <input type="number" id="combiRwsStop" value="6000" min="1"></div>
         <div></div>
       </div>
+      <div class="hint" id="hcRws">Roulette Wheel only; ignored by Thompson Sampling. <b>Min compounds / core</b> is the batch size the thermal cycling adapts across &mdash; several batches, not one giant blob, or the temperature schedule has nothing to act on. <b>Resample stop</b> is the early stop: that many consecutive draws that turn up an already-seen product and the search calls the library exhausted. Blanking either falls back to 50 / 6000, not to the size-scaled suggestion, so set them deliberately if you care.</div>
       <div class="grid3">
-        <div><label>Reagents cap</label><input type="number" id="combiNumToSelect" placeholder="all"></div>
-        <div><label>Score field</label>
+        <div><label>Reagents cap
+          <span class="help" data-help="hcCap" role="button" tabindex="0"
+                title="Takes only the first N reagents of each library. A dev knob.">?</span></label>
+          <input type="number" id="combiNumToSelect" placeholder="all"></div>
+        <div><label>Score field
+          <span class="help" data-help="hcScore" role="button" tabindex="0"
+                title="Which GNINA output the search optimises and the leaderboard ranks by.">?</span></label>
           <select id="combiScoreField">
             <option value="minimizedAffinity">minimizedAffinity</option>
             <option value="CNNaffinity">CNNaffinity</option>
             <option value="CNN_VS">CNN_VS</option>
           </select></div>
-        <div><label>CNN scoring</label>
+        <div><label>CNN scoring
+          <span class="help" data-help="hcCnn" role="button" tabindex="0"
+                title="none is CPU Vina and fast; rescore adds the GPU CNN pass.">?</span></label>
           <select id="combiCnnScoring">
             <option value="none">none (fast)</option>
             <option value="rescore">rescore</option>
           </select></div>
       </div>
+      <div class="hint" id="hcCap">Reads only the first N reagents of each library. A development knob for a quick smoke test: it truncates the file rather than sampling it, so whatever the file happens to be sorted by is what you get. Blank uses everything.</div>
+      <div class="hint" id="hcScore">Which GNINA output the search optimises and the leaderboard ranks by. <code>minimizedAffinity</code> is kcal/mol, lower is better. <code>CNNaffinity</code> and <code>CNN_VS</code> are CNN outputs, higher is better &mdash; and they only carry signal with CNN scoring on. Every pose is annotated with all of them whatever you pick here; this chooses what the <i>search</i> chases.</div>
+      <div class="hint" id="hcCnn"><b>none</b> is pure Vina docking on the CPU &mdash; much faster, and the GPUs are hidden from it entirely to avoid contention. <b>rescore</b> docks with Vina and then rescores the poses with the CNN: the GPU-bound step, several times slower per dock, and what <code>CNNaffinity</code> / <code>CNN_VS</code> need in order to mean anything.</div>
       <div class="grid3">
-        <div><label>Concurrency <span class="chip">(parallel docks)</span></label><input type="number" id="combiConcurrency" value="16" min="1"></div>
-        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span></label><input type="number" id="combiCpuPerDock" placeholder="auto" min="1"></div>
+        <div><label>Concurrency <span class="chip">(parallel docks)</span>
+          <span class="help" data-help="hcConc" role="button" tabindex="0"
+                title="How many GNINA docks run at once.">?</span></label>
+          <input type="number" id="combiConcurrency" value="16" min="1"></div>
+        <div><label>CPU / dock <span class="chip">(blank: auto-split)</span>
+          <span class="help" data-help="hcCpu" role="button" tabindex="0"
+                title="CPU threads per dock. Blank splits the cores across them.">?</span></label>
+          <input type="number" id="combiCpuPerDock" placeholder="auto" min="1"></div>
         <div></div>
       </div>
-      <label>Seed</label><input type="number" id="combiSeed" placeholder="random" value="666">
-      <label>Session name <span class="muted">(optional; reuse overwrites)</span></label>
+      <div class="hint" id="hcConc">How many docks run at once. Each is a separate GNINA process, so this multiplies memory as well as throughput. With CNN scoring on, the docks are GPU-bound and would otherwise all pile onto card 0; above 1 Asatro auto-detects the real GPUs and round-robins across them.</div>
+      <div class="hint" id="hcCpu">CPU threads GNINA gets per dock. Blank is what you want: Asatro splits the box's cores across the concurrent docks (cores &divide; concurrency, at least 1) instead of every dock asking for all of them. Set it only to hold each dock to fewer threads than that.</div>
+      <label>Seed
+        <span class="help" data-help="hcSeed" role="button" tabindex="0"
+              title="Seeds the sampler's draws. The docking seed is separate and fixed.">?</span></label>
+      <input type="number" id="combiSeed" placeholder="random" value="666">
+      <div class="hint" id="hcSeed">Seeds the sampler &mdash; which reagents get drawn &mdash; so a repeat with the same inputs and budget follows the same path. Blank leaves the draws nondeterministic. It does not reach GNINA: the docking seed and the constrained-embed seed are fixed at 666 internally, so the placement and docking half is reproducible either way.</div>
+      <label>Session name <span class="muted">(optional; reuse overwrites)</span>
+        <span class="help" data-help="hcSession" role="button" tabindex="0"
+              title="Names the run and its folder. Reuse overwrites.">?</span></label>
       <input type="text" id="combiSessionName" placeholder="e.g. suzuki_diversity_scan">
+      <div class="hint" id="hcSession">Names the run and its output folder. Reusing a name overwrites that run &mdash; and is refused outright while a job of that name is still running, so a double-click or a second tab cannot corrupt a run in flight. Blank gets a random id, which makes the run harder to find later; a name that says what you changed is worth the typing.</div>
       <div class="row" style="margin-top:12px">
         <button class="btn" id="combiRunBtn" type="button">Launch combi search</button>
       </div>
